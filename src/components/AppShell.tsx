@@ -93,7 +93,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     <div
       style={{
         display: 'flex', flexDirection: 'column', height: '100vh',
-        background: 'var(--bg)',
+        background: 'transparent',
         fontFamily: 'var(--font-inter, system-ui, sans-serif)',
       }}
     >
@@ -106,7 +106,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         {!isMobile && (
           <>
             {/* Calendar */}
-            <div style={{ flex: 1, overflow: 'hidden', borderRight: '1px solid var(--border)' }}>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
               <CalendarPanel
                 events={events}
                 newEventIds={newEventIds}
@@ -118,7 +118,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             </div>
 
             {/* Chat */}
-            <div style={{ width: 420, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: '1px solid var(--border)' }}>
+            <div style={{ width: 420, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '-1px 0 0 var(--border), -12px 0 32px rgba(0,0,0,0.35)' }}>
               <ChatPanel
                 user={user}
                 profile={profile}

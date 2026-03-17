@@ -2,10 +2,10 @@
 
 /* ─── Tokens ─── */
 :root {
-  --bg:           #000000;
-  --bg-panel:     #0A0A0F;
-  --bg-card:      #111118;
-  --bg-input:     #1A1A24;
+  --bg:           #07070F;
+  --bg-panel:     #0D0D18;
+  --bg-card:      #13131F;
+  --bg-input:     #1A1A28;
   --border:       rgba(255,255,255,0.07);
   --border-hi:    rgba(255,255,255,0.12);
 
@@ -66,12 +66,21 @@
 html, body { height: 100%; }
 
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse at 18% 0%,   rgba(59,126,247,0.13) 0%, transparent 45%),
+    radial-gradient(ellipse at 82% 100%, rgba(99,102,241,0.09) 0%, transparent 45%),
+    var(--bg);
   color: var(--text);
   font-family: var(--font-inter, -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif);
   -webkit-font-smoothing: antialiased;
   /* Prevent overscroll bounce on mobile */
   overscroll-behavior: none;
+}
+[data-theme="light"] body {
+  background:
+    radial-gradient(ellipse at 18% 0%,   rgba(37,99,235,0.07) 0%, transparent 45%),
+    radial-gradient(ellipse at 82% 100%, rgba(99,102,241,0.04) 0%, transparent 45%),
+    var(--bg);
 }
 
 /* ─── Mobile touch improvements ─── */
@@ -190,24 +199,47 @@ input  { touch-action: manipulation; }
 .fc .fc-scrollgrid-section > td { border: none !important; }
 
 /* Today column tint */
-.fc .fc-day-today { background: rgba(59,126,247,0.06) !important; }
+.fc .fc-day-today { background: rgba(59,126,247,0.09) !important; }
 
-/* Events */
+/* Column headers — bolder, more space */
+.fc .fc-col-header-cell-cushion {
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  padding: 12px 0 10px !important;
+}
+/* Today header: filled blue pill */
+.fc .fc-day-today .fc-col-header-cell-cushion {
+  background: var(--blue) !important;
+  color: #fff !important;
+  border-radius: 8px !important;
+  padding: 3px 9px !important;
+  display: inline-block !important;
+}
+
+/* Events — premium pill with left accent stripe */
 .fc .fc-event {
   border: none !important;
-  border-radius: 10px !important;
-  padding: 5px 9px !important;
+  border-radius: 14px !important;
+  padding: 6px 10px !important;
   font-size: 12px !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   cursor: pointer;
-  transition: opacity 0.15s, transform 0.1s;
+  box-shadow: inset 3px 0 0 rgba(255,255,255,0.22) !important;
+  transition: opacity 0.15s, transform 0.15s, box-shadow 0.15s !important;
 }
-.fc .fc-event:hover { opacity: 0.85; transform: scale(0.99); }
-.fc .fc-event-title { font-weight: 600 !important; }
+.fc .fc-event:hover {
+  opacity: 1 !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4), inset 3px 0 0 rgba(255,255,255,0.28) !important;
+}
+.fc .fc-event-title { font-weight: 700 !important; }
 .fc .fc-event-time { font-size: 10px !important; opacity: 0.8 !important; }
 
+/* Now indicator — thicker */
+.fc .fc-timegrid-now-indicator-line { border-width: 2px !important; }
+
 /* Now indicator */
-.fc .fc-timegrid-now-indicator-line  { border-color: var(--red); border-width: 1.5px; }
+.fc .fc-timegrid-now-indicator-line  { border-color: var(--red); border-width: 2px; }
 .fc .fc-timegrid-now-indicator-arrow { border-top-color: var(--red); border-bottom-color: var(--red); }
 
 /* Proposed */
@@ -254,6 +286,18 @@ input  { touch-action: manipulation; }
 }
 [data-theme="light"] .glass {
   background: rgba(255,255,255,0.82);
+}
+
+/* ─── Chat panel glass ─── */
+.chat-panel-glass {
+  background: rgba(13,13,22,0.70);
+  backdrop-filter: blur(40px) saturate(160%);
+  -webkit-backdrop-filter: blur(40px) saturate(160%);
+}
+[data-theme="light"] .chat-panel-glass {
+  background: rgba(248,248,252,0.80);
+  backdrop-filter: blur(40px) saturate(160%);
+  -webkit-backdrop-filter: blur(40px) saturate(160%);
 }
 
 /* ─── Primary gradient button ─── */

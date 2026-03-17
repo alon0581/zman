@@ -516,7 +516,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   }
 
   return (
-    <div dir={isRTL ? 'rtl' : 'ltr'} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-panel)' }}>
+    <div dir={isRTL ? 'rtl' : 'ltr'} className="chat-panel-glass" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
 
       {/* Header */}
       <div style={{ padding: '20px 22px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -648,11 +648,13 @@ function Bubble({ msg, isRTL, isStreaming }: { msg: Message; isRTL: boolean; isS
       )}
       <div style={{
         maxWidth: '75%', padding: '11px 15px', borderRadius: isUser ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-        background: isUser ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'var(--bg-card)',
+        background: isUser ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'rgba(22,22,38,0.88)',
+        backdropFilter: isUser ? undefined : 'blur(12px)',
+        WebkitBackdropFilter: isUser ? undefined : 'blur(12px)',
         color: isUser ? '#fff' : 'var(--text)',
-        border: isUser ? 'none' : '1px solid var(--border-hi)',
+        border: isUser ? 'none' : '1px solid rgba(255,255,255,0.09)',
         fontSize: 14, lineHeight: 1.55, whiteSpace: 'pre-wrap', direction: isRTL ? 'rtl' : 'ltr',
-        boxShadow: isUser ? '0 4px 16px rgba(59,126,247,0.35)' : '0 2px 8px rgba(0,0,0,0.25)',
+        boxShadow: isUser ? '0 4px 20px rgba(59,126,247,0.45), 0 2px 8px rgba(0,0,0,0.3)' : '0 2px 16px rgba(0,0,0,0.4)',
       }}>
         {msg.content}
         {isStreaming && <span style={{ display: 'inline-block', width: 8, height: 14, background: 'var(--blue)', borderRadius: 2, marginLeft: 3, verticalAlign: 'middle', animation: 'blink 0.8s step-end infinite' }} />}
@@ -665,7 +667,7 @@ function TypingBubble() {
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
       <div style={{ width: 30, height: 30, borderRadius: 10, background: 'linear-gradient(135deg,#3B7EF7,#6366F1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 900, color: '#fff', flexShrink: 0 }}>Z</div>
-      <div style={{ padding: '12px 16px', borderRadius: '18px 18px 18px 4px', background: 'var(--bg-card)', border: '1px solid var(--border-hi)', display: 'flex', gap: 5, alignItems: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.25)' }}>
+      <div style={{ padding: '12px 16px', borderRadius: '18px 18px 18px 4px', background: 'rgba(22,22,38,0.88)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.09)', display: 'flex', gap: 5, alignItems: 'center', boxShadow: '0 2px 16px rgba(0,0,0,0.4)' }}>
         <div className="typing-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)' }} />
         <div className="typing-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)' }} />
         <div className="typing-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)' }} />
