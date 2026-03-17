@@ -182,9 +182,10 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   const isHoldingRef      = useRef(false)   // pointer currently pressed?
   const holdModeRef       = useRef(false)   // true = hold mode (auto-send on release)
   const sendMsgRef        = useRef<(t: string) => void>(() => {})
-  const pressStartRef     = useRef<number>(0)   // timestamp of pointer-down
-  const recordingRef      = useRef(false)        // mirror of `recording` state — always current in event handlers
-  const lastTranscriptRef = useRef('')           // accumulated Web Speech transcript
+  const pressStartRef     = useRef<number>(0)         // timestamp of pointer-down
+  const recordingRef      = useRef(false)              // mirror of `recording` state — always current in event handlers
+  const lastTranscriptRef = useRef('')                 // accumulated Web Speech transcript
+  const cachedStreamRef   = useRef<MediaStream | null>(null) // cached mic stream — keeps permission warm in session
 
   useEffect(() => {
     Promise.all([
@@ -315,20 +316,33 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   // Mirror recording state into a ref so event handlers always see the latest value
   useEffect(() => { recordingRef.current = recording }, [recording])
 
-  // NOTE: we intentionally do NOT pre-warm getUserMedia here.
-  // Calling it on mount would trigger a mic-permission popup before the user taps anything.
-  // Chrome/Android caches the permission after the first tap; iOS Safari prompts each time (browser limit).
+  // Mic permission note:
+  // We do NOT pre-warm getUserMedia on mount (would show a popup before the user taps anything).
+  // Instead, on first tap we request the stream and cache it for the rest of the session.
+  // Chrome/Android permanently caches the permission grant per HTTPS domain — no repeat prompts.
+  // iOS Safari re-prompts each session regardless (browser security limit, not fixable via code).
 
   const lang  = profile?.language ?? language
   const isRTL = lang === 'he' || lang === 'ar'
 
-  const startRecording = () => {
+  const startRecording = async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) {
       setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
       return
     }
+
+    // Cache the MediaStream on first use so the browser keeps the permission warm
+    // for the rest of this page session (avoids repeated prompts within same visit)
+    if (!cachedStreamRef.current && navigator.mediaDevices?.getUserMedia) {
+      try {
+        cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch {
+        // Permission denied — Web Speech API will surface its own error via onerror
+      }
+    }
+
     const recognition = new SR()
     recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
     recognition.continuous = true       // stay alive until explicitly stopped (no auto-stop on silence)
@@ -378,7 +392,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
     }
     pressStartRef.current = Date.now()
     isHoldingRef.current = true
-    startRecording()
+    startRecording()  // async — permission/stream cached on first call
   }
 
   const handlePointerUp = () => {
@@ -401,8 +415,8 @@ export default function ChatPanel({ user, profile: initProfile, events, language
           <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text)' }}>
             {tr(lang, 'header')}
           </div>
-          {/* Skip onboarding — shown after 3+ user messages so the user isn't trapped */}
-          {isOnboarding && messages.filter(m => m.role === 'user').length >= 3 && (
+          {/* Skip onboarding — shown after first user message so the user is never trapped */}
+          {isOnboarding && messages.filter(m => m.role === 'user').length >= 1 && (
             <button
               onClick={async () => {
                 const updatedProfile = { ...(profile ?? {}), onboarding_completed: true } as UserProfile
