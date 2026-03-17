@@ -6,6 +6,7 @@ import { UserProfile, CalendarEvent } from '@/types'
 import CalendarPanel from './CalendarPanel'
 import ChatPanel from './ChatPanel'
 import Header from './Header'
+import SettingsClient from '@/app/settings/SettingsClient'
 import { CalendarDays, MessageCircle } from 'lucide-react'
 
 interface Props {
@@ -21,6 +22,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   const [theme, setTheme] = useState<'dark' | 'light'>(initialProfile?.theme ?? 'dark')
   const [isMobile, setIsMobile] = useState(false)
   const [mobileTab, setMobileTab] = useState<'calendar' | 'chat'>('calendar')
+  const [showSettings, setShowSettings] = useState(false)
 
   const language = profile?.language ?? 'en'
   const isRTL = language === 'he' || language === 'ar'
@@ -95,7 +97,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         fontFamily: 'var(--font-inter, system-ui, sans-serif)',
       }}
     >
-      <Header user={user} profile={profile} language={language} onToggleTheme={toggleTheme} />
+      <Header user={user} profile={profile} language={language} onToggleTheme={toggleTheme} onOpenSettings={() => setShowSettings(true)} />
 
       {/* Main content — always LTR so chat is always on the right */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', direction: 'ltr' }}>
@@ -186,6 +188,14 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         </div>
       )}
 
+      {showSettings && (
+        <SettingsClient
+          user={user}
+          profile={profile}
+          onClose={() => setShowSettings(false)}
+          onProfileUpdate={handleProfileUpdate}
+        />
+      )}
     </div>
   )
 }

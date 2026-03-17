@@ -5,7 +5,7 @@ import { User } from '@supabase/supabase-js'
 import { UserProfile, AIMemory } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 import {
-  ArrowLeft, Check, Loader2, CheckCircle2, XCircle,
+  ArrowLeft, X, Check, Loader2, CheckCircle2, XCircle,
   ExternalLink, Unlink, Zap,
 } from 'lucide-react'
 import Link from 'next/link'
@@ -13,6 +13,8 @@ import Link from 'next/link'
 interface Props {
   user: User
   profile: UserProfile | null
+  onClose?: () => void
+  onProfileUpdate?: (p: UserProfile) => void
 }
 
 // ─── i18n ────────────────────────────────────────────────────────────────────
@@ -158,7 +160,7 @@ const PROVIDERS: ProviderInfo[] = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SettingsClient({ user, profile: init }: Props) {
+export default function SettingsClient({ user, profile: init, onClose, onProfileUpdate }: Props) {
   const [p, setP] = useState<UserProfile>(init ?? {
     user_id: user.id, autonomy_mode: 'hybrid', theme: 'dark',
     voice_response_enabled: false, language: 'en', onboarding_completed: false,
@@ -311,7 +313,12 @@ export default function SettingsClient({ user, profile: init }: Props) {
       await supabase.from('user_profiles').upsert({ ...profileToSave, user_id: user.id })
     }
     setSaving(false)
-    window.location.replace('/')
+    if (onClose) {
+      onProfileUpdate?.(profileToSave as UserProfile)
+      onClose()
+    } else {
+      window.location.replace('/')
+    }
   }
 
   const selectStyle = {
@@ -320,14 +327,20 @@ export default function SettingsClient({ user, profile: init }: Props) {
     fontSize: 13, outline: 'none', cursor: 'pointer',
   }
 
-  return (
-    <div dir={isRTL ? 'rtl' : 'ltr'} style={{ minHeight: '100vh', background: '#07090F', color: '#EDF0F7', fontFamily: 'var(--font-inter, system-ui, sans-serif)' }}>
+  const inner = (
+    <div dir={isRTL ? 'rtl' : 'ltr'} style={{ background: '#07090F', color: '#EDF0F7', fontFamily: 'var(--font-inter, system-ui, sans-serif)', ...(onClose ? {} : { minHeight: '100vh' }) }}>
 
       {/* Top bar */}
       <div style={{ background: '#0C1018', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '0 20px', height: 56, display: 'flex', alignItems: 'center', gap: 12 }}>
-        <Link href="/" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.05)', color: '#9AA3B8', textDecoration: 'none' }}>
-          <ArrowLeft size={16} style={{ transform: isRTL ? 'scaleX(-1)' : undefined }} />
-        </Link>
+        {onClose ? (
+          <button onClick={onClose} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.05)', color: '#9AA3B8', border: 'none', cursor: 'pointer' }}>
+            <X size={16} />
+          </button>
+        ) : (
+          <Link href="/" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.05)', color: '#9AA3B8', textDecoration: 'none' }}>
+            <ArrowLeft size={16} style={{ transform: isRTL ? 'scaleX(-1)' : undefined }} />
+          </Link>
+        )}
         <div>
           <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.02em' }}>{t(lang, 'title')}</div>
           <div style={{ fontSize: 12, color: '#5A6A8A', marginTop: 1 }}>{t(lang, 'subtitle')}</div>
@@ -670,6 +683,20 @@ export default function SettingsClient({ user, profile: init }: Props) {
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   )
+
+  if (onClose) {
+    return (
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', overflowY: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '32px 16px 48px' }}
+        onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      >
+        <div style={{ width: '100%', maxWidth: 620, borderRadius: 20, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 64px rgba(0,0,0,0.6)' }}>
+          {inner}
+        </div>
+      </div>
+    )
+  }
+  return inner
 }
 
 /* ─── Sub-components ─── */

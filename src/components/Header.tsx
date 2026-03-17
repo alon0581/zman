@@ -11,9 +11,10 @@ interface Props {
   profile: UserProfile | null
   language: string
   onToggleTheme: () => void
+  onOpenSettings?: () => void
 }
 
-export default function Header({ user, profile, language, onToggleTheme }: Props) {
+export default function Header({ user, profile, language, onToggleTheme, onOpenSettings }: Props) {
   const supabase = createClient()
   const isDark = profile?.theme !== 'light'
   const isHe = language === 'he'
@@ -50,12 +51,9 @@ export default function Header({ user, profile, language, onToggleTheme }: Props
           {isDark ? <Sun size={17} /> : <Moon size={17} />}
         </Btn>
 
-        {/* Open settings in new tab so ongoing AI streams are not interrupted */}
-        <a href="/settings" target="_blank" rel="noopener noreferrer" style={{ display: 'contents' }}>
-          <Btn title={isHe ? 'הגדרות' : 'Settings'}>
-            <Settings size={17} />
-          </Btn>
-        </a>
+        <Btn onClick={onOpenSettings} title={isHe ? 'הגדרות' : 'Settings'}>
+          <Settings size={17} />
+        </Btn>
 
         {/* Divider */}
         <div style={{ width: 1, height: 20, background: 'var(--border-hi)', margin: '0 8px' }} />

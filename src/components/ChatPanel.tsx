@@ -204,13 +204,17 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   const recordingRef      = useRef(false)              // mirror of `recording` state — always current in event handlers
   const lastTranscriptRef = useRef('')                 // accumulated Web Speech transcript
   const cachedStreamRef   = useRef<MediaStream | null>(null) // cached mic stream — keeps permission warm in session
+  const loadingRef        = useRef(false)              // mirror of loading for polling callback
+  const isOnboardingRef   = useRef(!!initIsOnboarding) // mirror for polling callback
+  const msgCountRef       = useRef(0)                  // tracks synced message count for cross-device polling
 
   useEffect(() => {
     Promise.all([
       fetch('/api/events').then(r => r.ok ? r.json() : null),
       fetch('/api/profile').then(r => r.ok ? r.json() : null),
       fetch('/api/memory').then(r => r.ok ? r.json() : []),
-    ]).then(([evData, profData, memData]) => {
+      fetch('/api/chat-history').then(r => r.ok ? r.json() : null),
+    ]).then(([evData, profData, memData, chatData]) => {
       const loadedEvents: CalendarEvent[] = evData?.events ?? []
       const loadedMemory: AIMemory[] = Array.isArray(memData) ? memData : []
       const loadedProfile: UserProfile | null = profData ?? null
@@ -218,6 +222,21 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       if (evData) onEventsUpdate(loadedEvents)
       if (loadedProfile) { setProfile(loadedProfile); onProfileUpdate(loadedProfile) }
       if (loadedMemory.length > 0) setMemory(loadedMemory)
+
+      // Restore chat from server if sessionStorage was empty (e.g. new session on another device)
+      if (!initIsOnboarding && chatData?.messages?.length > 0) {
+        setMessages(prev => {
+          if (prev.length === 1 && prev[0].id === 'welcome') {
+            const restored = (chatData.messages as Array<{id: string; role: string; content: string; timestamp: string}>).map(m => ({
+              id: m.id, role: m.role as Message['role'], content: m.content, timestamp: new Date(m.timestamp),
+            }))
+            msgCountRef.current = restored.length
+            persistMessages(restored)
+            return restored
+          }
+          return prev
+        })
+      }
 
       // Smart onboarding bypass: if we already have memory, the user clearly knows us —
       // exit onboarding mode automatically without any button or AI interaction needed.
@@ -254,10 +273,46 @@ export default function ChatPanel({ user, profile: initProfile, events, language
     })
   }, [])
 
-  // Persist conversation in sessionStorage so it survives navigation to /settings and back
+  // Persist conversation in sessionStorage
   useEffect(() => {
     if (!isOnboarding) persistMessages(messages)
   }, [messages, isOnboarding])
+
+  // Keep refs current for polling callbacks
+  useEffect(() => { loadingRef.current = loading }, [loading])
+  useEffect(() => { isOnboardingRef.current = isOnboarding }, [isOnboarding])
+
+  // Save conversation to server after each complete exchange (cross-device sync)
+  useEffect(() => {
+    if (isOnboarding || loading) return
+    const realMsgs = messages.filter(m => m.id !== 'welcome')
+    msgCountRef.current = realMsgs.length
+    if (realMsgs.length === 0) return
+    const toSave = realMsgs.map(m => ({ id: m.id, role: m.role, content: m.content, timestamp: m.timestamp.toISOString() }))
+    const timer = setTimeout(() => {
+      fetch('/api/chat-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: toSave }) }).catch(() => {})
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [messages, isOnboarding, loading])
+
+  // Poll every 5s: if another device added messages, sync them here
+  useEffect(() => {
+    const poll = async () => {
+      if (loadingRef.current || isOnboardingRef.current) return
+      try {
+        const res = await fetch('/api/chat-history')
+        if (!res.ok) return
+        const { messages: serverMsgs } = await res.json() as { messages: Array<{id: string; role: string; content: string; timestamp: string}> }
+        if (!serverMsgs?.length || serverMsgs.length <= msgCountRef.current) return
+        const restored = serverMsgs.map(m => ({ id: m.id, role: m.role as Message['role'], content: m.content, timestamp: new Date(m.timestamp) }))
+        msgCountRef.current = restored.length
+        setMessages(restored)
+        persistMessages(restored)
+      } catch { /* ignore */ }
+    }
+    const id = setInterval(poll, 5000)
+    return () => clearInterval(id)
+  }, [])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
