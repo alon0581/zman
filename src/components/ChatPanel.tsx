@@ -112,6 +112,24 @@ function buildDynamicWelcome(
   }
 }
 
+// ─── Calendar intent detector (for smart onboarding bypass) ──────────────────
+function hasCalendarIntent(text: string): boolean {
+  const t = text.toLowerCase()
+  const keywords = [
+    // Hebrew — scheduling verbs & nouns
+    'הוסף', 'צור', 'קבע', 'תזמן', 'שים ', 'תוסיף', 'תקבע', 'לוח שנה', 'לו"ז', 'לוח שנה',
+    'אירוע', 'פגישה', 'שיעור', 'מבחן', 'בחינה', 'הגשה', 'דדליין', 'מחר', 'שבוע הבא',
+    'ביום', 'בשבוע', 'כל שלישי', 'כל ראשון', 'כל שני', 'כל רביעי', 'כל חמישי', 'כל שישי',
+    'ב-', 'בשעה', ':00', ':30',
+    // English — scheduling verbs & nouns
+    'add', 'create', 'schedule', 'put on', 'calendar', 'event', 'meeting', 'class',
+    'exam', 'appointment', 'deadline', 'remind', 'tomorrow', 'next week', 'every',
+    'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+    'am', 'pm', 'o\'clock',
+  ]
+  return keywords.some(k => t.includes(k))
+}
+
 interface Props {
   user: User
   profile: UserProfile | null
@@ -201,6 +219,26 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       if (loadedProfile) { setProfile(loadedProfile); onProfileUpdate(loadedProfile) }
       if (loadedMemory.length > 0) setMemory(loadedMemory)
 
+      // Smart onboarding bypass: if we already have memory, the user clearly knows us —
+      // exit onboarding mode automatically without any button or AI interaction needed.
+      if (initIsOnboarding && loadedMemory.length > 0) {
+        setIsOnboarding(false)
+        const baseProfile = loadedProfile ?? initProfile
+        if (baseProfile && !baseProfile.onboarding_completed) {
+          const fixed = { ...baseProfile, onboarding_completed: true }
+          fetch('/api/profile', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fixed),
+          }).catch(() => {})
+          onProfileUpdate(fixed)
+        }
+        // Switch welcome message to the dynamic one
+        const lang = loadedProfile?.language ?? language
+        const dynamic = buildDynamicWelcome(loadedEvents, loadedMemory, lang)
+        setMessages([{ id: 'welcome', role: 'assistant', content: dynamic, timestamp: new Date() }])
+        return
+      }
+
       // Update welcome message only if still showing the initial placeholder
       // (i.e. we did NOT restore a conversation from sessionStorage)
       if (!initIsOnboarding) {
@@ -234,11 +272,27 @@ export default function ChatPanel({ user, profile: initProfile, events, language
     // snapshot events for closure
     const eventsSnapshot = events
 
+    // ── Smart onboarding bypass ──────────────────────────────────────────────
+    // If user has memory OR is clearly trying to schedule something, exit
+    // onboarding mode immediately — no button, no friction.
+    let activeOnboarding = isOnboarding
+    if (isOnboarding && (memory.length > 0 || hasCalendarIntent(text))) {
+      activeOnboarding = false
+      setIsOnboarding(false)
+      const updatedProfile = { ...(profile ?? {}), onboarding_completed: true } as UserProfile
+      fetch('/api/profile', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProfile),
+      }).catch(() => {})
+      onProfileUpdate(updatedProfile)
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     try {
       const history = messages.filter(m => m.id !== 'welcome').map(m => ({ role: m.role, content: m.content }))
       const res = await fetch('/api/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [...history, { role: 'user', content: text.trim() }], events: eventsSnapshot, profile, isOnboarding, memory }),
+        body: JSON.stringify({ messages: [...history, { role: 'user', content: text.trim() }], events: eventsSnapshot, profile, isOnboarding: activeOnboarding, memory }),
       })
       if (!res.ok || !res.body) throw new Error()
 
@@ -309,7 +363,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       setStreamingId(null)
       inputRef.current?.focus()
     }
-  }, [loading, messages, events, profile, onEventsUpdate, language])
+  }, [loading, messages, events, profile, memory, onEventsUpdate, language])
 
   // Keep ref current so mic onstop can call latest sendMessage without stale closure
   useEffect(() => { sendMsgRef.current = sendMessage }, [sendMessage])

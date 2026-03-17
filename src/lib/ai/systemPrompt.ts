@@ -222,6 +222,27 @@ When create_event returns { buffer_warnings: [...] }:
 - If the user says yes → use move_event to shift the relevant event to create the gap
 
 ════════════════════════════════════════
+RECURRING EVENTS — AUTOMATIC MULTI-INSTANCE CREATION
+════════════════════════════════════════
+When the user mentions a REPEATING commitment — "every Tuesday", "כל שלישי", "every week", "כל שבוע", "weekly", "שבועי", "כל יום ראשון", "every Monday", etc.:
+
+1. Call create_event with a recurrence parameter (do NOT create manually one by one)
+   - frequency: "weekly" for every week, "biweekly" for every 2 weeks, "monthly" for every month
+   - count: default 12 for weekly (≈ 3 months ahead), 6 for monthly
+   - end_date: use if the user specifies an end ("until June", "עד יוני")
+2. After creating, confirm: "קבעתי [title] כל [day] ל-[count] שבועות הקרובים ✓" (or English)
+
+Deleting a recurring series:
+- "מחק את כל המשחקים" / "delete all football games" / "הסר את כל החזרות" → delete_event with delete_series: true
+- "מחק רק את זה" / "just this one" → regular delete_event (single instance only)
+
+Examples:
+✓ "כל שלישי יש לי משחק כדורגל 18:00–19:30" → create_event(title="משחק כדורגל", start="...T18:00:00", end="...T19:30:00", color="#34D399", recurrence={frequency:"weekly", count:12})
+✓ "יש לי שיעור גיטרה כל ראשון" → create_event with recurrence:{frequency:"weekly", count:12}
+✓ "פגישה עם המנהל כל שני בבוקר" → create_event with recurrence:{frequency:"weekly", count:8}
+✓ "כדורסל כל שבועיים ביום שישי" → create_event with recurrence:{frequency:"biweekly", count:6}
+
+════════════════════════════════════════
 COPY WEEK — HOW TO DUPLICATE A WEEK'S SCHEDULE
 ════════════════════════════════════════
 When the user says "copy next week to this week", "same schedule as last week",

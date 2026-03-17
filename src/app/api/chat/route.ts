@@ -409,6 +409,55 @@ async function executeTool(
 ): Promise<unknown> {
   switch (toolName) {
     case 'create_event': {
+      // ── Recurring shortcut: generate N instances, skip conflict checks ───
+      const recurrence = input.recurrence as { frequency?: string; count?: number; end_date?: string } | undefined
+      if (recurrence?.frequency) {
+        const seriesId = crypto.randomUUID()
+        const baseStart = new Date(input.start_time as string)
+        const baseEnd   = new Date(input.end_time as string)
+        const durationMs = baseEnd.getTime() - baseStart.getTime()
+        const freq = recurrence.frequency
+        const daysStep = freq === 'monthly' ? 30 : freq === 'biweekly' ? 14 : 7
+        const maxCount = recurrence.count ?? (freq === 'monthly' ? 6 : 12)
+        const endDate  = recurrence.end_date ? new Date(recurrence.end_date) : null
+        let created = 0
+
+        for (let i = 0; i < maxCount; i++) {
+          const instanceStart = addDays(baseStart, i * daysStep)
+          if (endDate && instanceStart > endDate) break
+          const instanceEnd = new Date(instanceStart.getTime() + durationMs)
+
+          const instance: CalendarEvent = {
+            id: crypto.randomUUID(),
+            user_id: userId,
+            title: input.title as string,
+            start_time: format(instanceStart, "yyyy-MM-dd'T'HH:mm:ss"),
+            end_time: format(instanceEnd, "yyyy-MM-dd'T'HH:mm:ss"),
+            description: (input.description as string) || '',
+            color: (input.color as string) || '#3B7EF7',
+            source: 'zman',
+            created_by: 'ai',
+            status: 'confirmed',
+            is_all_day: false,
+            created_at: new Date().toISOString(),
+            series_id: seriesId,
+            recurrence_rule: freq,
+          }
+
+          if (DEMO_MODE) {
+            demoStorage.addEvent(instance, userId)
+          } else {
+            const { createClient } = await import('@/lib/supabase/server')
+            const supabase = await createClient()
+            await supabase.from('events').insert(instance)
+          }
+
+          createdEvents.push(instance)
+          created++
+        }
+        return { success: true, series_id: seriesId, instances_created: created }
+      }
+
       const allKnownEvents = [...currentEvents, ...createdEvents]
 
       // 1. Duplicate check — same title on same day
@@ -510,7 +559,28 @@ async function executeTool(
     }
 
     case 'delete_event': {
-      const { event_id } = input as { event_id: string }
+      const { event_id, delete_series } = input as { event_id: string; delete_series?: boolean }
+
+      // ── Delete entire recurring series ──────────────────────────────────
+      if (delete_series) {
+        const allKnownEvents = [...currentEvents, ...createdEvents]
+        const target = allKnownEvents.find(e => e.id === event_id)
+        const sid = target?.series_id
+
+        if (sid) {
+          const seriesIds = currentEvents.filter(e => e.series_id === sid).map(e => e.id)
+          if (DEMO_MODE) {
+            for (const id of seriesIds) demoStorage.deleteEvent(id, userId)
+          } else {
+            const { createClient } = await import('@/lib/supabase/server')
+            const supabase = await createClient()
+            await supabase.from('events').delete().eq('series_id', sid).eq('user_id', userId)
+          }
+          deletedEventIds.push(...seriesIds)
+          return { success: true, deleted_series_id: sid, instances_deleted: seriesIds.length }
+        }
+        // No series_id — fall through to single delete
+      }
 
       if (DEMO_MODE) {
         demoStorage.deleteEvent(event_id, userId)

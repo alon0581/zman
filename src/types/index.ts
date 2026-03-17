@@ -12,6 +12,8 @@ export interface CalendarEvent {
   created_by: 'user' | 'ai'
   status: 'confirmed' | 'proposed'
   created_at: string
+  series_id?: string          // groups all instances of a recurring event
+  recurrence_rule?: string    // e.g. "weekly", "biweekly", "monthly"
 }
 
 export interface Task {

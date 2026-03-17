@@ -15,6 +15,16 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
           description: { type: 'string', description: 'Optional description' },
           color: { type: 'string', description: 'Hex color by type: #3B7EF7=work/meetings/calls, #6366F1=study/exams/homework, #34D399=fitness/sport/gym, #FBBF24=personal/errands, #F97316=social/friends/fun' },
           status: { type: 'string', enum: ['confirmed', 'proposed'] },
+          recurrence: {
+            type: 'object',
+            description: 'Create a recurring event. Generates multiple instances automatically. Use when the user says "every Tuesday", "כל שלישי", "every week", "כל שבוע", etc.',
+            properties: {
+              frequency: { type: 'string', enum: ['weekly', 'biweekly', 'monthly'], description: 'How often to repeat' },
+              count: { type: 'number', description: 'Number of instances to create. Default: 12 for weekly/biweekly, 6 for monthly' },
+              end_date: { type: 'string', description: 'Optional: stop generating after this ISO date (alternative to count)' },
+            },
+            required: ['frequency'],
+          },
         },
         required: ['title', 'start_time', 'end_time'],
       },
@@ -40,12 +50,13 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'delete_event',
-      description: 'Delete an event. Always confirm first unless user explicitly asked.',
+      description: 'Delete an event. Always confirm first unless user explicitly asked. For recurring events: use delete_series:true to delete the entire series, or leave it false/omit to delete only this one instance.',
       parameters: {
         type: 'object',
         properties: {
           event_id: { type: 'string' },
           title: { type: 'string' },
+          delete_series: { type: 'boolean', description: 'If true, deletes ALL future instances of this recurring event. Use when user says "delete all", "מחק את כל", "stop recurring", "הסר את כל החזרות".' },
         },
         required: ['event_id', 'title'],
       },
