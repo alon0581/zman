@@ -61,7 +61,7 @@ export default function LoginPage() {
 
     if (!res.ok) { setError(data.error ?? 'שגיאה בלתי צפויה'); return }
 
-    window.location.href = '/'
+    window.location.href = '/app'
   }
 
   return (
