@@ -6,12 +6,20 @@ Paste these into Railway → Variables:
 
 AUTH_SECRET=52b769a7c7dfb5b2fdd4c65441147d93465e09a41f79eaf0c9531126c1503a0c
 ENCRYPTION_KEY=8909602d623123550a306df64c1300022bacf99999dbbb9222f75128d9940374
-OPENAI_API_KEY=← YOUR KEY HERE
-NEXT_PUBLIC_APP_URL=← RAILWAY URL (e.g. https://zman-production.up.railway.app)
+MINIMAX_API_KEY=← YOUR MINIMAX KEY HERE (sk-cp-...)
+NEXT_PUBLIC_APP_URL=← RAILWAY URL after first deploy (e.g. https://zman-production.up.railway.app)
 
 ══════════════════════════════════════════════
-  VOLUME
+  VOLUME (required — user data won't persist without this)
 ══════════════════════════════════════════════
 Mount Path: /app/data
 
+══════════════════════════════════════════════
+  STEPS
+══════════════════════════════════════════════
+1. Go to https://railway.app → Login with GitHub
+2. New Project → Deploy from GitHub repo → select "zman"
+3. Click the service → Variables → add all 4 vars above
+4. Click Volumes tab → Add Volume → Mount Path: /app/data
+5. After first deploy: copy the URL → update NEXT_PUBLIC_APP_URL → save (auto-redeploy)
 ══════════════════════════════════════════════

@@ -100,14 +100,21 @@ export async function POST(req: NextRequest) {
       freshProfile = data as UserProfile | null
     }
 
-    const provider = freshProfile?.ai_provider ?? 'openai'
-    const model = freshProfile?.ai_model ?? 'gpt-4o-mini'
+    let provider = freshProfile?.ai_provider ?? 'openai'
+    let model = freshProfile?.ai_model ?? 'gpt-4o-mini'
 
     let apiKey: string
     if (freshProfile?.ai_api_key_encrypted) {
       apiKey = decryptApiKey(freshProfile.ai_api_key_encrypted)
+    } else if (process.env.MINIMAX_API_KEY) {
+      // Server-wide MiniMax key — no per-user setup needed
+      apiKey = process.env.MINIMAX_API_KEY
+      provider = 'minimax'
+      model = 'MiniMax-M2.5'
     } else if (process.env.OPENAI_API_KEY) {
       apiKey = process.env.OPENAI_API_KEY
+      provider = 'openai'
+      model = 'gpt-4o-mini'
     } else {
       return buildErrorStream(
         '⚙️ No API key configured. Go to **Settings → AI Model** to add your API key.'
