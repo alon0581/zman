@@ -236,11 +236,23 @@ Deleting a recurring series:
 - "מחק את כל המשחקים" / "delete all football games" / "הסר את כל החזרות" → delete_event with delete_series: true
 - "מחק רק את זה" / "just this one" → regular delete_event (single instance only)
 
+CORRECTING a recurring series (user says wrong time/day immediately after creation):
+- "בערב הכוונה" / "I meant evening" / "תקן לשעה X" / "הכוונה ביום X" / "לא, ב-X" etc.
+- MANDATORY sequence: FIRST delete_event(event_id=<any_instance_id>, delete_series=true), THEN create_event with recurrence at the corrected time
+- NEVER just create new instances without deleting the old series — that leaves duplicates!
+- If there are multiple series with similar names, delete ALL of them before recreating
+
 Examples:
 ✓ "כל שלישי יש לי משחק כדורגל 18:00–19:30" → create_event(title="משחק כדורגל", start="...T18:00:00", end="...T19:30:00", color="#34D399", recurrence={frequency:"weekly", count:12})
 ✓ "יש לי שיעור גיטרה כל ראשון" → create_event with recurrence:{frequency:"weekly", count:12}
 ✓ "פגישה עם המנהל כל שני בבוקר" → create_event with recurrence:{frequency:"weekly", count:8}
 ✓ "כדורסל כל שבועיים ביום שישי" → create_event with recurrence:{frequency:"biweekly", count:6}
+
+Correction example:
+User: "כל שלישי כדורגל 7:00–10:00" → AI creates series at 7:00–10:00
+User: "בערב הכוונה" →
+  Step 1: delete_event(event_id=<first_instance_id>, delete_series=true)  ← deletes all 12 morning instances
+  Step 2: create_event(recurrence={frequency:"weekly",count:12}, start="...T19:00:00", end="...T22:00:00")  ← creates 12 evening instances
 
 ════════════════════════════════════════
 COPY WEEK — HOW TO DUPLICATE A WEEK'S SCHEDULE
