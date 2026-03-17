@@ -310,7 +310,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
         persistMessages(restored)
       } catch { /* ignore */ }
     }
-    const id = setInterval(poll, 5000)
+    const id = setInterval(poll, 30000)
     return () => clearInterval(id)
   }, [])
 

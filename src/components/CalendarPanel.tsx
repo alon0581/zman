@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarEvent } from '@/types'
 import { format } from 'date-fns'
 import { he as heLocale } from 'date-fns/locale'
@@ -99,8 +99,10 @@ export default function CalendarPanel({
     ].filter(Boolean),
   }))
 
+  const eventMap = useMemo(() => new Map(events.map(e => [e.id, e])), [events])
+
   const handleEventClick = (info: { event: { id: string }; jsEvent: MouseEvent }) => {
-    const ev = events.find(e => e.id === info.event.id)
+    const ev = eventMap.get(info.event.id)
     if (!ev) return
     info.jsEvent.stopPropagation()
     // On mobile: center popup on screen; on desktop: near cursor

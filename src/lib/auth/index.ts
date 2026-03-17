@@ -13,7 +13,35 @@ import fs from 'fs'
 import path from 'path'
 
 // Secret for signing tokens — set AUTH_SECRET in .env.local for production
-const SECRET = process.env.AUTH_SECRET ?? 'zman-dev-secret-please-change-me'
+const DEFAULT_SECRET = 'zman-dev-secret-please-change-me'
+const SECRET = process.env.AUTH_SECRET ?? DEFAULT_SECRET
+
+if (process.env.NODE_ENV === 'production' && SECRET === DEFAULT_SECRET) {
+  console.error('[AUTH] CRITICAL: AUTH_SECRET is not set! Using insecure default. Set AUTH_SECRET in Railway environment variables.')
+}
+
+// ─── Rate limiting ──────────────────────────────────────────────────────────
+// Simple in-memory store: key → [timestamp, attempts]
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+const RATE_WINDOW_MS = 15 * 60 * 1000  // 15 minutes
+const RATE_MAX_LOGIN  = 10  // max login attempts per window
+const RATE_MAX_REGISTER = 5  // max registrations per window
+
+export function checkRateLimit(key: string, max: number): { allowed: boolean; retryAfterMs: number } {
+  const now = Date.now()
+  const entry = rateLimitMap.get(key)
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS })
+    return { allowed: true, retryAfterMs: 0 }
+  }
+  entry.count++
+  if (entry.count > max) {
+    return { allowed: false, retryAfterMs: entry.resetAt - now }
+  }
+  return { allowed: true, retryAfterMs: 0 }
+}
+
+export { RATE_MAX_LOGIN, RATE_MAX_REGISTER }
 
 const DATA_DIR   = path.join(process.cwd(), 'data')
 const USERS_FILE = path.join(DATA_DIR, 'auth', 'users.json')
@@ -115,14 +143,14 @@ export function loginUser(
   return { success: true, userId: user.id, token: makeToken(user.id) }
 }
 
-/** Reset password — no old password required (for "forgot password" flow) */
+/** Change password — requires an authenticated userId (session must already be valid) */
 export function resetPassword(
-  email: string,
+  userId: string,
   newPassword: string
 ): { success: true } | { success: false; error: string } {
   const users = readUsers()
-  const idx   = users.findIndex(u => u.email === email.toLowerCase().trim())
-  if (idx === -1) return { success: false, error: 'אימייל לא נמצא במערכת' }
+  const idx   = users.findIndex(u => u.id === userId)
+  if (idx === -1) return { success: false, error: 'משתמש לא נמצא' }
   if (newPassword.length < 6) return { success: false, error: 'הסיסמה חייבת להכיל לפחות 6 תווים' }
 
   const salt         = crypto.randomBytes(16).toString('hex')

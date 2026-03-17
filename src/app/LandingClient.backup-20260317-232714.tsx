@@ -183,12 +183,12 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
 
   useEffect(() => { setScrolled(scrollY > 40) }, [scrollY])
 
-  // Sticky showcase scene calculation — use live getBoundingClientRect, no stale top ref
+  // Sticky showcase scene calculation
   useEffect(() => {
     if (!showcaseRef.current || isMobile) return
-    const scrolledIn = Math.max(0, -(showcaseRef.current.getBoundingClientRect().top))
-    const scrollableH = viewportH * 1.6   // 260vh container minus 100vh sticky panel
-    const progress = Math.min(1, scrolledIn / Math.max(1, scrollableH))
+    const sectionH = viewportH * 3.5
+    const raw = (scrollY - showcaseTop.current) / sectionH
+    const progress = Math.max(0, Math.min(1, raw))
     const newScene = Math.min(3, Math.floor(progress * 4))
     if (newScene !== scene) {
       setSceneEntering(false)
@@ -207,16 +207,14 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
     : { textY: 0, textOp: 1, mockY: 0, mockScale: 1, orb1Y: 0, orb2Y: 0 }
 
   const sp = isMobile ? '80px 24px' : '120px 60px'
-  const featureRef0 = useInView(); const featureRef1 = useInView(); const featureRef2 = useInView()
-  const featureRefs = [featureRef0, featureRef1, featureRef2]
-  const stepRef0 = useInView(); const stepRef1 = useInView(); const stepRef2 = useInView()
-  const stepRefs = [stepRef0, stepRef1, stepRef2]
+  const featureRefs = [useInView(), useInView(), useInView()] // eslint-disable-line react-hooks/rules-of-hooks
+  const stepRefs    = [useInView(), useInView(), useInView()] // eslint-disable-line react-hooks/rules-of-hooks
   const ctaRef      = useInView(0.2)
   const featTitleRef = useInView(0.3)
   const stepsTitleRef = useInView(0.3)
 
   return (
-    <div dir={isRTL ? 'rtl' : 'ltr'} style={{ minHeight: '100vh', background: 'transparent', fontFamily: 'var(--font-inter, system-ui, sans-serif)', overflowX: 'clip' }}>
+    <div dir={isRTL ? 'rtl' : 'ltr'} style={{ minHeight: '100vh', background: 'transparent', fontFamily: 'var(--font-inter, system-ui, sans-serif)', overflowX: 'hidden' }}>
 
       <style>{`
         @keyframes landingFadeUp {
@@ -235,21 +233,13 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
           from { clip-path: inset(0 0% 0 100%); opacity: 0.2; }
           to   { clip-path: inset(0 0% 0 0);    opacity: 1; }
         }
-        @keyframes mockupSlide {
-          from { opacity: 0; transform: translateX(-14px); }
-          to   { opacity: 1; transform: translateX(0); }
+        @keyframes sceneIn {
+          from { opacity: 0; transform: translateY(28px); }
+          to   { opacity: 1; transform: translateY(0); }
         }
-        @keyframes mockupBubble {
-          from { opacity: 0; transform: translateY(10px) scale(0.94); }
-          to   { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @keyframes mockupPulse {
-          0%, 100% { transform: scaleX(0.97); opacity: 0.5; }
-          50%      { transform: scaleX(1.02); opacity: 1; }
-        }
-        @keyframes scrollBounce {
-          0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.5; }
-          50%      { transform: translateX(-50%) translateY(7px); opacity: 1; }
+        @keyframes sceneOut {
+          from { opacity: 1; transform: translateY(0); }
+          to   { opacity: 0; transform: translateY(-20px); }
         }
       `}</style>
 
@@ -346,14 +336,14 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
 
           {/* Headline */}
           <div style={{
-            fontSize: isMobile ? 'clamp(48px, 12vw, 72px)' : 'clamp(72px, 8.5vw, 112px)',
-            fontWeight: 900, letterSpacing: '-0.045em', lineHeight: 1.02, marginBottom: 28,
+            fontSize: isMobile ? 'clamp(44px, 11vw, 64px)' : 'clamp(60px, 7vw, 92px)',
+            fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.04, marginBottom: 20,
             animation: 'landingFadeUp 0.7s 0.1s cubic-bezier(0.22,1,0.36,1) both',
           }}>
-            <div style={{ color: 'var(--text)', marginBottom: '0.06em' }}>{c.headline1}</div>
-            <div>
+            <div style={{ color: 'var(--text)' }}>{c.headline1}</div>
+            <div className="grad">
               {c.headline2.split(' ').map((word, i) => (
-                <span key={i} className="grad" style={{
+                <span key={i} style={{
                   display: 'inline-block',
                   animation: `landingFadeUp 0.6s ${0.18 + i * 0.09}s cubic-bezier(0.22,1,0.36,1) both`,
                   marginRight: isRTL ? 0 : '0.22em', marginLeft: isRTL ? '0.22em' : 0,
@@ -364,8 +354,8 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
 
           {/* Sub */}
           <p style={{
-            fontSize: isMobile ? 19 : 24, color: 'var(--text-2)', lineHeight: 1.55,
-            letterSpacing: '-0.01em', maxWidth: 580, margin: '0 auto 44px',
+            fontSize: isMobile ? 17 : 20, color: 'var(--text-2)', lineHeight: 1.55,
+            letterSpacing: '-0.01em', maxWidth: 520, margin: '0 auto 36px',
             animation: 'landingFadeUp 0.7s 0.22s cubic-bezier(0.22,1,0.36,1) both',
           }}>{c.sub}</p>
 
@@ -376,16 +366,16 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
             animation: 'landingFadeUp 0.7s 0.34s cubic-bezier(0.22,1,0.36,1) both',
           }}>
             <a href="/login" className="btn-primary" style={{
-              padding: '17px 36px', borderRadius: 'var(--radius-lg)',
-              fontSize: 18, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
+              padding: '15px 30px', borderRadius: 'var(--radius-lg)',
+              fontSize: 16, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
               width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
             }}>{c.cta1}</a>
             <a href="/login" style={{
-              padding: '16px 32px', borderRadius: 'var(--radius-lg)',
+              padding: '14px 28px', borderRadius: 'var(--radius-lg)',
               border: ghostHover ? '1px solid var(--blue)' : '1px solid var(--border-hi)',
               background: 'transparent',
               color: ghostHover ? 'var(--text)' : 'var(--text-2)',
-              fontSize: 18, fontWeight: 600, cursor: 'pointer', textDecoration: 'none', display: 'inline-block',
+              fontSize: 16, fontWeight: 600, cursor: 'pointer', textDecoration: 'none', display: 'inline-block',
               width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
               transition: 'border-color var(--t-base), color var(--t-base)',
             }}
@@ -395,7 +385,7 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
           </div>
 
           <p style={{
-            marginTop: 26, fontSize: 17, color: 'var(--text-2)', letterSpacing: '0.01em', fontWeight: 500,
+            marginTop: 22, fontSize: 13, color: 'var(--text-3)', letterSpacing: '-0.01em',
             animation: 'landingFadeUp 0.7s 0.44s cubic-bezier(0.22,1,0.36,1) both',
           }}>{c.proof}</p>
         </div>
@@ -436,7 +426,6 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
                       background: ev.color + '33', border: `1px solid ${ev.color}55`,
                       display: 'flex', alignItems: 'center', paddingLeft: 10,
                       fontSize: 10, color: ev.color, fontWeight: 600,
-                      animation: `mockupSlide 0.5s ${0.55 + i * 0.1}s cubic-bezier(0.22,1,0.36,1) both`,
                     }}>{ev.label}</div>
                   ))}
                 </div>
@@ -452,7 +441,6 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
                         : 'rgba(22,22,38,0.9)',
                       border: msg.user ? 'none' : '1px solid rgba(255,255,255,0.08)',
                       fontSize: 10, color: '#fff', lineHeight: 1.4,
-                      animation: `mockupBubble 0.45s ${0.65 + i * 0.18}s cubic-bezier(0.22,1,0.36,1) both`,
                     }}>{msg.text}</div>
                   ))}
                 </div>
@@ -474,14 +462,14 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
             <div
               ref={featTitleRef.ref}
               style={{
-                fontSize: isMobile ? 40 : 56, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.05, marginBottom: 16,
+                fontSize: isMobile ? 36 : 48, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.05, marginBottom: 14,
                 animation: featTitleRef.inView ? `${isRTL ? 'clipRevealRTL' : 'clipReveal'} 0.8s cubic-bezier(0.22,1,0.36,1) both` : undefined,
                 opacity: featTitleRef.inView ? undefined : 0,
               }}
             >
               <span className="grad">{c.featTitle}</span>
             </div>
-            <p style={{ fontSize: isMobile ? 17 : 20, color: 'var(--text-2)', letterSpacing: '-0.01em', maxWidth: 440, margin: '0 auto' }}>
+            <p style={{ fontSize: isMobile ? 16 : 18, color: 'var(--text-2)', letterSpacing: '-0.01em', maxWidth: 420, margin: '0 auto' }}>
               {c.featSub}
             </p>
           </div>
@@ -505,7 +493,7 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
 
       {/* ── STICKY SHOWCASE (desktop only) ── */}
       {!isMobile && (
-        <div ref={showcaseRef} style={{ position: 'relative', height: '260vh' }}>
+        <div ref={showcaseRef} style={{ position: 'relative', height: '350vh' }}>
           <div style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden' }}>
             {/* Section label */}
             <div style={{
@@ -523,17 +511,13 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
                 <div
                   key={scene}
                   style={{
-                    opacity: sceneEntering ? 1 : 0,
-                    transform: sceneEntering ? 'translateY(0)' : 'translateY(-18px)',
-                    transition: sceneEntering
-                      ? 'opacity 0.4s cubic-bezier(0.22,1,0.36,1), transform 0.4s cubic-bezier(0.22,1,0.36,1)'
-                      : 'opacity 0.15s ease-in, transform 0.15s ease-in',
+                    animation: sceneEntering ? 'sceneIn 0.45s cubic-bezier(0.22,1,0.36,1) both' : 'sceneOut 0.18s ease-in both',
                   }}
                 >
-                  <div style={{ fontSize: 58, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.04, marginBottom: 24 }}>
+                  <div style={{ fontSize: 48, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.04, marginBottom: 20 }}>
                     <span className="grad">{c.scenes[scene].title}</span>
                   </div>
-                  <p style={{ fontSize: 20, color: 'var(--text-2)', lineHeight: 1.65, letterSpacing: '-0.01em' }}>
+                  <p style={{ fontSize: 18, color: 'var(--text-2)', lineHeight: 1.65, letterSpacing: '-0.01em' }}>
                     {c.scenes[scene].desc}
                   </p>
                 </div>
@@ -545,26 +529,9 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
               </div>
             </div>
 
-            {/* Scroll hint — shown only when not on last scene */}
-            {scene < 3 && (
-              <div style={{
-                position: 'absolute', bottom: 60, left: '50%', transform: 'translateX(-50%)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-                animation: 'scrollBounce 1.4s ease-in-out infinite',
-                pointerEvents: 'none',
-              }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--blue)', letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.8 }}>
-                  {isRTL ? 'גלול' : 'scroll'}
-                </span>
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.85 }}>
-                  <path d="M12 5v14M5 12l7 7 7-7"/>
-                </svg>
-              </div>
-            )}
-
             {/* Progress dots */}
             <div style={{
-              position: 'absolute', bottom: 36, left: '50%', transform: 'translateX(-50%)',
+              position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)',
               display: 'flex', gap: 8, alignItems: 'center',
             }}>
               {[0,1,2,3].map(i => (
@@ -590,16 +557,16 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
             <div
               ref={stepsTitleRef.ref}
               style={{
-                fontSize: isMobile ? 36 : 52, fontWeight: 900, letterSpacing: '-0.04em', color: 'var(--text)', marginBottom: 14,
+                fontSize: isMobile ? 32 : 44, fontWeight: 900, letterSpacing: '-0.04em', color: 'var(--text)', marginBottom: 12,
                 animation: stepsTitleRef.inView ? `${isRTL ? 'clipRevealRTL' : 'clipReveal'} 0.8s cubic-bezier(0.22,1,0.36,1) both` : undefined,
                 opacity: stepsTitleRef.inView ? undefined : 0,
               }}
             >{c.stepsTitle}</div>
-            <p style={{ fontSize: 18, color: 'var(--text-2)', letterSpacing: '-0.01em' }}>{c.stepsSub}</p>
+            <p style={{ fontSize: 16, color: 'var(--text-2)', letterSpacing: '-0.01em' }}>{c.stepsSub}</p>
           </div>
           <div style={{
             display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
-            gap: isMobile ? 32 : 0, position: 'relative', direction: 'ltr',
+            gap: isMobile ? 32 : 0, position: 'relative',
           }}>
             {!isMobile && (
               <div style={{
@@ -632,23 +599,23 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
           zIndex: 0, pointerEvents: 'none',
         }} />
         <div style={{ position: 'relative', zIndex: 1, maxWidth: 600, margin: '0 auto' }}>
-          <div style={{ fontSize: isMobile ? 40 : 60, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.05, marginBottom: 20 }}>
+          <div style={{ fontSize: isMobile ? 36 : 52, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.05, marginBottom: 16 }}>
             <span className="grad">{c.ctaTitle}</span>
           </div>
-          <p style={{ fontSize: 19, color: 'var(--text-2)', marginBottom: 40, letterSpacing: '-0.01em' }}>{c.ctaSub}</p>
+          <p style={{ fontSize: 17, color: 'var(--text-2)', marginBottom: 36, letterSpacing: '-0.01em' }}>{c.ctaSub}</p>
           <div style={{
             display: 'flex', flexDirection: isMobile ? 'column' : 'row',
             alignItems: 'center', justifyContent: 'center', gap: 12,
           }}>
             <a href="/login" className="btn-primary" style={{
-              padding: '17px 36px', borderRadius: 'var(--radius-lg)',
-              fontSize: 18, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
+              padding: '15px 32px', borderRadius: 'var(--radius-lg)',
+              fontSize: 16, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
               width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
             }}>{c.ctaBtn}</a>
             <a href="/login" style={{
-              padding: '16px 32px', borderRadius: 'var(--radius-lg)',
+              padding: '14px 28px', borderRadius: 'var(--radius-lg)',
               border: '1px solid var(--border-hi)', background: 'transparent',
-              color: 'var(--text-2)', fontSize: 18, fontWeight: 600, cursor: 'pointer',
+              color: 'var(--text-2)', fontSize: 16, fontWeight: 600, cursor: 'pointer',
               textDecoration: 'none', display: 'inline-block',
               width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
               transition: 'color var(--t-base), border-color var(--t-base)',
@@ -729,8 +696,8 @@ function FeatureCard({ title, desc, icon, iconColor, iconBg, inViewData, delay, 
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           color: iconColor, marginBottom: 20,
         }}>{icon}</div>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', marginBottom: 14 }}>{title}</div>
-        <div style={{ fontSize: 16, color: 'var(--text-2)', lineHeight: 1.72, letterSpacing: '-0.01em' }}>{desc}</div>
+        <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', marginBottom: 10 }}>{title}</div>
+        <div style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.65, letterSpacing: '-0.01em' }}>{desc}</div>
       </div>
     </div>
   )
@@ -770,12 +737,12 @@ function StepCard({ s, inViewData, delay }: {
         background: 'rgba(59,126,247,0.10)', border: '1px solid rgba(59,126,247,0.22)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px',
       }}>
-        <span className="grad" style={{ fontSize: 24, fontWeight: 900, letterSpacing: '-0.04em' }}>
+        <span className="grad" style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.04em' }}>
           {count.toString().padStart(2, '0')}
         </span>
       </div>
-      <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', marginBottom: 12 }}>{s.title}</div>
-      <div style={{ fontSize: 16, color: 'var(--text-2)', lineHeight: 1.72, letterSpacing: '-0.01em', maxWidth: 260, margin: '0 auto' }}>{s.desc}</div>
+      <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', marginBottom: 10 }}>{s.title}</div>
+      <div style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.65, letterSpacing: '-0.01em', maxWidth: 220, margin: '0 auto' }}>{s.desc}</div>
     </div>
   )
 }
@@ -796,6 +763,7 @@ function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
           background: m.user ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'rgba(22,22,38,0.9)',
           border: m.user ? 'none' : '1px solid rgba(255,255,255,0.08)',
           fontSize: 13, color: '#fff', lineHeight: 1.45,
+          animation: `sceneIn 0.4s ${0.05 * i}s cubic-bezier(0.22,1,0.36,1) both`,
         }}>{m.text}</div>
       ))}
     </div>,
@@ -810,6 +778,7 @@ function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
       ].map((row, i) => (
         <div key={i} style={{
           display: 'flex', alignItems: 'center', gap: 12,
+          animation: `sceneIn 0.4s ${0.06 * i}s cubic-bezier(0.22,1,0.36,1) both`,
         }}>
           <span style={{ fontSize: 12, color: 'var(--text-3)', width: 38, flexShrink: 0 }}>{row.t}</span>
           <div style={{
@@ -839,6 +808,7 @@ function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
           paddingLeft: row.divider ? 0 : 12, justifyContent: row.divider ? 'center' : 'flex-start',
           fontSize: 12, color: row.color, fontWeight: 600,
           textDecoration: row.old ? 'line-through' : 'none', opacity: row.old ? 0.5 : 1,
+          animation: `sceneIn 0.4s ${0.07 * i}s cubic-bezier(0.22,1,0.36,1) both`,
         }}>{row.label}</div>
       ))}
     </div>,
@@ -853,6 +823,7 @@ function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
                 height: 28, borderRadius: 6,
                 background: ['#3B7EF722','#6366F122','#34D39922','#FBBF2422','#F9731622'][ei % 5],
                 border: `1px solid ${['#3B7EF7','#6366F1','#34D399','#FBBF24','#F97316'][ei % 5]}44`,
+                animation: `sceneIn 0.4s ${0.04 * (di + ei)}s cubic-bezier(0.22,1,0.36,1) both`,
               }} />
             ))}
           </div>
@@ -865,11 +836,7 @@ function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
     <div className="glass" style={{
       border: '1px solid var(--border-hi)', borderRadius: 'var(--radius-xl)',
       boxShadow: 'var(--shadow-xl)', overflow: 'hidden', minHeight: 260,
-      opacity: entering ? 1 : 0,
-      transform: entering ? 'translateY(0) scale(1)' : 'translateY(22px) scale(0.98)',
-      transition: entering
-        ? 'opacity 0.4s cubic-bezier(0.22,1,0.36,1), transform 0.4s cubic-bezier(0.22,1,0.36,1)'
-        : 'opacity 0.15s ease-in, transform 0.15s ease-in',
+      animation: entering ? 'sceneIn 0.45s cubic-bezier(0.22,1,0.36,1) both' : 'sceneOut 0.18s ease-in both',
     }}>
       <div style={{
         height: 36, background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid var(--border)',

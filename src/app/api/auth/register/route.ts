@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { registerUser, COOKIE_NAME, COOKIE_MAX_AGE } from '@/lib/auth'
+import { registerUser, checkRateLimit, RATE_MAX_REGISTER, COOKIE_NAME, COOKIE_MAX_AGE } from '@/lib/auth'
 import fs from 'fs'
 import path from 'path'
 import { UserProfile } from '@/types'
@@ -13,6 +13,13 @@ export async function POST(req: NextRequest) {
     }
     if (password.length < 6) {
       return NextResponse.json({ error: 'הסיסמה חייבת להכיל לפחות 6 תווים' }, { status: 400 })
+    }
+
+    // Rate limit: max 5 registrations per 15 min per IP
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0] ?? 'unknown'
+    const rl = checkRateLimit(`register:${ip}`, RATE_MAX_REGISTER)
+    if (!rl.allowed) {
+      return NextResponse.json({ error: 'יותר מדי ניסיונות. נסה שוב בעוד 15 דקות.' }, { status: 429 })
     }
 
     const result = registerUser(email, password)

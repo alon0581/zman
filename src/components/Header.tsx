@@ -78,6 +78,8 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
 
         <Btn
           onClick={async () => {
+            // Clear chat history from session storage before logout
+            try { sessionStorage.removeItem('zman_chat') } catch { /* ignore */ }
             // Always clear the file-based session cookie
             await fetch('/api/auth/logout', { method: 'POST' })
             // Also sign out from Supabase if configured

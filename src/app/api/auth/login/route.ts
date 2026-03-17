@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { loginUser, COOKIE_NAME, COOKIE_MAX_AGE } from '@/lib/auth'
+import { loginUser, checkRateLimit, RATE_MAX_LOGIN, COOKIE_NAME, COOKIE_MAX_AGE } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
   try {
@@ -7,6 +7,12 @@ export async function POST(req: NextRequest) {
 
     if (!email || !password) {
       return NextResponse.json({ error: 'נדרשים אימייל וסיסמה' }, { status: 400 })
+    }
+
+    // Rate limit: max 10 attempts per 15 min per email
+    const rl = checkRateLimit(`login:${email.toLowerCase().trim()}`, RATE_MAX_LOGIN)
+    if (!rl.allowed) {
+      return NextResponse.json({ error: 'יותר מדי ניסיונות. נסה שוב בעוד 15 דקות.' }, { status: 429 })
     }
 
     const result = loginUser(email, password)

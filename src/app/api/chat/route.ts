@@ -14,6 +14,9 @@ import path from 'path'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
+// Shared constants
+const BUFFER_MIN = 15  // minutes of breathing room between events
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function buildErrorStream(message: string): Response {
@@ -407,8 +410,20 @@ async function executeTool(
   profile: UserProfile | null,
   state: { completedProfile: UserProfile | null } = { completedProfile: null }
 ): Promise<unknown> {
+  // ── Input validation helpers ──────────────────────────────────────────────
+  const str  = (v: unknown): string  => (typeof v === 'string' ? v : '')
+  const num  = (v: unknown): number  => (typeof v === 'number' ? v : 0)
+  const bool = (v: unknown): boolean => (typeof v === 'boolean' ? v : false)
+
   switch (toolName) {
     case 'create_event': {
+      // Validate required fields
+      if (!str(input.title) || !str(input.start_time) || !str(input.end_time)) {
+        return { error: 'missing_required_fields', message: 'title, start_time, and end_time are required' }
+      }
+      if (isNaN(Date.parse(str(input.start_time))) || isNaN(Date.parse(str(input.end_time)))) {
+        return { error: 'invalid_date', message: 'start_time or end_time is not a valid date' }
+      }
       // ── Recurring shortcut: generate N instances, skip conflict checks ───
       const recurrence = input.recurrence as { frequency?: string; count?: number; end_date?: string } | undefined
       if (recurrence?.frequency) {
@@ -430,11 +445,11 @@ async function executeTool(
           const instance: CalendarEvent = {
             id: crypto.randomUUID(),
             user_id: userId,
-            title: input.title as string,
+            title: str(input.title),
             start_time: format(instanceStart, "yyyy-MM-dd'T'HH:mm:ss"),
             end_time: format(instanceEnd, "yyyy-MM-dd'T'HH:mm:ss"),
-            description: (input.description as string) || '',
-            color: (input.color as string) || '#3B7EF7',
+            description: str(input.description),
+            color: str(input.color) || '#3B7EF7',
             source: 'zman',
             created_by: 'ai',
             status: 'confirmed',
@@ -461,8 +476,8 @@ async function executeTool(
       const allKnownEvents = [...currentEvents, ...createdEvents]
 
       // 1. Duplicate check — same title on same day
-      const newTitle = (input.title as string).toLowerCase().trim()
-      const newDate = new Date(input.start_time as string).toDateString()
+      const newTitle = str(input.title).toLowerCase().trim()
+      const newDate = new Date(str(input.start_time)).toDateString()
       const duplicate = allKnownEvents.find(e =>
         new Date(e.start_time).toDateString() === newDate &&
         e.title.toLowerCase().trim() === newTitle
@@ -472,8 +487,8 @@ async function executeTool(
       }
 
       // 2. Overlap check — detect real time conflicts and suggest alternatives
-      const newStart = new Date(input.start_time as string)
-      const newEnd = new Date(input.end_time as string)
+      const newStart = new Date(str(input.start_time))
+      const newEnd = new Date(str(input.end_time))
       const overlapping = allKnownEvents.find(e => {
         const eStart = new Date(e.start_time)
         const eEnd = new Date(e.end_time)
@@ -495,7 +510,6 @@ async function executeTool(
       }
 
       // 3. Buffer check — warn if this event will be back-to-back with another
-      const BUFFER_MIN = 15
       const bufferWarnings: string[] = []
       for (const ev of allKnownEvents) {
         const evStart = new Date(ev.start_time)
@@ -510,18 +524,19 @@ async function executeTool(
         }
       }
 
+      const status = str(input.status)
       const event: CalendarEvent = {
         id: crypto.randomUUID(),
         user_id: userId,
-        title: input.title as string,
-        start_time: input.start_time as string,
-        end_time: input.end_time as string,
-        description: (input.description as string) || '',
-        color: (input.color as string) || '#3B7EF7',
+        title: str(input.title),
+        start_time: str(input.start_time),
+        end_time: str(input.end_time),
+        description: str(input.description),
+        color: str(input.color) || '#3B7EF7',
         source: 'zman',
         created_by: 'ai',
-        status: (input.status as 'confirmed' | 'proposed') || 'confirmed',
-        is_all_day: false,
+        status: (status === 'confirmed' || status === 'proposed') ? status : 'confirmed',
+        is_all_day: bool(input.is_all_day),
         created_at: new Date().toISOString(),
       }
 
