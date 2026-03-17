@@ -547,10 +547,15 @@ export default function ChatPanel({ user, profile: initProfile, events, language
             </button>
           )}
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3 }}>
-          {isOnboarding
-            ? (lang === 'he' ? 'ספר לי קצת עליך…' : 'Tell me a bit about yourself…')
-            : tr(lang, 'subtitle')}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+          {!isOnboarding && (
+            <div style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', flexShrink: 0, animation: 'pulseOnline 2.5s ease-in-out infinite' }} />
+          )}
+          <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+            {isOnboarding
+              ? (lang === 'he' ? 'ספר לי קצת עליך…' : 'Tell me a bit about yourself…')
+              : tr(lang, 'subtitle')}
+          </div>
         </div>
       </div>
 

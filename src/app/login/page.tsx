@@ -67,24 +67,26 @@ export default function LoginPage() {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', background: 'var(--bg)', padding: '24px',
+      justifyContent: 'center',
+      background: 'radial-gradient(ellipse at 50% -10%, rgba(59,126,247,0.14) 0%, transparent 55%), var(--bg)',
+      padding: '24px',
     }}>
       <div style={{ width: '100%', maxWidth: 380 }}>
 
         <div style={{ textAlign: 'center', marginBottom: 36 }}>
           <div style={{
-            width: 56, height: 56, borderRadius: 16,
+            width: 60, height: 60, borderRadius: 18,
             background: 'linear-gradient(135deg,#3B7EF7,#6366F1)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 24, fontWeight: 900, color: '#fff',
-            boxShadow: '0 8px 24px rgba(59,126,247,0.45)',
-            margin: '0 auto 16px',
+            fontSize: 26, fontWeight: 900, color: '#fff',
+            boxShadow: '0 8px 32px rgba(59,126,247,0.5), 0 0 0 1px rgba(99,102,241,0.3)',
+            margin: '0 auto 18px',
           }}>Z</div>
-          <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.04em', color: 'var(--text)', marginBottom: 6 }}>Zman</div>
-          <div style={{ fontSize: 14, color: 'var(--text-2)' }}>Your AI-Powered Life Scheduler</div>
+          <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: '-0.04em', color: 'var(--text)', marginBottom: 6 }}>Zman</div>
+          <div style={{ fontSize: 14, color: 'var(--text-2)', letterSpacing: '-0.01em' }}>Your AI-Powered Life Scheduler</div>
         </div>
 
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 20, padding: '28px 24px' }}>
+        <div style={{ background: 'var(--bg-panel)', border: '1px solid var(--border-hi)', borderRadius: 'var(--radius-xl)', padding: '32px 28px', boxShadow: 'var(--shadow-xl)' }}>
 
           {mode !== 'reset' && (
             <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: 10, padding: 3, marginBottom: 24, gap: 2 }}>

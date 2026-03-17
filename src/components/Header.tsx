@@ -23,9 +23,9 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
     <header style={{
       height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '0 24px', flexShrink: 0,
-      background: 'rgba(0,0,0,0.65)',
-      backdropFilter: 'blur(20px)',
-      WebkitBackdropFilter: 'blur(20px)',
+      background: 'rgba(7,7,12,0.84)',
+      backdropFilter: 'blur(28px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(28px) saturate(180%)',
       borderBottom: '1px solid var(--border)',
       position: 'sticky', top: 0, zIndex: 20,
       // Always LTR so logo is always on the left, actions on the right
@@ -62,7 +62,7 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
         {user.user_metadata?.avatar_url
           ? <img
               src={user.user_metadata.avatar_url}
-              style={{ width: 32, height: 32, borderRadius: '50%', border: '1.5px solid var(--border-hi)', flexShrink: 0 }}
+              style={{ width: 32, height: 32, borderRadius: '50%', border: '1.5px solid var(--border-hi)', flexShrink: 0, boxShadow: '0 0 0 2px var(--border)' }}
               alt=""
             />
           : <div style={{
@@ -70,6 +70,7 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
               background: 'linear-gradient(135deg,#3B7EF7,#6366F1)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 13, fontWeight: 800, color: '#fff', flexShrink: 0,
+              boxShadow: '0 0 0 2px var(--border)',
             }}>
               {(user.email?.[0] ?? 'U').toUpperCase()}
             </div>
@@ -110,7 +111,7 @@ function Btn({ children, onClick, title, style }: {
         ...style,
       }}
       onMouseEnter={e => {
-        (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.08)'
+        (e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'
         ;(e.currentTarget as HTMLElement).style.color = 'var(--text)'
       }}
       onMouseLeave={e => {

@@ -321,29 +321,29 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     }
   }
 
-  const selectStyle = {
-    background: '#1A2030', border: '1px solid rgba(255,255,255,0.1)',
-    color: '#EDF0F7', borderRadius: 10, padding: '8px 12px',
+  const selectStyle: React.CSSProperties = {
+    background: 'var(--bg-input)', border: '1px solid var(--border-hi)',
+    color: 'var(--text)', borderRadius: 10, padding: '8px 12px',
     fontSize: 13, outline: 'none', cursor: 'pointer',
   }
 
   const inner = (
-    <div dir={isRTL ? 'rtl' : 'ltr'} style={{ background: '#07090F', color: '#EDF0F7', fontFamily: 'var(--font-inter, system-ui, sans-serif)', ...(onClose ? {} : { minHeight: '100vh' }) }}>
+    <div dir={isRTL ? 'rtl' : 'ltr'} style={{ background: 'var(--bg)', color: 'var(--text)', fontFamily: 'var(--font-inter, system-ui, sans-serif)', ...(onClose ? {} : { minHeight: '100vh' }) }}>
 
       {/* Top bar */}
-      <div style={{ background: '#0C1018', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '0 20px', height: 56, display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)', padding: '0 20px', height: 56, display: 'flex', alignItems: 'center', gap: 12 }}>
         {onClose ? (
-          <button onClick={onClose} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.05)', color: '#9AA3B8', border: 'none', cursor: 'pointer' }}>
+          <button onClick={onClose} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'var(--border)', color: 'var(--text-2)', border: 'none', cursor: 'pointer' }}>
             <X size={16} />
           </button>
         ) : (
-          <Link href="/" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(255,255,255,0.05)', color: '#9AA3B8', textDecoration: 'none' }}>
+          <Link href="/" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 10, background: 'var(--border)', color: 'var(--text-2)', textDecoration: 'none' }}>
             <ArrowLeft size={16} style={{ transform: isRTL ? 'scaleX(-1)' : undefined }} />
           </Link>
         )}
         <div>
           <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: '-0.02em' }}>{t(lang, 'title')}</div>
-          <div style={{ fontSize: 12, color: '#5A6A8A', marginTop: 1 }}>{t(lang, 'subtitle')}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 1 }}>{t(lang, 'subtitle')}</div>
         </div>
       </div>
 
@@ -365,17 +365,17 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
         {/* ── AI MODEL ── */}
         <SectionLabel label={t(lang, 'aiModelSection')} />
-        <div style={{ background: '#111622', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
 
           {/* Provider cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'rgba(255,255,255,0.05)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--border)' }}>
             {PROVIDERS.map((info) => {
               const isConnected = activeProvider === info.id
               return (
                 <div
                   key={info.id}
                   style={{
-                    background: '#111622',
+                    background: 'var(--bg-card)',
                     padding: '16px 18px',
                     position: 'relative',
                     outline: isConnected ? '2px solid #3B7EF7' : 'none',
@@ -391,7 +391,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
                   <div style={{ fontSize: 20, marginBottom: 6 }}>{info.logo}</div>
                   <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{info.name}</div>
-                  <div style={{ fontSize: 11, color: '#5A6A8A', marginBottom: 12, lineHeight: 1.4 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.4 }}>
                     {t(lang, info.descKey)}
                   </div>
 
@@ -399,7 +399,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#34D399', fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                         <CheckCircle2 size={13} /> {t(lang, 'connectedLabel')}
-                        {maskedKey && <span style={{ color: '#5A6A8A', fontFamily: 'monospace', fontSize: 11 }}>{maskedKey}</span>}
+                        {maskedKey && <span style={{ color: 'var(--text-2)', fontFamily: 'monospace', fontSize: 11 }}>{maskedKey}</span>}
                       </div>
                       <button
                         onClick={handleDisconnect}
@@ -411,7 +411,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                   ) : (
                     <button
                       onClick={() => handleConnect(info)}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.12)', background: info.recommended ? 'linear-gradient(135deg, #3B7EF7, #6366F1)' : '#1A2030', color: info.recommended ? '#fff' : '#EDF0F7', fontSize: 13, fontWeight: 600, cursor: 'pointer', boxShadow: info.recommended ? '0 2px 12px rgba(59,126,247,0.35)' : 'none' }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, border: '1px solid var(--border-hi)', background: info.recommended ? 'linear-gradient(135deg, #3B7EF7, #6366F1)' : 'var(--bg-input)', color: info.recommended ? '#fff' : 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer', boxShadow: info.recommended ? '0 2px 12px rgba(59,126,247,0.35)' : 'none' }}
                     >
                       {t(lang, 'connectBtn')}
                     </button>
@@ -423,13 +423,13 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
           {/* Server AI banner — shown when no personal API key is configured */}
           {!activeProvider && (
-            <div style={{ padding: '12px 18px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(52,211,153,0.04)' }}>
+            <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(52,211,153,0.04)' }}>
               <CheckCircle2 size={15} color="#34D399" style={{ flexShrink: 0 }} />
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#34D399' }}>
                   {lang === 'he' ? '🌊 MiniMax M2.5 — מפתח שרת פעיל' : '🌊 MiniMax M2.5 — Server key active'}
                 </div>
-                <div style={{ fontSize: 11, color: '#5A6A8A', marginTop: 2 }}>
+                <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 2 }}>
                   {lang === 'he' ? 'ה-AI פעיל ללא מפתח אישי. חבר ספק לעיל כדי לשנות מודל.' : 'AI is active, no personal key needed. Connect a provider above to switch models.'}
                 </div>
               </div>
@@ -438,10 +438,10 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
           {/* Active model selector (shown when a provider is connected) */}
           {activeProvider && (
-            <div style={{ padding: '14px 18px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 14, color: '#EDF0F7' }}>{t(lang, 'modelLabel')}</div>
-                <div style={{ fontSize: 12, color: '#5A6A8A', marginTop: 2 }}>{t(lang, 'modelDesc')}</div>
+                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{t(lang, 'modelLabel')}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>{t(lang, 'modelDesc')}</div>
               </div>
               <select
                 value={activeModel}
@@ -576,7 +576,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
             }
             <div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{user.user_metadata?.full_name ?? user.email}</div>
-              <div style={{ fontSize: 12, color: '#5A6A8A', marginTop: 2 }}>{user.email}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>{user.email}</div>
             </div>
           </div>
           <button
@@ -585,7 +585,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
               try { await supabase.auth.signOut() } catch { /* local mode */ }
               window.location.href = '/login'
             }}
-            style={{ width: '100%', padding: '11px 16px', borderRadius: 12, background: '#1A2030', border: '1px solid rgba(255,255,255,0.1)', color: '#EDF0F7', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginBottom: 8 }}
+            style={{ width: '100%', padding: '11px 16px', borderRadius: 12, background: 'var(--bg-input)', border: '1px solid var(--border-hi)', color: 'var(--text)', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginBottom: 8 }}
           >
             {t(lang, 'signOutBtn')}
           </button>
@@ -613,34 +613,34 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
       {/* ── WIZARD MODAL (OpenAI / Anthropic) ── */}
       {wizardProvider && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
-          <div style={{ background: '#111622', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20, padding: 28, width: '100%', maxWidth: 440 }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-hi)', borderRadius: 20, padding: 28, width: '100%', maxWidth: 440 }}>
             <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 20 }}>
               {wizardProvider.logo} {t(lang, 'wizardTitle')} {wizardProvider.name}
             </div>
 
-            <div style={{ fontSize: 13, color: '#9AA3B8', marginBottom: 10 }}>{t(lang, 'wizardStep1')}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 10 }}>{t(lang, 'wizardStep1')}</div>
             <a
               href={wizardProvider.keyUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, background: '#1A2030', border: '1px solid rgba(255,255,255,0.1)', color: '#9AA3B8', fontSize: 13, textDecoration: 'none', marginBottom: 20 }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, background: 'var(--bg-input)', border: '1px solid var(--border-hi)', color: 'var(--text-2)', fontSize: 13, textDecoration: 'none', marginBottom: 20 }}
             >
               <ExternalLink size={13} /> {wizardProvider.keyUrl?.replace('https://', '')}
             </a>
 
-            <div style={{ fontSize: 13, color: '#9AA3B8', marginBottom: 10 }}>{t(lang, 'wizardStep2')}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 10 }}>{t(lang, 'wizardStep2')}</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <input
                 type="password"
                 value={wizardKey}
                 onChange={e => { setWizardKey(e.target.value); setVerifyState('idle') }}
                 placeholder={t(lang, 'wizardKeyPlaceholder')}
-                style={{ flex: 1, background: '#1A2030', border: '1px solid rgba(255,255,255,0.1)', color: '#EDF0F7', borderRadius: 10, padding: '9px 12px', fontSize: 13, outline: 'none', fontFamily: 'monospace' }}
+                style={{ flex: 1, background: 'var(--bg-input)', border: '1px solid var(--border-hi)', color: 'var(--text)', borderRadius: 10, padding: '9px 12px', fontSize: 13, outline: 'none', fontFamily: 'monospace' }}
               />
               <button
                 onClick={verifyWizardKey}
                 disabled={verifyState === 'verifying' || !wizardKey.trim()}
-                style={{ padding: '9px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: '#1A2030', color: '#EDF0F7', fontSize: 13, fontWeight: 600, cursor: verifyState === 'verifying' ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: !wizardKey.trim() ? 0.4 : 1 }}
+                style={{ padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border-hi)', background: 'var(--bg-input)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: verifyState === 'verifying' ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: !wizardKey.trim() ? 0.4 : 1 }}
               >
                 {verifyState === 'verifying'
                   ? <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> {t(lang, 'verifyingBtn')}</>
@@ -664,7 +664,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
             <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
               <button
                 onClick={() => setWizardProvider(null)}
-                style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.1)', background: '#1A2030', color: '#9AA3B8', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
+                style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border-hi)', background: 'var(--bg-input)', color: 'var(--text-2)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
               >
                 {t(lang, 'cancelBtn')}
               </button>
@@ -690,7 +690,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
         style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', overflowY: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '32px 16px 48px' }}
         onClick={e => { if (e.target === e.currentTarget) onClose() }}
       >
-        <div style={{ width: '100%', maxWidth: 620, borderRadius: 20, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 64px rgba(0,0,0,0.6)' }}>
+        <div style={{ width: '100%', maxWidth: 620, borderRadius: 20, overflow: 'hidden', border: '1px solid var(--border-hi)', boxShadow: 'var(--shadow-xl)' }}>
           {inner}
         </div>
       </div>
@@ -703,7 +703,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
 function SectionLabel({ label }: { label: string }) {
   return (
-    <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5A6A8A', marginBottom: 8, paddingLeft: 4 }}>
+    <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-2)', marginBottom: 8, paddingLeft: 4 }}>
       {label}
     </div>
   )
@@ -713,7 +713,7 @@ function Card({ label, children }: { label: string; children: React.ReactNode })
   return (
     <div style={{ marginBottom: 16 }}>
       <SectionLabel label={label} />
-      <div style={{ background: '#111622', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 16, overflow: 'hidden' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
         {children}
       </div>
     </div>
@@ -722,10 +722,10 @@ function Card({ label, children }: { label: string; children: React.ReactNode })
 
 function Row({ label, desc, children }: { label: string; desc: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, padding: '14px 18px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20, padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
       <div style={{ flex: '0 1 auto', minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, color: '#EDF0F7', whiteSpace: 'nowrap' }}>{label}</div>
-        {desc && <div style={{ fontSize: 12, color: '#5A6A8A', marginTop: 2 }}>{desc}</div>}
+        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', whiteSpace: 'nowrap' }}>{label}</div>
+        {desc && <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>{desc}</div>}
       </div>
       <div style={{ flexShrink: 0 }}>{children}</div>
     </div>
@@ -738,7 +738,7 @@ function SegmentedControl({ options, value, onChange }: {
   onChange: (v: string) => void
 }) {
   return (
-    <div style={{ display: 'flex', background: '#0C1018', borderRadius: 10, padding: 3, gap: 2, border: '1px solid rgba(255,255,255,0.07)' }}>
+    <div style={{ display: 'flex', background: 'var(--bg-panel)', borderRadius: 10, padding: 3, gap: 2, border: '1px solid var(--border)' }}>
       {options.map(opt => (
         <button
           key={opt.value}
@@ -746,9 +746,9 @@ function SegmentedControl({ options, value, onChange }: {
           style={{
             padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
             background: value === opt.value ? 'linear-gradient(135deg, #3B7EF7, #6366F1)' : 'transparent',
-            color: value === opt.value ? '#fff' : '#5A6A8A',
+            color: value === opt.value ? '#fff' : 'var(--text-2)',
             boxShadow: value === opt.value ? '0 2px 8px rgba(59,126,247,0.4)' : 'none',
-            transition: 'all 0.15s',
+            transition: 'all var(--t-base)',
           }}
         >
           {opt.label}
@@ -764,7 +764,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
       onClick={() => onChange(!value)}
       style={{
         width: 48, height: 26, borderRadius: 13, border: 'none', cursor: 'pointer', position: 'relative', flexShrink: 0,
-        background: value ? 'linear-gradient(135deg, #3B7EF7, #6366F1)' : '#1A2030',
+        background: value ? 'linear-gradient(135deg, #3B7EF7, #6366F1)' : 'var(--bg-input)',
         boxShadow: value ? '0 2px 10px rgba(59,126,247,0.4)' : 'inset 0 1px 3px rgba(0,0,0,0.3)',
         transition: 'all 0.2s',
       }}

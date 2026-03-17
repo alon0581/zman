@@ -11,7 +11,7 @@
 
   --text:         #F5F5F7;
   --text-2:       #86868B;
-  --text-3:       #3D3D42;
+  --text-3:       #525258;
 
   --blue:         #3B7EF7;
   --blue-dark:    #2563EB;
@@ -19,6 +19,27 @@
   --green:        #34D399;
   --red:          #F87171;
   --yellow:       #FBBF24;
+
+  /* Radius scale */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+
+  /* Shadow scale */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.18), 0 1px 2px rgba(0,0,0,0.1);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.28), 0 1px 4px rgba(0,0,0,0.12);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.18);
+  --shadow-xl: 0 24px 64px rgba(0,0,0,0.6), 0 4px 16px rgba(0,0,0,0.22);
+
+  /* Blue glow */
+  --blue-glow: 0 4px 20px rgba(59,126,247,0.45);
+
+  /* Transition presets */
+  --t-fast:   100ms cubic-bezier(0.4,0,0.2,1);
+  --t-base:   150ms cubic-bezier(0.4,0,0.2,1);
+  --t-slow:   250ms cubic-bezier(0.4,0,0.2,1);
+  --t-spring: 380ms cubic-bezier(0.34,1.56,0.64,1);
 }
 
 [data-theme="light"] {
@@ -32,6 +53,12 @@
   --text-2:    #6E6E73;
   --text-3:    #AEAEB2;
   --blue:      #2563EB;
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
+  --shadow-xl: 0 24px 64px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
+  --blue-glow: 0 4px 20px rgba(37,99,235,0.25);
 }
 
 /* ─── Reset ─── */
@@ -147,7 +174,7 @@ input  { touch-action: manipulation; }
 /* Time labels */
 .fc .fc-timegrid-slot-label-cushion {
   font-size: 11px !important;
-  color: var(--text-3) !important;
+  color: var(--text-2) !important;
   padding-right: 10px !important;
 }
 
@@ -163,7 +190,7 @@ input  { touch-action: manipulation; }
 .fc .fc-scrollgrid-section > td { border: none !important; }
 
 /* Today column tint */
-.fc .fc-day-today { background: rgba(59,126,247,0.04) !important; }
+.fc .fc-day-today { background: rgba(59,126,247,0.06) !important; }
 
 /* Events */
 .fc .fc-event {
@@ -184,13 +211,13 @@ input  { touch-action: manipulation; }
 .fc .fc-timegrid-now-indicator-arrow { border-top-color: var(--red); border-bottom-color: var(--red); }
 
 /* Proposed */
-.fc-event.ai-proposed { opacity: 0.55; border: 1.5px dashed rgba(255,255,255,0.3) !important; }
+.fc-event.ai-proposed { opacity: 0.5; border: 1.5px dashed var(--border-hi) !important; }
 
 /* New event pulse */
 @keyframes pulse {
-  0%  { box-shadow: 0 0 0 0   rgba(59,126,247,0.7); }
-  70% { box-shadow: 0 0 0 10px rgba(59,126,247,0); }
-  100%{ box-shadow: 0 0 0 0   transparent; }
+  0%  { box-shadow: 0 0 0 0  rgba(59,126,247,0.65); }
+  70% { box-shadow: 0 0 0 8px rgba(59,126,247,0); }
+  100%{ box-shadow: 0 0 0 0  transparent; }
 }
 .fc-event.ai-new { animation: pulse 2s ease-out; }
 
@@ -200,6 +227,12 @@ input  { touch-action: manipulation; }
   50%     { transform: scale(1.08); box-shadow: 0 0 0 16px rgba(239,68,68,0); }
 }
 .mic-recording { animation: micPulse 0.9s infinite; }
+
+/* ─── Online indicator pulse ─── */
+@keyframes pulseOnline {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%     { opacity: 0.55; transform: scale(0.85); }
+}
 
 /* ─── Typing dots ─── */
 @keyframes dotBounce {
@@ -212,6 +245,29 @@ input  { touch-action: manipulation; }
 
 /* ─── Gradient text ─── */
 .grad { background: linear-gradient(135deg,#3B7EF7,#818CF8); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+
+/* ─── Glass surface ─── */
+.glass {
+  background: rgba(10,10,15,0.75);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+}
+[data-theme="light"] .glass {
+  background: rgba(255,255,255,0.82);
+}
+
+/* ─── Primary gradient button ─── */
+.btn-primary {
+  background: linear-gradient(135deg, var(--blue), var(--indigo));
+  color: #fff !important;
+  box-shadow: var(--blue-glow);
+  border: none !important;
+  cursor: pointer;
+  transition: opacity var(--t-base), transform var(--t-base), box-shadow var(--t-base);
+}
+.btn-primary:hover:not(:disabled)  { opacity: 0.88; transform: translateY(-1px); }
+.btn-primary:active:not(:disabled) { opacity: 1; transform: translateY(0); box-shadow: none; }
+.btn-primary:disabled { opacity: 0.45; cursor: default; }
 
 /* ─── FullCalendar "+N more" popover ─── */
 .fc-popover {
@@ -251,9 +307,9 @@ input  { touch-action: manipulation; }
   box-shadow: 0 8px 32px rgba(0,0,0,0.15) !important;
 }
 
-/* ─── Event popup ─── */
+/* ─── Event popup spring entry ─── */
 @keyframes popupIn {
-  from { opacity: 0; transform: scale(0.92) translateY(6px); }
+  from { opacity: 0; transform: scale(0.86) translateY(10px); }
   to   { opacity: 1; transform: scale(1)    translateY(0); }
 }
 

@@ -97,10 +97,10 @@ export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: P
         width: 268,
         background: 'var(--bg-card)',
         border: '1px solid var(--border-hi)',
-        borderRadius: 16,
-        boxShadow: '0 24px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.05)',
+        borderRadius: 18,
+        boxShadow: 'var(--shadow-xl), 0 0 0 1px rgba(255,255,255,0.06)',
         overflow: 'hidden',
-        animation: 'popupIn 0.15s cubic-bezier(0.34,1.56,0.64,1)',
+        animation: 'popupIn var(--t-spring)',
       }}
     >
       {/* Color accent bar */}
@@ -147,10 +147,10 @@ export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: P
               style={{
                 width: 22, height: 22, borderRadius: '50%', cursor: 'pointer',
                 background: c.hex,
-                border: color === c.hex ? '2px solid white' : '2px solid transparent',
-                boxShadow: color === c.hex ? `0 0 0 2px ${c.hex}` : 'none',
-                transform: color === c.hex ? 'scale(1.2)' : 'scale(1)',
-                transition: 'transform 0.12s, box-shadow 0.12s',
+                border: color === c.hex ? '2px solid rgba(255,255,255,0.9)' : '2px solid transparent',
+                boxShadow: color === c.hex ? `0 0 0 2px ${c.hex}, 0 0 0 4px rgba(255,255,255,0.12)` : 'none',
+                transform: color === c.hex ? 'scale(1.22)' : 'scale(1)',
+                transition: 'transform var(--t-fast), box-shadow var(--t-fast)',
               }}
             />
           ))}
@@ -161,14 +161,14 @@ export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: P
           <button
             onClick={handleDelete}
             style={{
-              padding: '8px 12px', borderRadius: 10,
-              border: '1px solid rgba(248,113,113,0.3)',
-              background: 'rgba(248,113,113,0.08)', color: '#F87171',
+              padding: '8px 12px', borderRadius: 'var(--radius-md)',
+              border: '1px solid rgba(248,113,113,0.28)',
+              background: 'rgba(248,113,113,0.08)', color: 'var(--red)',
               cursor: 'pointer', fontSize: 12, fontWeight: 600,
               display: 'flex', alignItems: 'center', gap: 5,
-              transition: 'background 0.15s',
+              transition: 'background var(--t-fast)',
             }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.18)')}
+            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.16)')}
             onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.08)')}
           >
             <Trash2 size={12} /> Delete
@@ -176,13 +176,11 @@ export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: P
           <button
             onClick={handleSave}
             disabled={saving || !title.trim()}
+            className="btn-primary"
             style={{
-              flex: 1, padding: '8px 12px', borderRadius: 10, border: 'none',
-              background: 'linear-gradient(135deg,#3B7EF7,#6366F1)', color: '#fff',
-              cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              flex: 1, padding: '8px 12px', borderRadius: 'var(--radius-md)',
+              fontSize: 12, fontWeight: 600,
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-              opacity: saving || !title.trim() ? 0.5 : 1,
-              transition: 'opacity 0.15s',
             }}
           >
             <Check size={12} /> Save

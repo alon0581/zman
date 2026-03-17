@@ -159,7 +159,7 @@ export default function CalendarPanel({
               }}>
                 {monthTitle}
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3, fontWeight: 400 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3, fontWeight: 400, letterSpacing: '-0.01em' }}>
                 {subs[view] ?? subs.timeGridWeek}
               </div>
             </div>
@@ -189,12 +189,12 @@ export default function CalendarPanel({
               <button key={v} onClick={() => setView(v)}
                 style={{
                   padding: isMobile ? '5px 8px' : '5px 12px',
-                  borderRadius: 7, border: 'none', cursor: 'pointer',
+                  borderRadius: 8, border: 'none', cursor: 'pointer',
                   fontSize: isMobile ? 11 : 12, fontWeight: 600,
                   background: view === v ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'transparent',
                   color: view === v ? '#fff' : 'var(--text-2)',
-                  boxShadow: view === v ? '0 2px 8px rgba(59,126,247,0.4)' : 'none',
-                  transition: 'all 0.15s',
+                  boxShadow: view === v ? 'var(--blue-glow)' : 'none',
+                  transition: 'all var(--t-base)',
                   whiteSpace: 'nowrap',
                 }}>
                 {labels[v] ?? v}
