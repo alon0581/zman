@@ -408,6 +408,21 @@ export default function SettingsClient({ user, profile: init }: Props) {
             })}
           </div>
 
+          {/* Server AI banner — shown when no personal API key is configured */}
+          {!activeProvider && (
+            <div style={{ padding: '12px 18px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(52,211,153,0.04)' }}>
+              <CheckCircle2 size={15} color="#34D399" style={{ flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#34D399' }}>
+                  {lang === 'he' ? '🌊 MiniMax M2.5 — מפתח שרת פעיל' : '🌊 MiniMax M2.5 — Server key active'}
+                </div>
+                <div style={{ fontSize: 11, color: '#5A6A8A', marginTop: 2 }}>
+                  {lang === 'he' ? 'ה-AI פעיל ללא מפתח אישי. חבר ספק לעיל כדי לשנות מודל.' : 'AI is active, no personal key needed. Connect a provider above to switch models.'}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Active model selector (shown when a provider is connected) */}
           {activeProvider && (
             <div style={{ padding: '14px 18px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>

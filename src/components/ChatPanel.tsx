@@ -175,13 +175,16 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
 
-  const bottomRef        = useRef<HTMLDivElement>(null)
-  const inputRef         = useRef<HTMLInputElement>(null)
+  const bottomRef         = useRef<HTMLDivElement>(null)
+  const inputRef          = useRef<HTMLInputElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef   = useRef<any>(null)
-  const isHoldingRef     = useRef(false)   // pointer currently pressed?
-  const holdModeRef      = useRef(false)   // recording started while pointer was down?
-  const sendMsgRef       = useRef<(t: string) => void>(() => {})
+  const recognitionRef    = useRef<any>(null)
+  const isHoldingRef      = useRef(false)   // pointer currently pressed?
+  const holdModeRef       = useRef(false)   // true = hold mode (auto-send on release)
+  const sendMsgRef        = useRef<(t: string) => void>(() => {})
+  const pressStartRef     = useRef<number>(0)   // timestamp of pointer-down
+  const recordingRef      = useRef(false)        // mirror of `recording` state — always current in event handlers
+  const lastTranscriptRef = useRef('')           // accumulated Web Speech transcript
 
   useEffect(() => {
     Promise.all([
@@ -304,6 +307,17 @@ export default function ChatPanel({ user, profile: initProfile, events, language
 
   // Keep ref current so mic onstop can call latest sendMessage without stale closure
   useEffect(() => { sendMsgRef.current = sendMessage }, [sendMessage])
+  // Mirror recording state into a ref so event handlers always see the latest value
+  useEffect(() => { recordingRef.current = recording }, [recording])
+
+  // Pre-warm microphone permission once on mount — prevents repeated browser prompts
+  useEffect(() => {
+    if (typeof window !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => stream.getTracks().forEach(t => t.stop()))
+        .catch(() => { /* permission denied — will surface when user first taps mic */ })
+    }
+  }, [])
 
   const lang  = profile?.language ?? language
   const isRTL = lang === 'he' || lang === 'ar'
@@ -317,24 +331,32 @@ export default function ChatPanel({ user, profile: initProfile, events, language
     }
     const recognition = new SR()
     recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
+    recognition.continuous = true       // stay alive until explicitly stopped (no auto-stop on silence)
     recognition.interimResults = false
     recognition.maxAlternatives = 1
     recognitionRef.current = recognition
-    holdModeRef.current = isHoldingRef.current
+    holdModeRef.current = false          // default: toggle mode — set to true on long-press release
+    lastTranscriptRef.current = ''
 
-    recognition.onresult = (e: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-      const text = (e.results[0][0].transcript as string).trim()
-      if (text) {
-        if (holdModeRef.current) {
-          sendMsgRef.current(text)
-        } else {
-          setInput(text)
-          setTimeout(() => inputRef.current?.focus(), 50)
-        }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (e: any) => {
+      // Accumulate all final results so far
+      let text = ''
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) text += (text ? ' ' : '') + e.results[i][0].transcript
       }
+      lastTranscriptRef.current = text.trim()
     }
     recognition.onerror = () => { setRecording(false); recognitionRef.current = null }
-    recognition.onend   = () => { setRecording(false); recognitionRef.current = null }
+    recognition.onend = () => {
+      setRecording(false)
+      recognitionRef.current = null
+      const text = lastTranscriptRef.current
+      if (text) {
+        if (holdModeRef.current) { sendMsgRef.current(text) }
+        else { setInput(text); setTimeout(() => inputRef.current?.focus(), 50) }
+      }
+    }
 
     recognition.start()
     setRecording(true)
@@ -346,24 +368,28 @@ export default function ChatPanel({ user, profile: initProfile, events, language
     setRecording(false)
   }
 
-  const handlePointerDown = () => {
-    if (recording) {
-      // 2nd tap in toggle mode → stop → text goes to input
+  const handlePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault()  // prevent long-press text-selection popup on mobile
+    if (recordingRef.current) {
+      // 2nd tap → stop → text goes to input (toggle mode)
       holdModeRef.current = false
       stopRecording()
       return
     }
+    pressStartRef.current = Date.now()
     isHoldingRef.current = true
     startRecording()
   }
 
   const handlePointerUp = () => {
     isHoldingRef.current = false
-    if (recording) {
-      // Released while recording → hold mode → auto-send
+    const elapsed = Date.now() - pressStartRef.current
+    if (recordingRef.current && elapsed >= 400) {
+      // Long press (≥ 400 ms) → hold mode → auto-send on release
       holdModeRef.current = true
       stopRecording()
     }
+    // Quick tap (< 400 ms): leave recording running — user taps again to stop (toggle mode)
   }
 
   return (
@@ -389,7 +415,30 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       </div>
 
       {/* Input */}
-      <div style={{ flexShrink: 0, padding: '16px 18px 20px', borderTop: '1px solid var(--border)' }}>
+      <div style={{ flexShrink: 0, padding: '12px 18px 20px', borderTop: '1px solid var(--border)' }}>
+
+        {/* Mic button — always centered above input, never shifts layout */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+          <button
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            onContextMenu={e => e.preventDefault()}
+            className={recording ? 'mic-recording' : ''}
+            style={{
+              width: 44, height: 44, borderRadius: 14, border: 'none', cursor: 'pointer', flexShrink: 0,
+              background: recording ? 'linear-gradient(135deg,#EF4444,#DC2626)' : 'linear-gradient(135deg,#3B7EF7,#6366F1)',
+              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: recording ? '0 4px 20px rgba(239,68,68,0.5)' : '0 4px 20px rgba(59,126,247,0.45)',
+              transition: 'background 0.2s, box-shadow 0.2s',
+              WebkitUserSelect: 'none', userSelect: 'none', touchAction: 'manipulation',
+            } as React.CSSProperties}
+          >
+            {recording ? <Square size={14} fill="white" /> : <Mic size={18} />}
+          </button>
+        </div>
+
+        {/* Text input row */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             ref={inputRef}
@@ -404,7 +453,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
               border: `1px solid ${recording ? 'rgba(239,68,68,0.45)' : 'var(--border-hi)'}`,
               background: recording ? 'rgba(239,68,68,0.06)' : 'var(--bg-input)',
               color: recording ? '#F87171' : 'var(--text)',
-              fontSize: 14, opacity: loading ? 0.5 : 1,
+              fontSize: 16, opacity: loading ? 0.5 : 1,  /* 16px prevents iOS auto-zoom */
               transition: 'background 0.2s, border-color 0.2s, color 0.2s',
             }}
             onFocus={e => { if (!recording) { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59,126,247,0.15)' } }}
@@ -425,25 +474,6 @@ export default function ChatPanel({ user, profile: initProfile, events, language
               }}
             >
               <Send size={14} />
-            </button>
-          )}
-
-          {/* Mic — shown when no text OR when recording */}
-          {(!input.trim() || recording) && (
-            <button
-              onPointerDown={handlePointerDown}
-              onPointerUp={handlePointerUp}
-              onPointerLeave={handlePointerUp}
-              className={recording ? 'mic-recording' : ''}
-              style={{
-                width: 42, height: 42, borderRadius: 13, border: 'none', cursor: 'pointer', flexShrink: 0,
-                background: recording ? 'linear-gradient(135deg,#EF4444,#DC2626)' : 'linear-gradient(135deg,#3B7EF7,#6366F1)',
-                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: recording ? '0 4px 20px rgba(239,68,68,0.5)' : '0 4px 20px rgba(59,126,247,0.45)',
-                transition: 'background 0.2s, box-shadow 0.2s', userSelect: 'none',
-              }}
-            >
-              {recording ? <Square size={14} fill="white" /> : <Mic size={18} />}
             </button>
           )}
         </div>
