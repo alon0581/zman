@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
+
+function getOpenAI() {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) throw new Error('OPENAI_API_KEY not set')
+  return new OpenAI({ apiKey })
+}
 
 export async function POST(req: NextRequest) {
   if (!DEMO_MODE) {
@@ -23,7 +28,7 @@ export async function POST(req: NextRequest) {
 
   const whisperLang = (!lang || lang === 'auto') ? undefined : lang
 
-  const transcription = await openai.audio.transcriptions.create({
+  const transcription = await getOpenAI().audio.transcriptions.create({
     file: audio,
     model: 'whisper-1',
     language: whisperLang ?? undefined,
