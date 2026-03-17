@@ -1,0 +1,17 @@
+══════════════════════════════════════════════
+  RAILWAY ENVIRONMENT VARIABLES — COPY THESE
+══════════════════════════════════════════════
+
+Paste these into Railway → Variables:
+
+AUTH_SECRET=52b769a7c7dfb5b2fdd4c65441147d93465e09a41f79eaf0c9531126c1503a0c
+ENCRYPTION_KEY=8909602d623123550a306df64c1300022bacf99999dbbb9222f75128d9940374
+OPENAI_API_KEY=← YOUR KEY HERE
+NEXT_PUBLIC_APP_URL=← RAILWAY URL (e.g. https://zman-production.up.railway.app)
+
+══════════════════════════════════════════════
+  VOLUME
+══════════════════════════════════════════════
+Mount Path: /app/data
+
+══════════════════════════════════════════════
