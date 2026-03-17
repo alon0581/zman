@@ -277,6 +277,11 @@ export default function ChatPanel({ user, profile: initProfile, events, language
               onProfileUpdate(parsed.profile)
               setMemory([]) // will reload on next fetch if needed
               clearStoredMessages() // fresh start after onboarding
+              // Safety save: ensure onboarding_completed:true is persisted even if server write failed
+              fetch('/api/profile', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...parsed.profile, onboarding_completed: true }),
+              }).catch(() => { /* ignore */ })
             } else if (parsed.type === 'done') {
               // Apply event updates
               let next = [...eventsSnapshot]
@@ -310,14 +315,9 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   // Mirror recording state into a ref so event handlers always see the latest value
   useEffect(() => { recordingRef.current = recording }, [recording])
 
-  // Pre-warm microphone permission once on mount — prevents repeated browser prompts
-  useEffect(() => {
-    if (typeof window !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(stream => stream.getTracks().forEach(t => t.stop()))
-        .catch(() => { /* permission denied — will surface when user first taps mic */ })
-    }
-  }, [])
+  // NOTE: we intentionally do NOT pre-warm getUserMedia here.
+  // Calling it on mount would trigger a mic-permission popup before the user taps anything.
+  // Chrome/Android caches the permission after the first tap; iOS Safari prompts each time (browser limit).
 
   const lang  = profile?.language ?? language
   const isRTL = lang === 'he' || lang === 'ar'
@@ -397,8 +397,32 @@ export default function ChatPanel({ user, profile: initProfile, events, language
 
       {/* Header */}
       <div style={{ padding: '20px 22px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text)' }}>
-          {tr(lang, 'header')}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text)' }}>
+            {tr(lang, 'header')}
+          </div>
+          {/* Skip onboarding — shown after 3+ user messages so the user isn't trapped */}
+          {isOnboarding && messages.filter(m => m.role === 'user').length >= 3 && (
+            <button
+              onClick={async () => {
+                const updatedProfile = { ...(profile ?? {}), onboarding_completed: true } as UserProfile
+                await fetch('/api/profile', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(updatedProfile),
+                }).catch(() => { /* ignore */ })
+                setIsOnboarding(false)
+                onProfileUpdate(updatedProfile)
+                clearStoredMessages()
+              }}
+              style={{
+                fontSize: 12, fontWeight: 600, color: 'var(--blue)', background: 'transparent',
+                border: '1px solid var(--border-hi)', borderRadius: 8, padding: '4px 10px',
+                cursor: 'pointer', flexShrink: 0,
+              }}
+            >
+              {lang === 'he' ? 'דלג ←' : 'Skip →'}
+            </button>
+          )}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3 }}>
           {isOnboarding

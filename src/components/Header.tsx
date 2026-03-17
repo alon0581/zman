@@ -50,11 +50,12 @@ export default function Header({ user, profile, language, onToggleTheme }: Props
           {isDark ? <Sun size={17} /> : <Moon size={17} />}
         </Btn>
 
-        <Link href="/settings" style={{ display: 'contents' }}>
+        {/* Open settings in new tab so ongoing AI streams are not interrupted */}
+        <a href="/settings" target="_blank" rel="noopener noreferrer" style={{ display: 'contents' }}>
           <Btn title={isHe ? 'הגדרות' : 'Settings'}>
             <Settings size={17} />
           </Btn>
-        </Link>
+        </a>
 
         {/* Divider */}
         <div style={{ width: 1, height: 20, background: 'var(--border-hi)', margin: '0 8px' }} />

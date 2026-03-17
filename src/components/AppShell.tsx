@@ -51,6 +51,18 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     }
   }
 
+  // Real-time sync: poll events every 30 s so changes on one device appear on others
+  useEffect(() => {
+    const poll = () => {
+      fetch('/api/events')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.events) setEvents(data.events) })
+        .catch(() => { /* ignore network errors during poll */ })
+    }
+    const id = setInterval(poll, 30_000)
+    return () => clearInterval(id)
+  }, [])
+
   const handleEventUpdate = (id: string, changes: Partial<CalendarEvent>) => {
     setEvents(prev => prev.map(e => e.id === id ? { ...e, ...changes } : e))
   }
