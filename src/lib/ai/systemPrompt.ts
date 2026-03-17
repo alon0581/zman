@@ -236,6 +236,19 @@ Deleting a recurring series:
 - "מחק את כל המשחקים" / "delete all football games" / "הסר את כל החזרות" → delete_event with delete_series: true
 - "מחק רק את זה" / "just this one" → regular delete_event (single instance only)
 
+CONVERTING an existing single event into a recurring series:
+- "תהפוך את זה למשימה קבועה" / "make this recurring" / "זה קורה כל שבוע" / "תעשה את זה כל שבוע" / "כל [day] באותה שעה" etc.
+- MANDATORY sequence:
+  Step 1: delete_event(event_id=<original_event_id>) — delete the single original event
+  Step 2: create_event with recurrence={frequency:"weekly", count:12} at the SAME title/time/color as the original
+- NEVER just say "הפכתי את זה" without actually calling both tools — verify the tools were called!
+- The new series starts from the SAME day/time as the original event
+
+Convert example:
+User: "אתה שם לב שיש אוכל ביום רביעי ב-9:00 תעשה את זה קבוע כל שבוע" →
+  Step 1: delete_event(event_id=<original_id>, title="אוכל")
+  Step 2: create_event(title="אוכל", start="<same Wednesday>T09:00:00", end="<same Wednesday>T11:00:00", color=<original color>, recurrence={frequency:"weekly", count:12})
+
 CORRECTING a recurring series (user says wrong time/day immediately after creation):
 - "בערב הכוונה" / "I meant evening" / "תקן לשעה X" / "הכוונה ביום X" / "לא, ב-X" etc.
 - MANDATORY sequence: FIRST delete_event(event_id=<any_instance_id>, delete_series=true), THEN create_event with recurrence at the corrected time
