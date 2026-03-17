@@ -187,7 +187,7 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
   useEffect(() => {
     if (!showcaseRef.current || isMobile) return
     const scrolledIn = Math.max(0, -(showcaseRef.current.getBoundingClientRect().top))
-    const scrollableH = viewportH * 2.5   // 350vh container minus 100vh sticky panel
+    const scrollableH = viewportH * 1.6   // 260vh container minus 100vh sticky panel
     const progress = Math.min(1, scrolledIn / Math.max(1, scrollableH))
     const newScene = Math.min(3, Math.floor(progress * 4))
     if (newScene !== scene) {
@@ -244,6 +244,10 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
         @keyframes mockupPulse {
           0%, 100% { transform: scaleX(0.97); opacity: 0.5; }
           50%      { transform: scaleX(1.02); opacity: 1; }
+        }
+        @keyframes scrollBounce {
+          0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.5; }
+          50%      { transform: translateX(-50%) translateY(7px); opacity: 1; }
         }
       `}</style>
 
@@ -389,7 +393,7 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
           </div>
 
           <p style={{
-            marginTop: 22, fontSize: 13, color: 'var(--text-3)', letterSpacing: '-0.01em',
+            marginTop: 24, fontSize: 15, color: 'var(--text-2)', letterSpacing: '0.01em', fontWeight: 500,
             animation: 'landingFadeUp 0.7s 0.44s cubic-bezier(0.22,1,0.36,1) both',
           }}>{c.proof}</p>
         </div>
@@ -499,7 +503,7 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
 
       {/* ── STICKY SHOWCASE (desktop only) ── */}
       {!isMobile && (
-        <div ref={showcaseRef} style={{ position: 'relative', height: '350vh' }}>
+        <div ref={showcaseRef} style={{ position: 'relative', height: '260vh' }}>
           <div style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden' }}>
             {/* Section label */}
             <div style={{
@@ -539,9 +543,22 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
               </div>
             </div>
 
+            {/* Scroll hint arrow — shown only when not on last scene */}
+            {scene < 3 && (
+              <div style={{
+                position: 'absolute', bottom: 70, left: '50%',
+                animation: 'scrollBounce 1.4s ease-in-out infinite',
+                pointerEvents: 'none',
+              }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7 }}>
+                  <path d="M12 5v14M5 12l7 7 7-7"/>
+                </svg>
+              </div>
+            )}
+
             {/* Progress dots */}
             <div style={{
-              position: 'absolute', bottom: 40, left: '50%', transform: 'translateX(-50%)',
+              position: 'absolute', bottom: 36, left: '50%', transform: 'translateX(-50%)',
               display: 'flex', gap: 8, alignItems: 'center',
             }}>
               {[0,1,2,3].map(i => (
