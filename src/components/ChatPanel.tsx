@@ -174,13 +174,11 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   const [loading, setLoading] = useState(false)
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
-  const [micPending, setMicPending] = useState(false)
 
   const bottomRef        = useRef<HTMLDivElement>(null)
   const inputRef         = useRef<HTMLInputElement>(null)
-  const recorderRef      = useRef<MediaRecorder | null>(null)
-  const chunksRef        = useRef<Blob[]>([])
-  const recordStartRef   = useRef<number>(0)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef   = useRef<any>(null)
   const isHoldingRef     = useRef(false)   // pointer currently pressed?
   const holdModeRef      = useRef(false)   // recording started while pointer was down?
   const sendMsgRef       = useRef<(t: string) => void>(() => {})
@@ -310,64 +308,45 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   const lang  = profile?.language ?? language
   const isRTL = lang === 'he' || lang === 'ar'
 
-  const startRecording = async () => {
-    setMicPending(true)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const rec = new MediaRecorder(stream)
-      chunksRef.current = []
-      recordStartRef.current = Date.now()
+  const startRecording = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) {
+      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
+      return
+    }
+    const recognition = new SR()
+    recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+    recognitionRef.current = recognition
+    holdModeRef.current = isHoldingRef.current
 
-      rec.ondataavailable = e => chunksRef.current.push(e.data)
-      rec.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop())
-
-        // Ignore very short recordings (< 600ms)
-        if (Date.now() - recordStartRef.current < 600) return
-
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-
-        // Ignore near-silent blobs (< 3 KB)
-        if (blob.size < 3000) return
-
-        const fd = new FormData()
-        fd.append('audio', blob, 'rec.webm')
-        if (lang && lang !== 'auto') fd.append('lang', lang)
-
-        const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
-        if (res.ok) {
-          const { text } = await res.json()
-          if (text?.trim()) {
-            if (holdModeRef.current) {
-              // Hold mode: auto-send directly to chat
-              sendMsgRef.current(text.trim())
-            } else {
-              // Toggle mode: put in input for user review
-              setInput(text.trim())
-              setTimeout(() => inputRef.current?.focus(), 50)
-            }
-          }
+    recognition.onresult = (e: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      const text = (e.results[0][0].transcript as string).trim()
+      if (text) {
+        if (holdModeRef.current) {
+          sendMsgRef.current(text)
+        } else {
+          setInput(text)
+          setTimeout(() => inputRef.current?.focus(), 50)
         }
       }
-      recorderRef.current = rec
-      // Capture hold mode at the moment recording actually starts
-      holdModeRef.current = isHoldingRef.current
-      setMicPending(false)
-      rec.start()
-      setRecording(true)
-    } catch {
-      setMicPending(false)
-      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
     }
+    recognition.onerror = () => { setRecording(false); recognitionRef.current = null }
+    recognition.onend   = () => { setRecording(false); recognitionRef.current = null }
+
+    recognition.start()
+    setRecording(true)
   }
 
   const stopRecording = () => {
-    if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
     setRecording(false)
   }
 
   const handlePointerDown = () => {
-    if (micPending) return
     if (recording) {
       // 2nd tap in toggle mode → stop → text goes to input
       holdModeRef.current = false
@@ -410,68 +389,64 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       </div>
 
       {/* Input */}
-      <div style={{ flexShrink: 0, padding: '16px 18px 20px', borderTop: '1px solid var(--border)', position: 'relative' }}>
-        {/* Floating mic */}
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-          <button
-            onPointerDown={handlePointerDown}
-            onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
-            disabled={micPending}
-            className={recording ? 'mic-recording' : ''}
-            style={{
-              width: 48, height: 48, borderRadius: '50%', border: 'none', cursor: micPending ? 'default' : 'pointer',
-              background: recording ? 'linear-gradient(135deg,#EF4444,#DC2626)' : 'linear-gradient(135deg,#3B7EF7,#6366F1)',
-              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: recording ? '0 4px 20px rgba(239,68,68,0.5)' : '0 4px 20px rgba(59,126,247,0.45)',
-              transition: 'background 0.2s, box-shadow 0.2s',
-              opacity: micPending ? 0.5 : 1,
-              userSelect: 'none',
-            }}
-          >
-            {recording ? <Square size={14} fill="white" /> : <Mic size={18} />}
-          </button>
-        </div>
-
-        {/* Text input */}
+      <div style={{ flexShrink: 0, padding: '16px 18px 20px', borderTop: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input) } }}
-            placeholder={tr(lang, 'placeholder')}
-            disabled={loading || recording}
+            placeholder={recording ? tr(lang, 'recording') : tr(lang, 'placeholder')}
+            disabled={loading}
             dir={isRTL ? 'rtl' : 'ltr'}
             style={{
-              flex: 1, padding: '11px 16px', borderRadius: 14, border: '1px solid var(--border-hi)',
-              background: 'var(--bg-input)', color: 'var(--text)', fontSize: 14, outline: 'none',
-              fontFamily: 'inherit', opacity: (loading || recording) ? 0.5 : 1,
+              flex: 1, padding: '11px 16px', borderRadius: 14, outline: 'none', fontFamily: 'inherit',
+              border: `1px solid ${recording ? 'rgba(239,68,68,0.45)' : 'var(--border-hi)'}`,
+              background: recording ? 'rgba(239,68,68,0.06)' : 'var(--bg-input)',
+              color: recording ? '#F87171' : 'var(--text)',
+              fontSize: 14, opacity: loading ? 0.5 : 1,
+              transition: 'background 0.2s, border-color 0.2s, color 0.2s',
             }}
-            onFocus={e => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59,126,247,0.15)' }}
-            onBlur={e => { e.currentTarget.style.borderColor = 'var(--border-hi)'; e.currentTarget.style.boxShadow = 'none' }}
+            onFocus={e => { if (!recording) { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59,126,247,0.15)' } }}
+            onBlur={e => { e.currentTarget.style.borderColor = recording ? 'rgba(239,68,68,0.45)' : 'var(--border-hi)'; e.currentTarget.style.boxShadow = 'none' }}
           />
-          <button
-            onClick={() => sendMessage(input)}
-            disabled={!input.trim() || loading}
-            style={{
-              width: 42, height: 42, borderRadius: 13, border: 'none', cursor: 'pointer',
-              background: input.trim() ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'var(--bg-card)',
-              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: input.trim() ? '0 4px 14px rgba(59,126,247,0.4)' : 'none',
-              opacity: (!input.trim() || loading) ? 0.4 : 1,
-              transition: 'all 0.15s', flexShrink: 0,
-            }}
-          >
-            <Send size={14} />
-          </button>
-        </div>
 
-        {recording && (
-          <div style={{ textAlign: 'center', fontSize: 11, color: '#F87171', marginTop: 8 }}>
-            {tr(lang, 'recording')}
-          </div>
-        )}
+          {/* Send — shown only when there's text and not recording */}
+          {input.trim() && !recording && (
+            <button
+              onClick={() => sendMessage(input)}
+              disabled={loading}
+              style={{
+                width: 42, height: 42, borderRadius: 13, border: 'none', cursor: 'pointer', flexShrink: 0,
+                background: 'linear-gradient(135deg,#3B7EF7,#6366F1)', color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 14px rgba(59,126,247,0.4)',
+                opacity: loading ? 0.4 : 1, transition: 'all 0.15s',
+              }}
+            >
+              <Send size={14} />
+            </button>
+          )}
+
+          {/* Mic — shown when no text OR when recording */}
+          {(!input.trim() || recording) && (
+            <button
+              onPointerDown={handlePointerDown}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={handlePointerUp}
+              className={recording ? 'mic-recording' : ''}
+              style={{
+                width: 42, height: 42, borderRadius: 13, border: 'none', cursor: 'pointer', flexShrink: 0,
+                background: recording ? 'linear-gradient(135deg,#EF4444,#DC2626)' : 'linear-gradient(135deg,#3B7EF7,#6366F1)',
+                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: recording ? '0 4px 20px rgba(239,68,68,0.5)' : '0 4px 20px rgba(59,126,247,0.45)',
+                transition: 'background 0.2s, box-shadow 0.2s', userSelect: 'none',
+              }}
+            >
+              {recording ? <Square size={14} fill="white" /> : <Mic size={18} />}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
