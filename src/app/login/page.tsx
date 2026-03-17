@@ -74,6 +74,19 @@ export default function LoginPage() {
       <div style={{ width: '100%', maxWidth: 380 }}>
 
         <div style={{ textAlign: 'center', marginBottom: 36 }}>
+          <a href="/" style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 13, color: 'var(--text-2)', textDecoration: 'none',
+            marginBottom: 24, opacity: 0.7, transition: 'opacity 0.15s',
+          }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+            onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 5l-7 7 7 7"/>
+            </svg>
+            חזרה לדף הבית
+          </a>
           <div style={{
             width: 60, height: 60, borderRadius: 18,
             background: 'linear-gradient(135deg,#3B7EF7,#6366F1)',
