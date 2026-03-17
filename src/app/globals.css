@@ -290,9 +290,9 @@ input  { touch-action: manipulation; }
 
 /* ─── Chat panel glass ─── */
 .chat-panel-glass {
-  background: rgba(13,13,22,0.70);
-  backdrop-filter: blur(40px) saturate(160%);
-  -webkit-backdrop-filter: blur(40px) saturate(160%);
+  background: rgba(10,10,20,0.55);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
 }
 [data-theme="light"] .chat-panel-glass {
   background: rgba(248,248,252,0.80);

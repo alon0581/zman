@@ -126,7 +126,7 @@ export default function CalendarPanel({
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
 
       {/* Custom header — always LTR so layout is consistent */}
       <div style={{ padding: isMobile ? '14px 16px 0' : '22px 28px 0', flexShrink: 0, direction: 'ltr' }}>
