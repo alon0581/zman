@@ -1,0 +1,888 @@
+import { NextRequest } from 'next/server'
+import { cookies } from 'next/headers'
+import OpenAI from 'openai'
+import { calendarTools, onboardingTools } from '@/lib/ai/tools'
+import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
+import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
+import { CalendarEvent, UserProfile, AIMemory } from '@/types'
+import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay } from 'date-fns'
+import { demoStorage } from '@/lib/demo/storage'
+import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { decryptApiKey } from '@/lib/encryption'
+import fs from 'fs'
+import path from 'path'
+
+const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function buildErrorStream(message: string): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(
+        `data: ${JSON.stringify({ type: 'events', createdEvents: [], updatedEvents: [], deletedEventIds: [] })}\n\n`
+      ))
+      controller.enqueue(encoder.encode(
+        `data: ${JSON.stringify({ type: 'text', content: message })}\n\n`
+      ))
+      controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
+      controller.close()
+    },
+  })
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' },
+  })
+}
+
+function loadFreshProfile(userId: string): UserProfile | null {
+  if (!DEMO_MODE) return null  // Supabase handled separately in POST
+  try {
+    const file = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) as UserProfile
+  } catch { /* ignore */ }
+  return null
+}
+
+function toAnthropicTools(tools: OpenAI.ChatCompletionTool[]) {
+  return tools.map(t => {
+    // ChatCompletionTool has a .function property; cast to access it
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fn = (t as any).function as { name: string; description?: string; parameters?: unknown }
+    return {
+      name: fn.name,
+      description: fn.description ?? '',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      input_schema: fn.parameters as any,
+    }
+  })
+}
+
+// ─── Main handler ────────────────────────────────────────────────────────────
+
+export async function POST(req: NextRequest) {
+  const encoder = new TextEncoder()
+
+  try {
+    let userId: string | null = null
+
+    if (DEMO_MODE) {
+      const cookieStore = await cookies()
+      const token = cookieStore.get(COOKIE_NAME)?.value
+      userId = getUserIdFromCookie(token)
+    } else {
+      const { createClient } = await import('@/lib/supabase/server')
+      const supabase = await createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      userId = user?.id ?? null
+    }
+
+    if (!userId) return new Response('Unauthorized', { status: 401 })
+
+    const body = await req.json()
+    const { messages, events, profile, isOnboarding, memory } = body as {
+      messages: Array<{ role: 'user' | 'assistant'; content: string }>
+      events: CalendarEvent[]
+      profile: UserProfile | null
+      isOnboarding?: boolean
+      memory?: Array<{ key: string; value: string }>
+    }
+
+    // ── Resolve AI provider + key ───────────────────────────────────────────
+    // Always load from server-side profile (never trust the client-sent profile for secrets)
+    let freshProfile: UserProfile | null = null
+    if (DEMO_MODE) {
+      freshProfile = loadFreshProfile(userId)
+    } else {
+      const { createClient } = await import('@/lib/supabase/server')
+      const supabase = await createClient()
+      const { data } = await supabase.from('user_profiles').select('*').eq('user_id', userId).single()
+      freshProfile = data as UserProfile | null
+    }
+
+    const provider = freshProfile?.ai_provider ?? 'openai'
+    const model = freshProfile?.ai_model ?? 'gpt-4o-mini'
+
+    let apiKey: string
+    if (freshProfile?.ai_api_key_encrypted) {
+      apiKey = decryptApiKey(freshProfile.ai_api_key_encrypted)
+    } else if (process.env.OPENAI_API_KEY) {
+      apiKey = process.env.OPENAI_API_KEY
+    } else {
+      return buildErrorStream(
+        '⚙️ No API key configured. Go to **Settings → AI Model** to add your API key.'
+      )
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
+    const systemPrompt = isOnboarding
+      ? buildOnboardingSystemPrompt(profile?.language ?? 'en', new Date())
+      : buildSystemPrompt(profile, events, new Date(), memory as AIMemory[] | undefined)
+
+    const createdEvents: CalendarEvent[] = []
+    const updatedEvents: CalendarEvent[] = []
+    const deletedEventIds: string[] = []
+    let lastContent = ''
+    let completedProfile: UserProfile | null = null
+    const state = { completedProfile: null as UserProfile | null }
+
+    // ── Tool-call loop ──────────────────────────────────────────────────────
+
+    if (provider === 'anthropic') {
+      // Anthropic tool-call loop
+      const Anthropic = (await import('@anthropic-ai/sdk')).default
+      const anthropic = new Anthropic({ apiKey })
+      const anthropicTools = toAnthropicTools(isOnboarding ? onboardingTools : calendarTools)
+
+      type AnthropicMessageParam = { role: 'user' | 'assistant'; content: string | object[] }
+      const anthropicMessages: AnthropicMessageParam[] = messages.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }))
+
+      let iterations = 0
+      while (iterations < 10) {
+        iterations++
+        const response = await anthropic.messages.create({
+          model,
+          system: systemPrompt,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          messages: anthropicMessages as any,
+          tools: anthropicTools,
+          max_tokens: 1024,
+        })
+
+        if (response.stop_reason === 'tool_use') {
+          anthropicMessages.push({ role: 'assistant', content: response.content as object[] })
+
+          const toolResults: object[] = []
+          for (const block of response.content) {
+            if (block.type === 'tool_use') {
+              const result = await executeTool(
+                block.name,
+                block.input as Record<string, unknown>,
+                userId as string,
+                events,
+                createdEvents,
+                updatedEvents,
+                deletedEventIds,
+                profile,
+                state,
+              )
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: block.id,
+                content: JSON.stringify(result),
+              })
+            }
+          }
+          anthropicMessages.push({ role: 'user', content: toolResults })
+          continue
+        }
+
+        // End turn — extract text
+        const textBlock = response.content.find(b => b.type === 'text')
+        lastContent = (textBlock as { type: 'text'; text: string } | undefined)?.text ?? ''
+        break
+      }
+
+      if (state.completedProfile) completedProfile = state.completedProfile
+
+    } else {
+      // OpenAI-compatible loop (OpenAI + MiniMax + OpenRouter)
+      const openaiClient = new OpenAI({
+        apiKey,
+        baseURL:
+          provider === 'minimax'    ? 'https://api.minimaxi.chat/v1' :
+          provider === 'openrouter' ? 'https://openrouter.ai/api/v1' :
+          undefined,
+        defaultHeaders: provider === 'openrouter' ? {
+          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
+          'X-Title': 'Zman AI Scheduler',
+        } : undefined,
+      })
+
+      let currentMessages: OpenAI.ChatCompletionMessageParam[] = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      ]
+
+      // Reasoning models (MiniMax-M2.5, o1, etc.) need more tokens for thinking
+      const isReasoningModel = model.includes('M2.5') || model.includes('M2-5') || model.startsWith('o1') || model.startsWith('o3')
+      const maxTokens = isReasoningModel ? 4096 : 1024
+
+      let iterations = 0
+      while (iterations < 10) {
+        iterations++
+        const response = await openaiClient.chat.completions.create({
+          model,
+          messages: currentMessages,
+          tools: isOnboarding ? onboardingTools : calendarTools,
+          tool_choice: 'auto',
+          max_tokens: maxTokens,
+        })
+
+        const message = response.choices[0].message
+
+        if (message.tool_calls?.length) {
+          currentMessages.push(message)
+          for (const toolCall of message.tool_calls) {
+            const tc = toolCall as { id: string; function: { name: string; arguments: string } }
+            const input = JSON.parse(tc.function.arguments) as Record<string, unknown>
+            const result = await executeTool(
+              tc.function.name, input, userId as string, events,
+              createdEvents, updatedEvents, deletedEventIds, profile, state
+            )
+            currentMessages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify(result),
+            })
+          }
+          if (state.completedProfile) completedProfile = state.completedProfile
+          continue
+        }
+
+        // No more tool calls — capture final text (strip <think> reasoning blocks)
+        lastContent = (message.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+        break
+      }
+
+      if (state.completedProfile) completedProfile = state.completedProfile
+
+      // For OpenAI: if no text yet, do a fresh streaming call
+      const needsFreshStream = !lastContent
+      if (needsFreshStream) {
+        // Fall through to stream section below — handled there
+      }
+
+      // Stream final response
+      const readableStream = new ReadableStream({
+        async start(controller) {
+          try {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ type: 'events', createdEvents, updatedEvents, deletedEventIds })}\n\n`
+            ))
+
+            if (completedProfile) {
+              controller.enqueue(encoder.encode(
+                `data: ${JSON.stringify({ type: 'onboarding_complete', profile: completedProfile })}\n\n`
+              ))
+            }
+
+            if (lastContent) {
+              controller.enqueue(encoder.encode(
+                `data: ${JSON.stringify({ type: 'text', content: lastContent })}\n\n`
+              ))
+            } else {
+              // No text yet — stream a fresh response
+              const currentMsgs: OpenAI.ChatCompletionMessageParam[] = [
+                { role: 'system', content: systemPrompt },
+                ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+              ]
+              const streamResp = await openaiClient.chat.completions.create({
+                model,
+                messages: currentMsgs,
+                max_tokens: maxTokens,
+                stream: true,
+              })
+
+              let streamBuffer = ''
+              let thinkingDone = false
+              for await (const chunk of streamResp) {
+                const delta = chunk.choices[0]?.delta?.content
+                if (!delta) continue
+                if (!thinkingDone) {
+                  streamBuffer += delta
+                  // Once we see the closing </think> tag, emit everything after it
+                  const closeIdx = streamBuffer.indexOf('</think>')
+                  if (closeIdx !== -1) {
+                    thinkingDone = true
+                    const afterThink = streamBuffer.slice(closeIdx + 8).trimStart()
+                    if (afterThink) {
+                      controller.enqueue(encoder.encode(
+                        `data: ${JSON.stringify({ type: 'text', content: afterThink })}\n\n`
+                      ))
+                    }
+                    streamBuffer = ''
+                  } else if (!streamBuffer.startsWith('<think>') && !streamBuffer.startsWith('<')) {
+                    // No thinking block — emit directly
+                    thinkingDone = true
+                    controller.enqueue(encoder.encode(
+                      `data: ${JSON.stringify({ type: 'text', content: streamBuffer })}\n\n`
+                    ))
+                    streamBuffer = ''
+                  }
+                } else {
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`
+                  ))
+                }
+              }
+            }
+
+            controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
+          } catch (err) {
+            console.error('Stream error:', err)
+            controller.enqueue(encoder.encode('data: {"type":"error"}\n\n'))
+          } finally {
+            controller.close()
+          }
+        }
+      })
+
+      return new Response(readableStream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'X-Accel-Buffering': 'no',
+        },
+      })
+    }
+
+    // ── Anthropic / shared SSE stream ───────────────────────────────────────
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        try {
+          controller.enqueue(encoder.encode(
+            `data: ${JSON.stringify({ type: 'events', createdEvents, updatedEvents, deletedEventIds })}\n\n`
+          ))
+
+          if (completedProfile) {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ type: 'onboarding_complete', profile: completedProfile })}\n\n`
+            ))
+          }
+
+          if (lastContent) {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ type: 'text', content: lastContent })}\n\n`
+            ))
+          }
+
+          controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
+        } catch (err) {
+          console.error('Stream error:', err)
+          controller.enqueue(encoder.encode('data: {"type":"error"}\n\n'))
+        } finally {
+          controller.close()
+        }
+      }
+    })
+
+    return new Response(readableStream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+      },
+    })
+
+  } catch (err) {
+    console.error('Chat API error:', err)
+    return new Response(
+      `data: {"type":"error","message":"Internal server error"}\n\n`,
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+    )
+  }
+}
+
+// ─── Tool executor ────────────────────────────────────────────────────────────
+
+async function executeTool(
+  toolName: string,
+  input: Record<string, unknown>,
+  userId: string,
+  currentEvents: CalendarEvent[],
+  createdEvents: CalendarEvent[],
+  updatedEvents: CalendarEvent[],
+  deletedEventIds: string[],
+  profile: UserProfile | null,
+  state: { completedProfile: UserProfile | null } = { completedProfile: null }
+): Promise<unknown> {
+  switch (toolName) {
+    case 'create_event': {
+      const allKnownEvents = [...currentEvents, ...createdEvents]
+
+      // 1. Duplicate check — same title on same day
+      const newTitle = (input.title as string).toLowerCase().trim()
+      const newDate = new Date(input.start_time as string).toDateString()
+      const duplicate = allKnownEvents.find(e =>
+        new Date(e.start_time).toDateString() === newDate &&
+        e.title.toLowerCase().trim() === newTitle
+      )
+      if (duplicate) {
+        return { error: 'duplicate', existingId: duplicate.id, existingTitle: duplicate.title, existingTime: duplicate.start_time }
+      }
+
+      // 2. Overlap check — detect real time conflicts and suggest alternatives
+      const newStart = new Date(input.start_time as string)
+      const newEnd = new Date(input.end_time as string)
+      const overlapping = allKnownEvents.find(e => {
+        const eStart = new Date(e.start_time)
+        const eEnd = new Date(e.end_time)
+        return newStart < eEnd && newEnd > eStart
+      })
+      if (overlapping) {
+        const duration = (newEnd.getTime() - newStart.getTime()) / 60000
+        const rangeStart = new Date(newStart)
+        rangeStart.setHours(0, 0, 0, 0)
+        const rangeEnd = addDays(rangeStart, 3)
+        const alternatives = getFreeSlots(
+          allKnownEvents, rangeStart.toISOString(), rangeEnd.toISOString(), duration, profile
+        ).slice(0, 3)
+        return {
+          error: 'conflict',
+          conflictingEvent: { id: overlapping.id, title: overlapping.title, start: overlapping.start_time, end: overlapping.end_time },
+          alternatives,
+        }
+      }
+
+      // 3. Buffer check — warn if this event will be back-to-back with another
+      const BUFFER_MIN = 15
+      const bufferWarnings: string[] = []
+      for (const ev of allKnownEvents) {
+        const evStart = new Date(ev.start_time)
+        const evEnd = new Date(ev.end_time)
+        const gapAfter = (newStart.getTime() - evEnd.getTime()) / 60000
+        if (gapAfter >= 0 && gapAfter < BUFFER_MIN) {
+          bufferWarnings.push(`"${ev.title}" ends only ${Math.round(gapAfter)} min before this event`)
+        }
+        const gapBefore = (evStart.getTime() - newEnd.getTime()) / 60000
+        if (gapBefore >= 0 && gapBefore < BUFFER_MIN) {
+          bufferWarnings.push(`"${ev.title}" starts only ${Math.round(gapBefore)} min after this event`)
+        }
+      }
+
+      const event: CalendarEvent = {
+        id: crypto.randomUUID(),
+        user_id: userId,
+        title: input.title as string,
+        start_time: input.start_time as string,
+        end_time: input.end_time as string,
+        description: (input.description as string) || '',
+        color: (input.color as string) || '#3B7EF7',
+        source: 'zman',
+        created_by: 'ai',
+        status: (input.status as 'confirmed' | 'proposed') || 'confirmed',
+        is_all_day: false,
+        created_at: new Date().toISOString(),
+      }
+
+      if (DEMO_MODE) {
+        demoStorage.addEvent(event, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        const { data, error } = await supabase.from('events').insert(event).select().single()
+        if (error) return { error: error.message }
+        Object.assign(event, data)
+      }
+
+      createdEvents.push(event)
+      return { success: true, event, buffer_warnings: bufferWarnings.length > 0 ? bufferWarnings : undefined }
+    }
+
+    case 'move_event': {
+      const { event_id, new_start_time, new_end_time } = input as { event_id: string; new_start_time: string; new_end_time: string }
+      const existing = currentEvents.find(e => e.id === event_id)
+      if (!existing) return { error: 'Event not found' }
+
+      const updated = { ...existing, start_time: new_start_time, end_time: new_end_time }
+
+      if (DEMO_MODE) {
+        demoStorage.updateEvent(event_id, { start_time: new_start_time, end_time: new_end_time }, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        await supabase.from('events').update({ start_time: new_start_time, end_time: new_end_time }).eq('id', event_id).eq('user_id', userId)
+      }
+
+      updatedEvents.push(updated)
+      return { success: true, event: updated }
+    }
+
+    case 'delete_event': {
+      const { event_id } = input as { event_id: string }
+
+      if (DEMO_MODE) {
+        demoStorage.deleteEvent(event_id, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        await supabase.from('events').delete().eq('id', event_id).eq('user_id', userId)
+      }
+
+      deletedEventIds.push(event_id)
+      return { success: true }
+    }
+
+    case 'get_free_slots': {
+      const { from_date, to_date, min_duration_minutes = 60, prefer_peak = false } = input as { from_date: string; to_date: string; min_duration_minutes?: number; prefer_peak?: boolean }
+      return { free_slots: getFreeSlots(currentEvents, from_date, to_date, min_duration_minutes as number, profile, prefer_peak as boolean) }
+    }
+
+    case 'break_down_task': {
+      const { task_title, deadline, total_hours, session_length_hours = 2, color = '#6366F1' } = input as {
+        task_title: string; deadline: string; total_hours: number; session_length_hours?: number; color?: string
+      }
+      // Use peak-hour preferred slots for study/work tasks
+      const slots = getFreeSlots(currentEvents, new Date().toISOString(), deadline, (session_length_hours as number) * 60, profile, true)
+      const sessionsNeeded = Math.ceil(total_hours / (session_length_hours as number))
+      let created = 0
+
+      for (let i = 0; i < Math.min(sessionsNeeded, slots.length); i++) {
+        const slot = slots[i]
+        const event: CalendarEvent = {
+          id: crypto.randomUUID(),
+          user_id: userId,
+          title: `${task_title} — Session ${i + 1}`,
+          start_time: slot.start,
+          end_time: format(addMinutes(parseISO(slot.start), (session_length_hours as number) * 60), "yyyy-MM-dd'T'HH:mm:ss"),
+          color: color as string,
+          source: 'zman',
+          created_by: 'ai',
+          status: 'confirmed',
+          is_all_day: false,
+          created_at: new Date().toISOString(),
+        }
+
+        if (DEMO_MODE) {
+          demoStorage.addEvent(event, userId)
+        } else {
+          const { createClient } = await import('@/lib/supabase/server')
+          const supabase = await createClient()
+          const { data } = await supabase.from('events').insert(event).select().single()
+          if (data) Object.assign(event, data)
+        }
+
+        createdEvents.push(event)
+        created++
+      }
+
+      return { success: true, sessions_created: created }
+    }
+
+    case 'list_events': {
+      const { from_date, to_date } = input as { from_date: string; to_date: string }
+      const filtered = currentEvents.filter(e => {
+        const start = new Date(e.start_time)
+        return start >= new Date(from_date) && start <= new Date(to_date)
+      })
+      return { events: filtered.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time })) }
+    }
+
+    case 'analyze_schedule': {
+      const { from_date, to_date } = input as { from_date: string; to_date: string }
+
+      const rangeEvents = currentEvents
+        .filter(e => {
+          const start = new Date(e.start_time)
+          return start >= new Date(from_date) && start <= new Date(to_date)
+        })
+        .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+
+      // Group events by day
+      const byDay: Record<string, CalendarEvent[]> = {}
+      for (const ev of rangeEvents) {
+        const day = format(new Date(ev.start_time), 'yyyy-MM-dd')
+        if (!byDay[day]) byDay[day] = []
+        byDay[day].push(ev)
+      }
+
+      const issues: string[] = []
+
+      // Peak productivity hours from profile
+      const peak = profile?.productivity_peak ?? 'morning'
+      const peakStart = peak === 'morning' ? 6 : peak === 'afternoon' ? 12 : 18
+      const peakEnd   = peak === 'morning' ? 12 : peak === 'afternoon' ? 18 : 24
+      const sleepHour = profile?.sleep_time ? parseInt(profile.sleep_time.split(':')[0]) : 23
+
+      const dayStats: Array<{
+        date: string
+        dayOfWeek: string
+        eventCount: number
+        totalHours: number
+        events: { id: string; title: string; start: string; end: string; color?: string }[]
+      }> = []
+
+      for (const [day, dayEvs] of Object.entries(byDay).sort()) {
+        const totalMinutes = dayEvs.reduce((sum, e) =>
+          sum + (new Date(e.end_time).getTime() - new Date(e.start_time).getTime()) / 60000, 0)
+        const totalHours = Math.round(totalMinutes / 6) / 10
+
+        dayStats.push({
+          date: day,
+          dayOfWeek: format(new Date(day), 'EEEE'),
+          eventCount: dayEvs.length,
+          totalHours,
+          events: dayEvs.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time, color: e.color })),
+        })
+
+        // 1. Back-to-back events (< 15 min gap)
+        for (let i = 0; i < dayEvs.length - 1; i++) {
+          const gapMin = (new Date(dayEvs[i + 1].start_time).getTime() - new Date(dayEvs[i].end_time).getTime()) / 60000
+          if (gapMin >= 0 && gapMin < 15) {
+            issues.push(`BACK_TO_BACK: "${dayEvs[i].title}" and "${dayEvs[i + 1].title}" on ${day} — only ${Math.round(gapMin)} min gap, no buffer time`)
+          }
+        }
+
+        // 2. No lunch break on a busy day (3+ events, nothing free 12:00–13:30)
+        if (dayEvs.length >= 3) {
+          const lunchStart = new Date(`${day}T12:00:00`)
+          const lunchEnd   = new Date(`${day}T13:30:00`)
+          const blocksLunch = dayEvs.some(e =>
+            new Date(e.start_time) < lunchEnd && new Date(e.end_time) > lunchStart
+          )
+          if (blocksLunch) {
+            issues.push(`NO_LUNCH: Busy day on ${day} (${dayEvs.length} events) with no free time between 12:00–13:30`)
+          }
+        }
+
+        // 3. Overloaded day (> 6 hours scheduled)
+        if (totalHours > 6) {
+          issues.push(`OVERLOADED: ${day} (${format(new Date(day), 'EEEE')}) has ${totalHours}h of scheduled events`)
+        }
+
+        // 4. Late-night study or work (after sleepHour - 1)
+        for (const ev of dayEvs) {
+          const startHour = new Date(ev.start_time).getHours()
+          const isStudyOrWork = ev.color === '#6366F1' ||
+            /study|exam|homework|work|project|לימוד|מבחן|עבודה|שיעורי|תרגיל/i.test(ev.title)
+          if (startHour >= sleepHour - 1 && isStudyOrWork) {
+            issues.push(`LATE_NIGHT: "${ev.title}" on ${day} starts at ${format(new Date(ev.start_time), 'HH:mm')} — very close to sleep time (${profile?.sleep_time ?? '23:00'})`)
+          }
+        }
+
+        // 5. Important event (exam/presentation) with no prep the day before
+        for (const ev of dayEvs) {
+          const isImportant = /exam|test|presentation|מבחן|מצגת|הגשה|deadline/i.test(ev.title)
+          if (isImportant) {
+            const dayBefore = format(addDays(new Date(day), -1), 'yyyy-MM-dd')
+            const hasPrep = byDay[dayBefore]?.some(pe =>
+              /study|prep|review|practice|לימוד|חזרה|תרגול/i.test(pe.title)
+            )
+            if (!hasPrep) {
+              issues.push(`NO_PREP: "${ev.title}" on ${day} — no study/prep session found on ${dayBefore} (day before)`)
+            }
+          }
+        }
+
+        // 6. Important tasks scheduled outside peak productivity hours
+        for (const ev of dayEvs) {
+          const startHour = new Date(ev.start_time).getHours()
+          const isImportantTask = ev.color === '#6366F1' ||
+            /study|exam|project|work meeting|לימוד|מבחן|פרויקט/i.test(ev.title)
+          if (isImportantTask && (startHour < peakStart || startHour >= peakEnd)) {
+            issues.push(`OFF_PEAK: "${ev.title}" on ${day} starts at ${format(new Date(ev.start_time), 'HH:mm')} — outside your peak productivity (${peak}: ${peakStart}:00–${peakEnd}:00)`)
+          }
+        }
+      }
+
+      // 7. Overloaded day next to an empty day
+      const sortedDays = dayStats.sort((a, b) => a.date.localeCompare(b.date))
+      for (let i = 0; i < sortedDays.length - 1; i++) {
+        const curr = sortedDays[i]
+        const next = sortedDays[i + 1]
+        const diff = (new Date(next.date).getTime() - new Date(curr.date).getTime()) / 86400000
+        if (diff === 1 && curr.totalHours > 5 && next.totalHours < 1) {
+          issues.push(`IMBALANCE: ${curr.date} (${curr.dayOfWeek}) is packed (${curr.totalHours}h) but ${next.date} (${next.dayOfWeek}) is nearly empty — could redistribute`)
+        }
+      }
+
+      return {
+        from: from_date,
+        to: to_date,
+        total_events: rangeEvents.length,
+        days: dayStats,
+        issues,
+        summary: issues.length === 0
+          ? 'Schedule looks well-balanced — no major issues detected'
+          : `Found ${issues.length} potential issue(s) to address`,
+      }
+    }
+
+    case 'save_memory': {
+      const { entries } = input as { entries: Array<{ key: string; value: string }> }
+      const memHelper = (existing: AIMemory[]) => {
+        for (const entry of entries) {
+          const idx = existing.findIndex(m => m.key === entry.key)
+          const item: AIMemory = {
+            id: idx >= 0 ? existing[idx].id : crypto.randomUUID(),
+            user_id: userId,
+            key: entry.key,
+            value: entry.value,
+            learned_from: 'behavior',   // save_memory is only used in normal chat (onboarding uses complete_onboarding)
+            created_at: idx >= 0 ? existing[idx].created_at : new Date().toISOString(),
+          }
+          if (idx >= 0) existing[idx] = item
+          else existing.push(item)
+        }
+        return existing
+      }
+      if (DEMO_MODE) {
+        const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
+        const existing: AIMemory[] = fs.existsSync(memFile)
+          ? JSON.parse(fs.readFileSync(memFile, 'utf-8')) : []
+        const updated = memHelper(existing)
+        const dir = path.join(process.cwd(), 'data', 'users', userId)
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(memFile, JSON.stringify(updated, null, 2))
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        for (const entry of entries) {
+          await supabase.from('ai_memory').upsert({
+            user_id: userId, key: entry.key, value: entry.value, learned_from: 'behavior',
+          }, { onConflict: 'user_id,key' })
+        }
+      }
+      return { success: true, saved: entries.length }
+    }
+
+    case 'delete_memory': {
+      const { keys } = input as { keys: string[] }
+      if (DEMO_MODE) {
+        const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
+        const existing: AIMemory[] = fs.existsSync(memFile)
+          ? JSON.parse(fs.readFileSync(memFile, 'utf-8')) : []
+        const filtered = existing.filter(m => !keys.includes(m.key))
+        fs.writeFileSync(memFile, JSON.stringify(filtered, null, 2))
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        await supabase.from('ai_memory').delete().eq('user_id', userId).in('key', keys)
+      }
+      return { success: true, deleted: keys.length }
+    }
+
+    case 'complete_onboarding': {
+      const { profile_updates, memory_entries } = input as {
+        profile_updates?: Partial<UserProfile>
+        memory_entries?: Array<{ key: string; value: string }>
+      }
+      // Save memory entries
+      if (memory_entries?.length && DEMO_MODE) {
+        const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
+        const existing: AIMemory[] = fs.existsSync(memFile)
+          ? JSON.parse(fs.readFileSync(memFile, 'utf-8'))
+          : []
+        for (const entry of memory_entries) {
+          const idx = existing.findIndex(m => m.key === entry.key)
+          const item: AIMemory = {
+            id: idx >= 0 ? existing[idx].id : crypto.randomUUID(),
+            user_id: userId, key: entry.key, value: entry.value,
+            learned_from: 'onboarding',
+            created_at: idx >= 0 ? existing[idx].created_at : new Date().toISOString(),
+          }
+          if (idx >= 0) existing[idx] = item
+          else existing.push(item)
+        }
+        const dir = path.join(process.cwd(), 'data', 'users', userId)
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(memFile, JSON.stringify(existing, null, 2))
+      }
+      // Update profile
+      if (DEMO_MODE) {
+        const profFile = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+        const existing: UserProfile = fs.existsSync(profFile)
+          ? JSON.parse(fs.readFileSync(profFile, 'utf-8'))
+          : { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' }
+        const updated: UserProfile = { ...existing, ...(profile_updates ?? {}), onboarding_completed: true, user_id: userId }
+        fs.writeFileSync(profFile, JSON.stringify(updated, null, 2))
+        state.completedProfile = updated
+      }
+      return { success: true }
+    }
+
+    default:
+      return { error: `Unknown tool: ${toolName}` }
+  }
+}
+
+// ─── Free slot calculator ─────────────────────────────────────────────────────
+
+function getFreeSlots(
+  events: CalendarEvent[],
+  fromDate: string,
+  toDate: string,
+  minMinutes: number,
+  profile?: UserProfile | null,
+  preferPeak = false
+) {
+  const slots: Array<{ start: string; end: string; duration_minutes: number; is_peak?: boolean }> = []
+  let cursor = parseISO(fromDate)
+  const to = parseISO(toDate)
+
+  // Determine day bounds from profile
+  const dayStartHour = profile?.preferred_hours?.start ??
+    (profile?.wake_time ? parseInt(profile.wake_time.split(':')[0]) : 9)
+  const dayEndHour = profile?.preferred_hours?.end ??
+    (profile?.sleep_time ? parseInt(profile.sleep_time.split(':')[0]) : 22)
+
+  // Peak productivity window
+  const peak = profile?.productivity_peak ?? 'morning'
+  const peakStart = peak === 'morning' ? 6 : peak === 'afternoon' ? 12 : 18
+  const peakEnd   = peak === 'morning' ? 12 : peak === 'afternoon' ? 18 : 23
+
+  cursor.setHours(dayStartHour, 0, 0, 0)
+
+  while (cursor < to) {
+    const dayEnd = new Date(cursor)
+    dayEnd.setHours(dayEndHour, 0, 0, 0)
+
+    const dayEvents = events
+      .filter(e => {
+        const s = new Date(e.start_time)
+        return s >= startOfDay(cursor) && s <= endOfDay(cursor)
+      })
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+
+    let slotStart = new Date(cursor)
+    for (const ev of dayEvents) {
+      const evStart = new Date(ev.start_time)
+      const evEnd = new Date(ev.end_time)
+      if (evStart > slotStart) {
+        const dMin = (evStart.getTime() - slotStart.getTime()) / 60000
+        if (dMin >= minMinutes) {
+          const h = slotStart.getHours()
+          slots.push({
+            start: format(slotStart, "yyyy-MM-dd'T'HH:mm:ss"),
+            end: format(evStart, "yyyy-MM-dd'T'HH:mm:ss"),
+            duration_minutes: Math.floor(dMin),
+            is_peak: h >= peakStart && h < peakEnd,
+          })
+        }
+      }
+      if (evEnd > slotStart) slotStart = evEnd
+    }
+
+    if (slotStart < dayEnd) {
+      const dMin = (dayEnd.getTime() - slotStart.getTime()) / 60000
+      if (dMin >= minMinutes) {
+        const h = slotStart.getHours()
+        slots.push({
+          start: format(slotStart, "yyyy-MM-dd'T'HH:mm:ss"),
+          end: format(dayEnd, "yyyy-MM-dd'T'HH:mm:ss"),
+          duration_minutes: Math.floor(dMin),
+          is_peak: h >= peakStart && h < peakEnd,
+        })
+      }
+    }
+
+    cursor = addHours(startOfDay(cursor), 24)
+    cursor.setHours(dayStartHour, 0, 0, 0)
+  }
+
+  const result = slots.slice(0, 20)
+
+  // If preferPeak, sort so peak slots come first (preserving original order within each group)
+  if (preferPeak) {
+    return [
+      ...result.filter(s => s.is_peak),
+      ...result.filter(s => !s.is_peak),
+    ]
+  }
+
+  return result
+}
