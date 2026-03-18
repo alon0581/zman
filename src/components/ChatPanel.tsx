@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { User } from '@supabase/supabase-js'
-import { AIMemory, CalendarEvent, Message, UserProfile } from '@/types'
+import { AIMemory, CalendarEvent, Message, Task, UserProfile } from '@/types'
 import { Send, Mic, Square, RotateCcw } from 'lucide-react'
 
 // ─── Dynamic welcome builder ─────────────────────────────────────────────────
@@ -120,10 +120,14 @@ interface Props {
   user: User
   profile: UserProfile | null
   events: CalendarEvent[]
+  tasks?: Task[]
   language: string
   onEventsUpdate: (events: CalendarEvent[], addedIds?: string[]) => void
   onProfileUpdate: (profile: UserProfile) => void
+  onTasksUpdate?: () => void
   isOnboarding?: boolean
+  prefillInput?: string
+  onPrefillConsumed?: () => void
 }
 
 const T = {
@@ -155,7 +159,7 @@ const T = {
 type Lang = keyof typeof T
 function tr(lang: string, k: keyof typeof T['en']) { return (T[lang as Lang] ?? T.en)[k] }
 
-export default function ChatPanel({ user, profile: initProfile, events, language, onEventsUpdate, onProfileUpdate, isOnboarding: initIsOnboarding }: Props) {
+export default function ChatPanel({ user, profile: initProfile, events, tasks = [], language, onEventsUpdate, onProfileUpdate, onTasksUpdate, isOnboarding: initIsOnboarding, prefillInput, onPrefillConsumed }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(initProfile)
   const [isOnboarding, setIsOnboarding] = useState(!!initIsOnboarding)
   const [memory, setMemory] = useState<AIMemory[]>([])
@@ -264,7 +268,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       ]
       const res = await fetch('/api/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: contextMessages, events: eventsSnapshot, profile, isOnboarding: activeOnboarding, memory }),
+        body: JSON.stringify({ messages: contextMessages, events: eventsSnapshot, profile, isOnboarding: activeOnboarding, memory, tasks }),
       })
       if (!res.ok || !res.body) throw new Error()
 
@@ -299,6 +303,8 @@ export default function ChatPanel({ user, profile: initProfile, events, language
               } else {
                 setMessages(p => p.map(m => m.id === assistantId ? { ...m, content: m.content + parsed.content } : m))
               }
+            } else if (parsed.type === 'tasks_updated') {
+              onTasksUpdate?.()
             } else if (parsed.type === 'memory_updated') {
               // AI called save_memory — re-fetch so next messages include new memory
               fetch('/api/memory').then(r => r.ok ? r.json() : []).then(data => {
@@ -342,12 +348,21 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       setStreamingId(null)
       inputRef.current?.focus()
     }
-  }, [loading, messages, events, profile, memory, onEventsUpdate, language])
+  }, [loading, messages, events, tasks, profile, memory, onEventsUpdate, onTasksUpdate, language])
 
   // Keep ref current so mic onstop can call latest sendMessage without stale closure
   useEffect(() => { sendMsgRef.current = sendMessage }, [sendMessage])
   // Mirror recording state into a ref so event handlers always see the latest value
   useEffect(() => { recordingRef.current = recording }, [recording])
+
+  // When parent pre-fills the input (e.g. Schedule button from TasksPanel)
+  useEffect(() => {
+    if (prefillInput) {
+      setInput(prefillInput)
+      setTimeout(() => inputRef.current?.focus(), 100)
+      onPrefillConsumed?.()
+    }
+  }, [prefillInput])
 
   // Mic permission note:
   // We do NOT pre-warm getUserMedia on mount (would show a popup before the user taps anything).

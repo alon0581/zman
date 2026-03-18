@@ -157,6 +157,74 @@ ALWAYS call save_memory after learning something new. This is your long-term bra
   {
     type: 'function',
     function: {
+      name: 'create_task',
+      description: 'Create a new task/todo item. ALWAYS assign a topic — infer from context if not given. Standard topics: "לימודים" (Study), "עבודה" (Work), "בריאות" (Health), "אישי" (Personal), "פרויקטים" (Projects), "חברתי" (Social). After creating, the UI task panel updates automatically.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Task title' },
+          priority: { type: 'string', enum: ['low', 'medium', 'high'], description: 'Task priority' },
+          topic: { type: 'string', description: 'Topic/category for grouping. Infer from context (e.g. "לימודים", "עבודה", "אישי", "בריאות")' },
+          deadline: { type: 'string', description: 'Optional deadline as ISO date string (e.g. 2026-03-25)' },
+          estimated_hours: { type: 'number', description: 'Estimated hours to complete' },
+          description: { type: 'string', description: 'Optional description' },
+        },
+        required: ['title', 'priority', 'topic'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_task',
+      description: 'Update an existing task — change status, title, priority, topic, or deadline.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: 'The task ID to update' },
+          title: { type: 'string' },
+          status: { type: 'string', enum: ['pending', 'in_progress', 'done'] },
+          priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+          topic: { type: 'string' },
+          deadline: { type: 'string' },
+          estimated_hours: { type: 'number' },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_task',
+      description: 'Delete a task by ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: 'The task ID to delete' },
+          title: { type: 'string', description: 'Task title (for confirmation message)' },
+        },
+        required: ['task_id', 'title'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_tasks',
+      description: "List the user's tasks. Filter by status or topic to get a specific subset.",
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['pending', 'in_progress', 'done'], description: 'Filter by status (optional — omit for all)' },
+          topic: { type: 'string', description: 'Filter by topic/category (optional)' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'delete_memory',
       description: 'Remove outdated or incorrect facts from memory. Use when the user corrects something ("לא, אני קם ב-8 לא ב-7") or a fact is no longer true. After deleting, call save_memory to store the correct value.',
       parameters: {

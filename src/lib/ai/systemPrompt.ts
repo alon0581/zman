@@ -1,11 +1,12 @@
-import { UserProfile, CalendarEvent, AIMemory } from '@/types'
+import { UserProfile, CalendarEvent, AIMemory, Task } from '@/types'
 import { format } from 'date-fns'
 
 export function buildSystemPrompt(
   profile: UserProfile | null,
   events: CalendarEvent[],
   now: Date,
-  memory?: AIMemory[]
+  memory?: AIMemory[],
+  tasks?: Task[]
 ): string {
   const nowStr = format(now, "EEEE, MMMM d, yyyy 'at' h:mm a")
   const currentHour = now.getHours()
@@ -52,12 +53,37 @@ ${profile.occupation ? `- Occupation: ${profile.occupation}` : ''}` : ''
     return lines.join('\n')
   })()
 
+  const taskSummary = (() => {
+    if (!tasks || tasks.length === 0) return ''
+    const pending = tasks.filter(t => t.status !== 'done')
+    if (pending.length === 0) return '\n📋 Open tasks: (none — all done!)'
+    const byTopic: Record<string, Task[]> = {}
+    for (const t of pending) {
+      const topic = t.topic ?? 'General'
+      if (!byTopic[topic]) byTopic[topic] = []
+      byTopic[topic].push(t)
+    }
+    const lines = ['\n📋 Open tasks (up to 20 pending):']
+    for (const [topic, topicTasks] of Object.entries(byTopic)) {
+      const taskStrs = topicTasks.slice(0, 5).map(t => {
+        const parts = [`${t.title} (${t.priority}`]
+        if (t.deadline) parts.push(`, due ${t.deadline}`)
+        parts.push(')')
+        return parts.join('')
+      })
+      lines.push(`[${topic}] ${taskStrs.join(' | ')}`)
+    }
+    lines.push('Reference these tasks when relevant. Use update_task to mark done.')
+    return lines.join('\n')
+  })()
+
   return `You are Zman — a genius AI life scheduler. You think ahead, notice problems before they happen, and proactively improve the user's life. You are NOT a dumb calendar bot.
 
 Current time: ${nowStr}
 ${isMorning ? '(Morning — be especially proactive about today)' : ''}
 ${profileSummary}
 ${memorySummary}
+${taskSummary}
 
 Upcoming events (up to 30):
 ${upcomingEvents || '(no upcoming events)'}
@@ -250,5 +276,16 @@ SCHEDULING RULES
 - Never schedule during sleep hours (${profile?.sleep_time ?? '23:00'} – ${profile?.wake_time ?? '07:00'})
 - Prefer peak (${peakStart}:00–${peakEnd}:00) for important tasks
 - Always 15 min buffer when you have freedom to choose timing
-- Hard tasks in peak; easy tasks in low-energy slots`
+- Hard tasks in peak; easy tasks in low-energy slots
+
+════════════════════════════════════════
+TASKS
+════════════════════════════════════════
+Tasks = todo items to track. Events = scheduled time blocks. Use BOTH when appropriate.
+- User says "add X to my tasks" → call create_task (NEVER just list in chat)
+- ALWAYS assign a topic. Standard: "לימודים/Study", "עבודה/Work", "בריאות/Health", "אישי/Personal", "פרויקטים/Projects", "חברתי/Social"
+- High-priority task with deadline → offer to schedule it via break_down_task
+- When task is done → call update_task with status: "done"
+- Overdue task (deadline in the past) → proactively mention it once
+- After creating task: "הוספתי '[title]' למשימות תחת [topic] ✓" (or English)`
 }

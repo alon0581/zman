@@ -4,7 +4,7 @@ import OpenAI from 'openai'
 import { calendarTools, onboardingTools } from '@/lib/ai/tools'
 import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
 import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
-import { CalendarEvent, UserProfile, AIMemory } from '@/types'
+import { CalendarEvent, UserProfile, AIMemory, Task } from '@/types'
 import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay } from 'date-fns'
 import { demoStorage } from '@/lib/demo/storage'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
@@ -83,12 +83,13 @@ export async function POST(req: NextRequest) {
     if (!userId) return new Response('Unauthorized', { status: 401 })
 
     const body = await req.json()
-    const { messages, events, profile, isOnboarding, memory } = body as {
+    const { messages, events, profile, isOnboarding, memory, tasks } = body as {
       messages: Array<{ role: 'user' | 'assistant'; content: string }>
       events: CalendarEvent[]
       profile: UserProfile | null
       isOnboarding?: boolean
       memory?: Array<{ key: string; value: string }>
+      tasks?: Task[]
     }
 
     // ── Resolve AI provider + key ───────────────────────────────────────────
@@ -127,14 +128,14 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt = isOnboarding
       ? buildOnboardingSystemPrompt(profile?.language ?? 'en', new Date())
-      : buildSystemPrompt(profile, events, new Date(), memory as AIMemory[] | undefined)
+      : buildSystemPrompt(profile, events, new Date(), memory as AIMemory[] | undefined, tasks)
 
     const createdEvents: CalendarEvent[] = []
     const updatedEvents: CalendarEvent[] = []
     const deletedEventIds: string[] = []
     let lastContent = ''
     let completedProfile: UserProfile | null = null
-    const state = { completedProfile: null as UserProfile | null, memoryUpdated: false }
+    const state = { completedProfile: null as UserProfile | null, memoryUpdated: false, tasksUpdated: false }
 
     // ── Tool-call loop ──────────────────────────────────────────────────────
 
@@ -281,6 +282,13 @@ export async function POST(req: NextRequest) {
               ))
             }
 
+            // Notify client to re-fetch tasks if any task tool calls were made
+            if (state.tasksUpdated) {
+              controller.enqueue(encoder.encode(
+                `data: ${JSON.stringify({ type: 'tasks_updated' })}\n\n`
+              ))
+            }
+
             if (lastContent) {
               // Stream content word-by-word so the client shows progressive rendering
               const words = lastContent.split(/(?<=\s)|(?=\s)/)
@@ -377,6 +385,12 @@ export async function POST(req: NextRequest) {
             ))
           }
 
+          if (state.tasksUpdated) {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ type: 'tasks_updated' })}\n\n`
+            ))
+          }
+
           if (lastContent) {
             const words = lastContent.split(/(?<=\s)|(?=\s)/)
             for (const word of words) {
@@ -426,7 +440,7 @@ async function executeTool(
   updatedEvents: CalendarEvent[],
   deletedEventIds: string[],
   profile: UserProfile | null,
-  state: { completedProfile: UserProfile | null; memoryUpdated: boolean } = { completedProfile: null, memoryUpdated: false }
+  state: { completedProfile: UserProfile | null; memoryUpdated: boolean; tasksUpdated: boolean } = { completedProfile: null, memoryUpdated: false, tasksUpdated: false }
 ): Promise<unknown> {
   // ── Input validation helpers ──────────────────────────────────────────────
   const str  = (v: unknown): string  => (typeof v === 'string' ? v : '')
@@ -865,6 +879,86 @@ async function executeTool(
         await supabase.from('ai_memory').delete().eq('user_id', userId).in('key', keys)
       }
       return { success: true, deleted: keys.length }
+    }
+
+    case 'create_task': {
+      const task: Task = {
+        id: crypto.randomUUID(),
+        user_id: userId,
+        title: str(input.title),
+        description: input.description ? str(input.description) : undefined,
+        deadline: input.deadline ? str(input.deadline) : undefined,
+        estimated_hours: input.estimated_hours ? num(input.estimated_hours) : undefined,
+        priority: (['low', 'medium', 'high'].includes(str(input.priority)) ? str(input.priority) : 'medium') as Task['priority'],
+        status: 'pending',
+        topic: input.topic ? str(input.topic) : undefined,
+        created_at: new Date().toISOString(),
+      }
+      if (DEMO_MODE) {
+        demoStorage.addTask(task, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        const { error } = await supabase.from('tasks').insert(task)
+        if (error) return { error: error.message }
+      }
+      state.tasksUpdated = true
+      return { success: true, task }
+    }
+
+    case 'update_task': {
+      const taskId = str(input.task_id)
+      const updates: Partial<Task> = {}
+      if (input.title) updates.title = str(input.title)
+      if (input.status) updates.status = str(input.status) as Task['status']
+      if (input.priority) updates.priority = str(input.priority) as Task['priority']
+      if (input.topic) updates.topic = str(input.topic)
+      if (input.deadline) updates.deadline = str(input.deadline)
+      if (input.estimated_hours) updates.estimated_hours = num(input.estimated_hours)
+
+      if (DEMO_MODE) {
+        demoStorage.updateTask(taskId, updates, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        const { error } = await supabase.from('tasks').update(updates).eq('id', taskId).eq('user_id', userId)
+        if (error) return { error: error.message }
+      }
+      state.tasksUpdated = true
+      return { success: true }
+    }
+
+    case 'delete_task': {
+      const taskId = str(input.task_id)
+      if (DEMO_MODE) {
+        demoStorage.deleteTask(taskId, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        const { error } = await supabase.from('tasks').delete().eq('id', taskId).eq('user_id', userId)
+        if (error) return { error: error.message }
+      }
+      state.tasksUpdated = true
+      return { success: true }
+    }
+
+    case 'list_tasks': {
+      const { status, topic } = input as { status?: string; topic?: string }
+      if (DEMO_MODE) {
+        let tasks = demoStorage.getTasks(userId)
+        if (status) tasks = tasks.filter(t => t.status === status)
+        if (topic) tasks = tasks.filter(t => t.topic === topic)
+        return { tasks }
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        let query = supabase.from('tasks').select('*').eq('user_id', userId)
+        if (status) query = query.eq('status', status)
+        if (topic) query = query.eq('topic', topic)
+        const { data, error } = await query.order('created_at', { ascending: false })
+        if (error) return { error: error.message }
+        return { tasks: data }
+      }
     }
 
     case 'complete_onboarding': {

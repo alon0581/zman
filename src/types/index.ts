@@ -26,6 +26,7 @@ export interface Task {
   priority: 'low' | 'medium' | 'high'
   status: 'pending' | 'in_progress' | 'done'
   parent_task_id?: string
+  topic?: string
   created_at: string
 }
 

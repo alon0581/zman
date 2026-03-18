@@ -1,4 +1,4 @@
-import { CalendarEvent } from '@/types'
+import { CalendarEvent, Task } from '@/types'
 import fs from 'fs'
 import path from 'path'
 
@@ -33,6 +33,26 @@ function writeEvents(userId: string, events: CalendarEvent[]) {
   fs.writeFileSync(eventsFile(userId), JSON.stringify(events, null, 2))
 }
 
+function tasksFile(userId: string) {
+  return path.join(userDir(userId), 'tasks.json')
+}
+
+function readTasks(userId: string): Task[] {
+  try {
+    ensureUserDir(userId)
+    const file = tasksFile(userId)
+    if (!fs.existsSync(file)) return []
+    return JSON.parse(fs.readFileSync(file, 'utf-8'))
+  } catch {
+    return []
+  }
+}
+
+function writeTasks(userId: string, tasks: Task[]) {
+  ensureUserDir(userId)
+  fs.writeFileSync(tasksFile(userId), JSON.stringify(tasks, null, 2))
+}
+
 export const demoStorage = {
   getEvents(userId = 'demo'): CalendarEvent[] {
     return readEvents(userId)
@@ -50,5 +70,22 @@ export const demoStorage = {
   },
   deleteEvent(id: string, userId = 'demo') {
     writeEvents(userId, readEvents(userId).filter(e => e.id !== id))
+  },
+  getTasks(userId = 'demo'): Task[] {
+    return readTasks(userId)
+  },
+  addTask(task: Task, userId = 'demo') {
+    const tasks = readTasks(userId)
+    tasks.push(task)
+    writeTasks(userId, tasks)
+  },
+  updateTask(id: string, updates: Partial<Task>, userId = 'demo') {
+    const tasks = readTasks(userId)
+    const idx = tasks.findIndex(t => t.id === id)
+    if (idx !== -1) tasks[idx] = { ...tasks[idx], ...updates }
+    writeTasks(userId, tasks)
+  },
+  deleteTask(id: string, userId = 'demo') {
+    writeTasks(userId, readTasks(userId).filter(t => t.id !== id))
   },
 }
