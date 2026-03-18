@@ -186,8 +186,9 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const sendMsgRef        = useRef<(t: string) => void>(() => {})
   const pressStartRef     = useRef<number>(0)         // timestamp of pointer-down
   const recordingRef      = useRef(false)              // mirror of `recording` state — always current in event handlers
-  const lastTranscriptRef = useRef('')                 // accumulated Web Speech transcript
+  const lastTranscriptRef = useRef('')                 // accumulated Web Speech transcript (persists across auto-restarts)
   const cachedStreamRef   = useRef<MediaStream | null>(null) // cached mic stream — keeps permission warm in session
+  const shouldRestartRef  = useRef(false)              // true = keep restarting when browser auto-stops (silence timeout)
 
   // On mount: load events, profile, memory — then build smart welcome
   useEffect(() => {
@@ -362,7 +363,8 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
       setTimeout(() => inputRef.current?.focus(), 100)
       onPrefillConsumed?.()
     }
-  }, [prefillInput])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillInput, onPrefillConsumed])
 
   // Mic permission note:
   // We do NOT pre-warm getUserMedia on mount (would show a popup before the user taps anything).
@@ -373,7 +375,8 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const lang  = profile?.language ?? language
   const isRTL = lang === 'he' || lang === 'ar'
 
-  const startRecording = async () => {
+  // accumulated param carries text from a previous session when auto-restarting
+  const startRecording = async (accumulated = '') => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) {
@@ -393,27 +396,39 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
 
     const recognition = new SR()
     recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
-    recognition.continuous = true       // stay alive until explicitly stopped (no auto-stop on silence)
+    recognition.continuous = true
     recognition.interimResults = false
     recognition.maxAlternatives = 1
     recognitionRef.current = recognition
-    holdModeRef.current = false          // default: toggle mode — set to true on long-press release
-    lastTranscriptRef.current = ''
+    if (!accumulated) holdModeRef.current = false  // only reset on fresh start, not on auto-restart
+    lastTranscriptRef.current = accumulated        // carry over any text from previous session
+    shouldRestartRef.current = true                // allow auto-restart on silence timeout
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (e: any) => {
-      // Accumulate all final results so far
-      let text = ''
+      // Accumulate final results from this session, prepending any carried-over text
+      let sessionText = ''
       for (let i = 0; i < e.results.length; i++) {
-        if (e.results[i].isFinal) text += (text ? ' ' : '') + e.results[i][0].transcript
+        if (e.results[i].isFinal) sessionText += (sessionText ? ' ' : '') + e.results[i][0].transcript
       }
-      lastTranscriptRef.current = text.trim()
+      lastTranscriptRef.current = accumulated
+        ? sessionText ? `${accumulated} ${sessionText}` : accumulated
+        : sessionText.trim()
     }
-    recognition.onerror = () => { setRecording(false); recognitionRef.current = null }
-    recognition.onend = () => {
+    recognition.onerror = () => {
+      shouldRestartRef.current = false
       setRecording(false)
       recognitionRef.current = null
+    }
+    recognition.onend = () => {
+      recognitionRef.current = null
       const text = lastTranscriptRef.current
+      if (shouldRestartRef.current) {
+        // Browser auto-stopped (silence timeout) — restart seamlessly, carry over transcript
+        startRecording(text)
+        return
+      }
+      setRecording(false)
       if (text) {
         if (holdModeRef.current) { sendMsgRef.current(text) }
         else { setInput(text); setTimeout(() => inputRef.current?.focus(), 50) }
@@ -425,6 +440,7 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   }
 
   const stopRecording = () => {
+    shouldRestartRef.current = false   // prevent auto-restart in onend
     recognitionRef.current?.stop()
     recognitionRef.current = null
     setRecording(false)

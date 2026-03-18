@@ -63,17 +63,15 @@ ${profile.occupation ? `- Occupation: ${profile.occupation}` : ''}` : ''
       if (!byTopic[topic]) byTopic[topic] = []
       byTopic[topic].push(t)
     }
-    const lines = ['\n📋 Open tasks (up to 20 pending):']
+    const lines = ['\n📋 Open tasks (id | title | priority | deadline):']
     for (const [topic, topicTasks] of Object.entries(byTopic)) {
-      const taskStrs = topicTasks.slice(0, 5).map(t => {
-        const parts = [`${t.title} (${t.priority}`]
-        if (t.deadline) parts.push(`, due ${t.deadline}`)
-        parts.push(')')
-        return parts.join('')
-      })
-      lines.push(`[${topic}] ${taskStrs.join(' | ')}`)
+      lines.push(`[${topic}]`)
+      for (const t of topicTasks.slice(0, 5)) {
+        const deadline = t.deadline ? ` | due ${t.deadline}` : ''
+        lines.push(`  ${t.id} | ${t.title} | ${t.priority}${deadline}`)
+      }
     }
-    lines.push('Reference these tasks when relevant. Use update_task to mark done.')
+    lines.push('Use the task IDs above directly in update_task — no need to call list_tasks first.')
     return lines.join('\n')
   })()
 
@@ -285,7 +283,8 @@ Tasks = todo items to track. Events = scheduled time blocks. Use BOTH when appro
 - User says "add X to my tasks" → call create_task (NEVER just list in chat)
 - ALWAYS assign a topic. Standard: "לימודים/Study", "עבודה/Work", "בריאות/Health", "אישי/Personal", "פרויקטים/Projects", "חברתי/Social"
 - High-priority task with deadline → offer to schedule it via break_down_task
-- When task is done → call update_task with status: "done"
+- When user says "done", "finished", "completed", "עשיתי", "סיימתי" about a task → call update_task with status:"done" IMMEDIATELY using the task ID from the list above
+- When marking done, say: "✅ סימנתי [title] כבוצע" (or English equivalent) — brief confirmation only
 - Overdue task (deadline in the past) → proactively mention it once
 - After creating task: "הוספתי '[title]' למשימות תחת [topic] ✓" (or English)`
 }

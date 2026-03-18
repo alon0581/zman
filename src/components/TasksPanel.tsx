@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Task } from '@/types'
+import { CalendarEvent, Task } from '@/types'
 import { format, isPast, parseISO } from 'date-fns'
 import { CheckCircle2, Circle, Calendar, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 
 interface Props {
   tasks: Task[]
+  events?: CalendarEvent[]
   language?: string
   onTaskToggle: (id: string, newStatus: Task['status']) => void
   onScheduleTask: (task: Task) => void
@@ -49,7 +50,7 @@ const T = {
   },
 }
 
-export default function TasksPanel({ tasks, language = 'en', onTaskToggle, onScheduleTask, onAddTask }: Props) {
+export default function TasksPanel({ tasks, events = [], language = 'en', onTaskToggle, onScheduleTask, onAddTask }: Props) {
   const [collapsedTopics, setCollapsedTopics] = useState<Set<string>>(new Set())
   const [showDone, setShowDone] = useState(false)
   const [addText, setAddText] = useState('')
@@ -62,6 +63,37 @@ export default function TasksPanel({ tasks, language = 'en', onTaskToggle, onSch
     const done = tasks.filter(t => t.status === 'done')
     return { pending, done }
   }, [tasks])
+
+  // Pre-compute done counts by topic — O(n) once instead of O(n) per topic in render
+  const doneCountByTopic = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const t of tasks) {
+      if (t.status === 'done') {
+        const topic = t.topic ?? (language === 'he' ? 'כללי' : 'General')
+        counts[topic] = (counts[topic] ?? 0) + 1
+      }
+    }
+    return counts
+  }, [tasks, language])
+
+  // Map each task title → earliest upcoming calendar event (for "scheduled" badge)
+  const scheduledByTaskId = useMemo(() => {
+    const now = new Date()
+    const map: Record<string, Date> = {}
+    for (const task of pending) {
+      const titleLower = task.title.toLowerCase()
+      const match = events
+        .filter(e => {
+          const start = new Date(e.start_time)
+          if (start <= now) return false
+          const evLower = e.title.toLowerCase()
+          return evLower.includes(titleLower) || titleLower.includes(evLower)
+        })
+        .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
+      if (match) map[task.id] = new Date(match.start_time)
+    }
+    return map
+  }, [pending, events])
 
   // Group pending by topic
   const byTopic = useMemo(() => {
@@ -144,7 +176,7 @@ export default function TasksPanel({ tasks, language = 'en', onTaskToggle, onSch
 
             {topicEntries.map(([topic, topicTasks]) => {
               const isCollapsed = collapsedTopics.has(topic)
-              const doneCount = tasks.filter(t => t.topic === topic && t.status === 'done').length
+              const doneCount = doneCountByTopic[topic] ?? 0
               const totalCount = topicTasks.length + doneCount
               const progress = totalCount > 0 ? Math.round(doneCount / totalCount * 100) : 0
 
@@ -218,6 +250,15 @@ export default function TasksPanel({ tasks, language = 'en', onTaskToggle, onSch
                                 }}>
                                   {pLabels[task.priority]}
                                 </span>
+                                {scheduledByTaskId[task.id] && (
+                                  <span style={{
+                                    fontSize: 11, color: '#3B7EF7', fontWeight: 500,
+                                    display: 'flex', alignItems: 'center', gap: 3,
+                                  }}>
+                                    <Calendar size={10} />
+                                    {format(scheduledByTaskId[task.id], language === 'he' ? 'd MMM, HH:mm' : 'MMM d, h:mma')}
+                                  </span>
+                                )}
                                 {task.deadline && (
                                   <span style={{
                                     fontSize: 11, color: isOverdue ? '#EF4444' : 'var(--text-2)',
@@ -301,9 +342,9 @@ export default function TasksPanel({ tasks, language = 'en', onTaskToggle, onSch
         padding: '10px 16px 16px', flexShrink: 0, borderTop: '1px solid var(--border)',
       }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button style={{ background: 'none', border: 'none', color: 'var(--text-2)', cursor: 'default', padding: 0 }}>
+          <span style={{ color: 'var(--text-2)', display: 'flex', flexShrink: 0 }}>
             <Plus size={16} />
-          </button>
+          </span>
           <input
             value={addText}
             onChange={e => setAddText(e.target.value)}

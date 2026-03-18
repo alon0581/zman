@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { User } from '@supabase/supabase-js'
 import { UserProfile, CalendarEvent, Task } from '@/types'
 import CalendarPanel from './CalendarPanel'
@@ -49,17 +49,17 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  // Fetch tasks on mount
-  const fetchTasks = useCallback(() => {
-    fetch('/api/tasks')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.tasks) setTasks(data.tasks) })
-      .catch(() => {})
-  }, [])
+  // Fetch + poll tasks — same cross-device sync pattern as events
+  const fetchTasks = () => fetch('/api/tasks')
+    .then(r => r.ok ? r.json() : null)
+    .then(data => { if (data?.tasks) setTasks(data.tasks) })
+    .catch(() => {})
 
   useEffect(() => {
     fetchTasks()
-  }, [fetchTasks])
+    const id = setInterval(fetchTasks, 30_000)
+    return () => clearInterval(id)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleEventsUpdate = (updatedEvents: CalendarEvent[], addedIds?: string[]) => {
     setEvents(updatedEvents)
@@ -90,9 +90,9 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     setEvents(prev => prev.filter(e => e.id !== id))
   }
 
-  const handleTaskToggle = async (id: string, newStatus: Task['status']) => {
+  const handleTaskToggle = (id: string, newStatus: Task['status']) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t))
-    await fetch(`/api/tasks/${id}`, {
+    fetch(`/api/tasks/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
@@ -149,6 +149,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   const tasksPanel = (
     <TasksPanel
       tasks={tasks}
+      events={events}
       language={language}
       onTaskToggle={handleTaskToggle}
       onScheduleTask={handleScheduleTask}
