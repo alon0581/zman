@@ -20,7 +20,8 @@ type ViewType = 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'timeGrid3Day'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FCType = React.ComponentType<any>
 
-const VIEW_ORDER: ViewType[] = ['timeGridDay', 'timeGrid3Day', 'timeGridWeek', 'dayGridMonth']
+const VIEW_ORDER_DESKTOP: ViewType[] = ['timeGridDay', 'timeGrid3Day', 'timeGridWeek', 'dayGridMonth']
+const VIEW_ORDER_MOBILE: ViewType[]  = ['timeGridDay', 'timeGrid3Day', 'dayGridMonth']
 
 const LABELS: Record<string, Record<ViewType, string>> = {
   en: { timeGridDay: 'Day', timeGrid3Day: '3 Days', timeGridWeek: 'Week', dayGridMonth: 'Month' },
@@ -56,6 +57,11 @@ export default function CalendarPanel({
   // Apple-style day sheet for month view on mobile
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
 
+  // Auto-switch away from week view when on mobile (week is desktop-only)
+  useEffect(() => {
+    if (isMobile && view === 'timeGridWeek') setView('timeGridDay')
+  }, [isMobile, view])
+
   // Pinch-to-zoom: adjust slot height like Apple Calendar
   const DEFAULT_SLOT_H = isMobile ? 44 : 30
   const [slotHeight, setSlotHeight] = useState(DEFAULT_SLOT_H)
@@ -75,6 +81,7 @@ export default function CalendarPanel({
 
     const onStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
+        e.preventDefault() // block browser pinch-zoom before it starts
         const dx = e.touches[0].clientX - e.touches[1].clientX
         const dy = e.touches[0].clientY - e.touches[1].clientY
         pinch.startDist = Math.hypot(dx, dy)
@@ -95,7 +102,7 @@ export default function CalendarPanel({
 
     const onEnd = () => { pinch.active = false }
 
-    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchstart', onStart, { passive: false })
     el.addEventListener('touchmove', onMove, { passive: false })
     el.addEventListener('touchend', onEnd, { passive: true })
     el.addEventListener('touchcancel', onEnd, { passive: true })
@@ -246,12 +253,12 @@ export default function CalendarPanel({
             </button>
           </div>
 
-          {/* View switcher */}
+          {/* View switcher — week tab only on desktop */}
           <div style={{
             display: 'flex', background: 'var(--bg-card)',
             borderRadius: 10, padding: 3, border: '1px solid var(--border)', gap: 2, flexShrink: 0,
           }}>
-            {VIEW_ORDER.map(v => (
+            {(isMobile ? VIEW_ORDER_MOBILE : VIEW_ORDER_DESKTOP).map(v => (
               <button key={v} onClick={() => setView(v)}
                 style={{
                   padding: isMobile ? '5px 8px' : '5px 12px',
@@ -276,6 +283,7 @@ export default function CalendarPanel({
         style={{
           flex: 1, overflow: 'hidden', padding: isMobile ? '6px 8px 8px' : '8px 16px 12px',
           '--fc-slot-height': `${slotHeight}px`,
+          touchAction: isMobile ? 'pan-y' : undefined, // allow scroll; block browser pinch-zoom so our handler runs
         } as React.CSSProperties}
       >
         <FC
@@ -364,12 +372,14 @@ function DaySheet({ date, events, language, onClose, onEventClick }: {
         onClick={onClose}
         style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(0,0,0,0.4)' }}
       />
-      {/* Sheet */}
+      {/* Sheet — floats above the mobile bottom tab bar */}
       <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
+        position: 'fixed',
+        bottom: 'calc(56px + env(safe-area-inset-bottom, 0px))',
+        left: 8, right: 8, zIndex: 50,
         background: 'var(--bg-panel)',
-        borderRadius: '22px 22px 0 0',
-        boxShadow: '0 -12px 48px rgba(0,0,0,0.55)',
+        borderRadius: 22,
+        boxShadow: '0 -4px 48px rgba(0,0,0,0.6)',
         maxHeight: '60vh',
         display: 'flex', flexDirection: 'column',
         animation: 'slideUp 0.28s cubic-bezier(0.32,0.72,0,1)',
@@ -399,7 +409,7 @@ function DaySheet({ date, events, language, onClose, onEventClick }: {
           </button>
         </div>
         {/* Events list */}
-        <div style={{ overflowY: 'auto', padding: '10px 16px', flex: 1, paddingBottom: 'env(safe-area-inset-bottom, 16px)' }}>
+        <div style={{ overflowY: 'auto', padding: '10px 16px 18px', flex: 1 }}>
           {sorted.length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 14, padding: '28px 0' }}>
               {isHe ? 'אין אירועים ביום זה' : 'No events this day'}
