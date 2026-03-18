@@ -73,20 +73,27 @@ export default function CalendarPanel({
     setSlotHeight(h)
   }, [])
 
+  const goPrev = useCallback(() => calRef.current?.getApi().prev(), [])
+  const goNext = useCallback(() => calRef.current?.getApi().next(), [])
+
   useEffect(() => {
     const el = containerRef.current
     if (!el || !isMobile) return
 
     const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H }
+    const swipe = { startX: 0, startY: 0 }
 
     const onStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        e.preventDefault() // block browser pinch-zoom before it starts
+        e.preventDefault()
         const dx = e.touches[0].clientX - e.touches[1].clientX
         const dy = e.touches[0].clientY - e.touches[1].clientY
         pinch.startDist = Math.hypot(dx, dy)
         pinch.startHeight = slotHeightRef.current
         pinch.active = true
+      } else if (e.touches.length === 1) {
+        swipe.startX = e.touches[0].clientX
+        swipe.startY = e.touches[0].clientY
       }
     }
 
@@ -100,7 +107,18 @@ export default function CalendarPanel({
       updateSlotHeight(newH)
     }
 
-    const onEnd = () => { pinch.active = false }
+    const onEnd = (e: TouchEvent) => {
+      if (pinch.active) { pinch.active = false; return }
+      if (e.changedTouches.length === 1) {
+        const dx = e.changedTouches[0].clientX - swipe.startX
+        const dy = e.changedTouches[0].clientY - swipe.startY
+        // Horizontal swipe: must dominate vertical movement
+        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.8) {
+          if (language === 'he') { dx > 0 ? goNext() : goPrev() }
+          else                   { dx > 0 ? goPrev() : goNext() }
+        }
+      }
+    }
 
     el.addEventListener('touchstart', onStart, { passive: false })
     el.addEventListener('touchmove', onMove, { passive: false })
@@ -113,7 +131,7 @@ export default function CalendarPanel({
       el.removeEventListener('touchend', onEnd)
       el.removeEventListener('touchcancel', onEnd)
     }
-  }, [isMobile, updateSlotHeight, DEFAULT_SLOT_H])
+  }, [isMobile, updateSlotHeight, DEFAULT_SLOT_H, language, goPrev, goNext])
 
   useEffect(() => {
     const imports: Promise<unknown>[] = [
@@ -147,9 +165,6 @@ export default function CalendarPanel({
 
   // Close day sheet when navigating months
   useEffect(() => { setSelectedDate(null) }, [currentDate])
-
-  const goPrev = () => calRef.current?.getApi().prev()
-  const goNext = () => calRef.current?.getApi().next()
 
   const fcEvents = events.map(ev => ({
     id: ev.id,
@@ -207,27 +222,28 @@ export default function CalendarPanel({
 
           {/* ← Date title → */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            {/* Prev: always ← = back in time */}
-            <button
-              onClick={goPrev}
-              style={{
-                width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border-hi)',
-                background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                transition: 'background 0.15s, color 0.15s',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--border-hi)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-2)' }}
-            >
-              <ChevronLeft size={16} />
-            </button>
+            {/* Prev: only on desktop — mobile uses swipe */}
+            {!isMobile && (
+              <button
+                onClick={goPrev}
+                style={{
+                  width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border-hi)',
+                  background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  transition: 'background 0.15s, color 0.15s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--border-hi)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-2)' }}
+              >
+                <ChevronLeft size={16} />
+              </button>
+            )}
 
             <div style={{ minWidth: 0 }}>
               <div style={{
                 fontSize: isMobile ? 20 : 26, fontWeight: 800,
                 letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1,
                 whiteSpace: 'nowrap',
-                // Hebrew text direction for the month name
                 direction: language === 'he' ? 'rtl' : 'ltr',
               }}>
                 {monthTitle}
@@ -237,20 +253,36 @@ export default function CalendarPanel({
               </div>
             </div>
 
-            {/* Next: always → = forward in time */}
-            <button
-              onClick={goNext}
-              style={{
-                width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border-hi)',
-                background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                transition: 'background 0.15s, color 0.15s',
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--border-hi)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-2)' }}
-            >
-              <ChevronRight size={16} />
-            </button>
+            {/* Next: only on desktop — mobile uses swipe */}
+            {!isMobile && (
+              <button
+                onClick={goNext}
+                style={{
+                  width: 32, height: 32, borderRadius: 8, border: '1px solid var(--border-hi)',
+                  background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  transition: 'background 0.15s, color 0.15s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--border-hi)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-2)' }}
+              >
+                <ChevronRight size={16} />
+              </button>
+            )}
+
+            {/* Today button — mobile only */}
+            {isMobile && (
+              <button
+                onClick={() => calRef.current?.getApi().today()}
+                style={{
+                  padding: '4px 10px', borderRadius: 7, border: '1px solid var(--border-hi)',
+                  background: 'var(--bg-card)', color: 'var(--text-2)', cursor: 'pointer',
+                  fontSize: 11, fontWeight: 600, flexShrink: 0,
+                }}
+              >
+                {language === 'he' ? 'היום' : 'Today'}
+              </button>
+            )}
           </div>
 
           {/* View switcher — week tab only on desktop */}
@@ -293,7 +325,7 @@ export default function CalendarPanel({
           key={language}               /* remount only on language change, not view change */
           events={fcEvents}
           locale={language === 'he' && localeData ? localeData : language}
-          direction="ltr"              /* always LTR so prev()=older / next()=newer regardless of locale */
+          direction={language === 'he' ? 'rtl' : 'ltr'}
           headerToolbar={false}        /* we use our own prev/next buttons above */
           height="100%"
           nowIndicator
@@ -402,12 +434,13 @@ function DaySheet({ date, events, language, onClose, onEventClick }: {
       {/* Sheet — floats above the mobile bottom tab bar */}
       <div style={{
         position: 'fixed',
-        bottom: 'calc(56px + env(safe-area-inset-bottom, 0px))',
+        bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
         left: 8, right: 8, zIndex: 50,
         background: 'var(--bg-panel)',
         borderRadius: 22,
         boxShadow: '0 -4px 48px rgba(0,0,0,0.6)',
-        maxHeight: '60vh',
+        minHeight: 220,
+        maxHeight: '65vh',
         display: 'flex', flexDirection: 'column',
         animation: 'slideUp 0.28s cubic-bezier(0.32,0.72,0,1)',
       }}>

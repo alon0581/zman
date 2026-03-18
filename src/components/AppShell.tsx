@@ -256,17 +256,17 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             onClick={() => setMobileTab('calendar')}
           />
           <MobileTab
+            active={mobileTab === 'chat'}
+            label={chatLabel}
+            icon={<MessageCircle size={22} />}
+            onClick={() => setMobileTab('chat')}
+          />
+          <MobileTab
             active={mobileTab === 'tasks'}
             label={tasksLabel}
             icon={<CheckSquare size={22} />}
             onClick={() => setMobileTab('tasks')}
             badge={tasks.filter(t => t.status !== 'done').length}
-          />
-          <MobileTab
-            active={mobileTab === 'chat'}
-            label={chatLabel}
-            icon={<MessageCircle size={22} />}
-            onClick={() => setMobileTab('chat')}
           />
         </div>
       )}

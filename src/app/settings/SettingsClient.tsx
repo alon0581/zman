@@ -4,10 +4,7 @@ import { useState, useEffect } from 'react'
 import { User } from '@supabase/supabase-js'
 import { UserProfile, AIMemory } from '@/types'
 import { createClient } from '@/lib/supabase/client'
-import {
-  ArrowLeft, X, Check, Loader2, CheckCircle2, XCircle,
-  ExternalLink, Unlink, Zap,
-} from 'lucide-react'
+import { ArrowLeft, X, Check } from 'lucide-react'
 import Link from 'next/link'
 
 interface Props {
@@ -87,77 +84,6 @@ const MEMORY_SOURCE_LABELS: Record<string, Record<string, string>> = {
 
 function t(lang: string, key: string) { return (LANGS[lang] ?? LANGS.en)[key] ?? key }
 
-// ─── Model options per provider ───────────────────────────────────────────────
-
-const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  openai: [
-    { value: 'gpt-4o',       label: 'GPT-4o' },
-    { value: 'gpt-4o-mini',  label: 'GPT-4o mini' },
-    { value: 'gpt-4.1',      label: 'GPT-4.1' },
-    { value: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
-  ],
-  anthropic: [
-    { value: 'claude-sonnet-4-20250514',  label: 'Claude Sonnet 4' },
-    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-  ],
-  minimax: [
-    { value: 'MiniMax-M2.5', label: 'MiniMax M2.5 ⚡' },
-    { value: 'MiniMax-M1',   label: 'MiniMax M1' },
-  ],
-  openrouter: [
-    { value: 'openai/gpt-4o',             label: 'GPT-4o (via OpenRouter)' },
-    { value: 'openai/gpt-4o-mini',        label: 'GPT-4o mini (via OpenRouter)' },
-    { value: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (via OpenRouter)' },
-    { value: 'anthropic/claude-haiku-4',  label: 'Claude Haiku 4 (via OpenRouter)' },
-    { value: 'minimax/minimax-m1',        label: 'MiniMax M1 (via OpenRouter)' },
-    { value: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash (via OpenRouter)' },
-  ],
-}
-
-// ─── Provider metadata ────────────────────────────────────────────────────────
-
-interface ProviderInfo {
-  id: 'openai' | 'anthropic' | 'minimax' | 'openrouter'
-  name: string
-  logo: string
-  oauthPath?: string   // if set → direct OAuth redirect
-  keyUrl?: string      // if set → wizard with link to API keys page
-  descKey: string
-  recommended?: boolean
-}
-
-const PROVIDERS: ProviderInfo[] = [
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    logo: '🔀',
-    oauthPath: '/api/auth/oauth/openrouter',
-    descKey: 'openrouterDesc',
-    recommended: true,
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    logo: '⚡',
-    keyUrl: 'https://platform.openai.com/api-keys',
-    descKey: 'openaiDesc',
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic',
-    logo: '🤖',
-    keyUrl: 'https://console.anthropic.com/settings/keys',
-    descKey: 'anthropicDesc',
-  },
-  {
-    id: 'minimax',
-    name: 'MiniMax',
-    logo: '🌊',
-    oauthPath: '/api/auth/oauth/minimax',
-    descKey: 'minimaxDesc',
-  },
-]
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SettingsClient({ user, profile: init, onClose, onProfileUpdate }: Props) {
@@ -168,19 +94,6 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // AI Model state
-  const [activeProvider, setActiveProvider] = useState<string | undefined>(init?.ai_provider)
-  const [activeModel, setActiveModel] = useState<string>(init?.ai_model ?? 'gpt-4o-mini')
-  const [maskedKey] = useState<string>(init?.ai_api_key_masked ?? '')
-
-  // Wizard modal state (for API-key providers: openai, anthropic)
-  const [wizardProvider, setWizardProvider] = useState<ProviderInfo | null>(null)
-  const [wizardKey, setWizardKey] = useState('')
-  const [verifyState, setVerifyState] = useState<'idle' | 'verifying' | 'ok' | 'fail'>('idle')
-  const [verifyError, setVerifyError] = useState('')
-
-  // OAuth result banner (from URL params after redirect)
-  const [oauthBanner, setOauthBanner] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
 
   // Memory state
   const [memory, setMemory] = useState<AIMemory[]>([])
@@ -199,122 +112,20 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     }).catch(() => {/* ignore */})
   }, [])
 
-  // Read OAuth result from URL on mount
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const success = params.get('oauth_success')
-    const error = params.get('oauth_error')
-    if (success) {
-      setOauthBanner({ type: 'success', msg: `✅ ${success.charAt(0).toUpperCase() + success.slice(1)} connected successfully!` })
-      // Reload profile to get the updated provider/masked key
-      fetch('/api/profile').then(r => r.json()).then((freshProfile: UserProfile) => {
-        setActiveProvider(freshProfile.ai_provider)
-        setActiveModel(freshProfile.ai_model ?? MODEL_OPTIONS[freshProfile.ai_provider ?? 'openai']?.[0]?.value ?? 'gpt-4o-mini')
-      }).catch(() => {/* ignore */})
-      // Clean the URL
-      window.history.replaceState({}, '', '/settings')
-    } else if (error) {
-      setOauthBanner({ type: 'error', msg: `❌ Connection failed: ${decodeURIComponent(error)}` })
-      window.history.replaceState({}, '', '/settings')
-    }
-  }, [])
-
-  const handleConnect = (info: ProviderInfo) => {
-    if (info.oauthPath) {
-      // Direct OAuth redirect
-      window.location.href = info.oauthPath
-    } else {
-      // Open wizard
-      setWizardProvider(info)
-      setWizardKey('')
-      setVerifyState('idle')
-      setVerifyError('')
-    }
-  }
-
-  const handleDisconnect = async () => {
-    const update: Partial<UserProfile> = {
-      ai_provider: undefined,
-      ai_model: undefined,
-      ai_api_key_masked: undefined,
-      // Note: ai_api_key_encrypted is cleared server-side when ai_api_key_encrypted is omitted
-    }
-    if (isLocalMode) {
-      await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...p, ...update, ai_api_key_clear: true }),
-      })
-    } else {
-      await supabase.from('user_profiles').upsert({ ...p, ...update, user_id: user.id })
-    }
-    setActiveProvider(undefined)
-    setActiveModel('gpt-4o-mini')
-  }
-
-  const verifyWizardKey = async () => {
-    if (!wizardKey.trim() || !wizardProvider) return
-    setVerifyState('verifying')
-    setVerifyError('')
-    const model = MODEL_OPTIONS[wizardProvider.id]?.[0]?.value ?? ''
-    try {
-      const res = await fetch('/api/ai-test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: wizardProvider.id, model, api_key: wizardKey }),
-      })
-      const data = await res.json() as { success: boolean; error?: string }
-      if (data.success) {
-        setVerifyState('ok')
-      } else {
-        setVerifyState('fail')
-        setVerifyError(data.error ?? 'Verification failed')
-      }
-    } catch {
-      setVerifyState('fail')
-      setVerifyError('Network error')
-    }
-  }
-
-  const saveWizardKey = async () => {
-    if (!wizardProvider || !wizardKey.trim()) return
-    const defaultModel = MODEL_OPTIONS[wizardProvider.id]?.[0]?.value ?? ''
-    const profileUpdate = {
-      ...p,
-      ai_provider: wizardProvider.id,
-      ai_model: defaultModel,
-      ai_api_key: wizardKey,
-    }
-    if (isLocalMode) {
-      await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profileUpdate),
-      })
-    } else {
-      await supabase.from('user_profiles').upsert({ ...profileUpdate, user_id: user.id })
-    }
-    setActiveProvider(wizardProvider.id)
-    setActiveModel(defaultModel)
-    setWizardProvider(null)
-    setWizardKey('')
-  }
-
   const save = async () => {
     setSaving(true)
-    const profileToSave = { ...p, ai_provider: activeProvider, ai_model: activeModel }
     if (isLocalMode) {
       await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profileToSave),
+        body: JSON.stringify(p),
       })
     } else {
-      await supabase.from('user_profiles').upsert({ ...profileToSave, user_id: user.id })
+      await supabase.from('user_profiles').upsert({ ...p, user_id: user.id })
     }
     setSaving(false)
     if (onClose) {
-      onProfileUpdate?.(profileToSave as UserProfile)
+      onProfileUpdate?.(p as UserProfile)
       onClose()
     } else {
       window.location.replace('/')
@@ -349,112 +160,6 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
       {/* Content */}
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 20px 40px' }}>
-
-        {/* OAuth result banner */}
-        {oauthBanner && (
-          <div style={{
-            marginBottom: 16, padding: '12px 16px', borderRadius: 12,
-            background: oauthBanner.type === 'success' ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
-            border: `1px solid ${oauthBanner.type === 'success' ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'}`,
-            fontSize: 13, fontWeight: 500,
-            color: oauthBanner.type === 'success' ? '#34D399' : '#F87171',
-          }}>
-            {oauthBanner.msg}
-          </div>
-        )}
-
-        {/* ── AI MODEL ── */}
-        <SectionLabel label={t(lang, 'aiModelSection')} />
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
-
-          {/* Provider cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--border)' }}>
-            {PROVIDERS.map((info) => {
-              const isConnected = activeProvider === info.id
-              return (
-                <div
-                  key={info.id}
-                  style={{
-                    background: 'var(--bg-card)',
-                    padding: '16px 18px',
-                    position: 'relative',
-                    outline: isConnected ? '2px solid #3B7EF7' : 'none',
-                    outlineOffset: -2,
-                  }}
-                >
-                  {/* Recommended badge */}
-                  {info.recommended && (
-                    <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 3, background: 'rgba(59,126,247,0.15)', border: '1px solid rgba(59,126,247,0.3)', borderRadius: 6, padding: '2px 7px', fontSize: 10, fontWeight: 700, color: '#3B7EF7' }}>
-                      <Zap size={9} /> BEST
-                    </div>
-                  )}
-
-                  <div style={{ fontSize: 20, marginBottom: 6 }}>{info.logo}</div>
-                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{info.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.4 }}>
-                    {t(lang, info.descKey)}
-                  </div>
-
-                  {isConnected ? (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#34D399', fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-                        <CheckCircle2 size={13} /> {t(lang, 'connectedLabel')}
-                        {maskedKey && <span style={{ color: 'var(--text-2)', fontFamily: 'monospace', fontSize: 11 }}>{maskedKey}</span>}
-                      </div>
-                      <button
-                        onClick={handleDisconnect}
-                        style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 8, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.07)', color: '#F87171', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                      >
-                        <Unlink size={11} /> {t(lang, 'disconnectBtn')}
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => handleConnect(info)}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 9, border: '1px solid var(--border-hi)', background: info.recommended ? 'linear-gradient(135deg, #3B7EF7, #6366F1)' : 'var(--bg-input)', color: info.recommended ? '#fff' : 'var(--text)', fontSize: 13, fontWeight: 600, cursor: 'pointer', boxShadow: info.recommended ? '0 2px 12px rgba(59,126,247,0.35)' : 'none' }}
-                    >
-                      {t(lang, 'connectBtn')}
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Server AI banner — shown when no personal API key is configured */}
-          {!activeProvider && (
-            <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(52,211,153,0.04)' }}>
-              <CheckCircle2 size={15} color="#34D399" style={{ flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#34D399' }}>
-                  {lang === 'he' ? '🌊 MiniMax M2.5 — מפתח שרת פעיל' : '🌊 MiniMax M2.5 — Server key active'}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 2 }}>
-                  {lang === 'he' ? 'ה-AI פעיל ללא מפתח אישי. חבר ספק לעיל כדי לשנות מודל.' : 'AI is active, no personal key needed. Connect a provider above to switch models.'}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Active model selector (shown when a provider is connected) */}
-          {activeProvider && (
-            <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{t(lang, 'modelLabel')}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>{t(lang, 'modelDesc')}</div>
-              </div>
-              <select
-                value={activeModel}
-                onChange={e => setActiveModel(e.target.value)}
-                style={selectStyle}
-              >
-                {(MODEL_OPTIONS[activeProvider] ?? MODEL_OPTIONS.openai).map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
 
         {/* ── AI BEHAVIOR ── */}
         <Card label={t(lang, 'aiSection')}>
@@ -610,77 +315,6 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
         </button>
       </div>
 
-      {/* ── WIZARD MODAL (OpenAI / Anthropic) ── */}
-      {wizardProvider && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-hi)', borderRadius: 20, padding: 28, width: '100%', maxWidth: 440 }}>
-            <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 20 }}>
-              {wizardProvider.logo} {t(lang, 'wizardTitle')} {wizardProvider.name}
-            </div>
-
-            <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 10 }}>{t(lang, 'wizardStep1')}</div>
-            <a
-              href={wizardProvider.keyUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, background: 'var(--bg-input)', border: '1px solid var(--border-hi)', color: 'var(--text-2)', fontSize: 13, textDecoration: 'none', marginBottom: 20 }}
-            >
-              <ExternalLink size={13} /> {wizardProvider.keyUrl?.replace('https://', '')}
-            </a>
-
-            <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 10 }}>{t(lang, 'wizardStep2')}</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              <input
-                type="password"
-                value={wizardKey}
-                onChange={e => { setWizardKey(e.target.value); setVerifyState('idle') }}
-                placeholder={t(lang, 'wizardKeyPlaceholder')}
-                style={{ flex: 1, background: 'var(--bg-input)', border: '1px solid var(--border-hi)', color: 'var(--text)', borderRadius: 10, padding: '9px 12px', fontSize: 13, outline: 'none', fontFamily: 'monospace' }}
-              />
-              <button
-                onClick={verifyWizardKey}
-                disabled={verifyState === 'verifying' || !wizardKey.trim()}
-                style={{ padding: '9px 16px', borderRadius: 10, border: '1px solid var(--border-hi)', background: 'var(--bg-input)', color: 'var(--text)', fontSize: 13, fontWeight: 600, cursor: verifyState === 'verifying' ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: !wizardKey.trim() ? 0.4 : 1 }}
-              >
-                {verifyState === 'verifying'
-                  ? <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> {t(lang, 'verifyingBtn')}</>
-                  : t(lang, 'verifyBtn')
-                }
-              </button>
-            </div>
-
-            {/* Verify result */}
-            {verifyState === 'ok' && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#34D399', fontSize: 13, marginBottom: 12 }}>
-                <CheckCircle2 size={14} /> Key works!
-              </div>
-            )}
-            {verifyState === 'fail' && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#F87171', fontSize: 12, marginBottom: 12 }}>
-                <XCircle size={14} /> {verifyError || 'Invalid key'}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-              <button
-                onClick={() => setWizardProvider(null)}
-                style={{ flex: 1, padding: '11px', borderRadius: 12, border: '1px solid var(--border-hi)', background: 'var(--bg-input)', color: 'var(--text-2)', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}
-              >
-                {t(lang, 'cancelBtn')}
-              </button>
-              <button
-                onClick={saveWizardKey}
-                disabled={!wizardKey.trim()}
-                style={{ flex: 2, padding: '11px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #3B7EF7, #6366F1)', color: '#fff', fontSize: 14, fontWeight: 700, cursor: !wizardKey.trim() ? 'default' : 'pointer', opacity: !wizardKey.trim() ? 0.4 : 1, boxShadow: '0 4px 16px rgba(59,126,247,0.35)' }}
-              >
-                {t(lang, 'saveConnectBtn')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 
