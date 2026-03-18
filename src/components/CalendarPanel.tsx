@@ -314,10 +314,9 @@ export default function CalendarPanel({
               type: 'timeGrid',
               duration: { days: 3 },
             },
-            /* Month view: dots on mobile (Apple Calendar style), bars on desktop */
+            /* Month view: compact pills on mobile, full bars on desktop */
             dayGridMonth: {
-              dayMaxEvents: isMobile ? 3 : 4,
-              ...(isMobile ? { eventDisplay: 'list-item' } : {}),
+              dayMaxEvents: isMobile ? 2 : 4,
             },
           }}
         />

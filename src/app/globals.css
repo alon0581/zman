@@ -128,37 +128,30 @@ input  { touch-action: manipulation; }
     font-size: 10px !important;
   }
 
-  /* Month view (mobile): Apple Calendar style — dots only, tap day for sheet */
+  /* Month view (mobile): compact colored pill + truncated title, no time */
   .fc-dayGridMonth-view .fc-event-time { display: none !important; }
-  .fc-dayGridMonth-view .fc-event-title { display: none !important; }
+  .fc-dayGridMonth-view .fc-event-title {
+    font-size: 9px !important;
+    font-weight: 600 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    color: #fff !important;
+    line-height: 1.5 !important;
+  }
   .fc-dayGridMonth-view .fc-daygrid-event {
-    background: transparent !important;
+    border-radius: 3px !important;
+    padding: 1px 3px !important;
+    margin: 0 1px 1px !important;
     box-shadow: none !important;
-    border: none !important;
-    padding: 0 !important;
-    margin: 0 1px !important;
-    display: inline-flex !important;
-    width: auto !important;
+    min-height: 0 !important;
   }
   .fc-dayGridMonth-view .fc-daygrid-event-harness {
-    display: inline-flex !important;
-    width: auto !important;
+    display: block !important;
+    width: 100% !important;
   }
   .fc-dayGridMonth-view .fc-daygrid-day-events {
-    display: flex !important;
-    flex-wrap: wrap !important;
-    justify-content: center !important;
-    gap: 3px !important;
-    padding: 3px 2px 4px !important;
-    min-height: 16px !important;
-  }
-  .fc-dayGridMonth-view .fc-daygrid-event-dot {
-    width: 8px !important;
-    height: 8px !important;
-    border-radius: 50% !important;
-    border-width: 4px !important;
-    display: block !important;
-    margin: 0 !important;
+    padding: 1px 2px 2px !important;
   }
   /* Tap feedback on day cells */
   .fc-dayGridMonth-view .fc-daygrid-day { cursor: pointer !important; }
