@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarEvent } from '@/types'
-import { format } from 'date-fns'
+import { format, isSameDay } from 'date-fns'
 import { he as heLocale } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import EventPopup from './EventPopup'
 
 interface Props {
@@ -53,6 +53,8 @@ export default function CalendarPanel({
   const calRef = useRef<any>(null)
   const [currentDate, setCurrentDate] = useState(new Date())
   const [popup, setPopup] = useState<PopupState | null>(null)
+  // Apple-style day sheet for month view on mobile
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
 
   // Pinch-to-zoom: adjust slot height like Apple Calendar
   const DEFAULT_SLOT_H = isMobile ? 44 : 30
@@ -133,7 +135,11 @@ export default function CalendarPanel({
       calRef.current?.getApi().changeView(view)
       prevViewRef.current = view
     }
+    setSelectedDate(null) // close day sheet on view change
   }, [view])
+
+  // Close day sheet when navigating months
+  useEffect(() => { setSelectedDate(null) }, [currentDate])
 
   const goPrev = () => calRef.current?.getApi().prev()
   const goNext = () => calRef.current?.getApi().next()
@@ -152,6 +158,12 @@ export default function CalendarPanel({
   }))
 
   const eventMap = useMemo(() => new Map(events.map(e => [e.id, e])), [events])
+
+  const handleDateClick = (info: { date: Date }) => {
+    if (isMobile && view === 'dayGridMonth') {
+      setSelectedDate(info.date)
+    }
+  }
 
   const handleEventClick = (info: { event: { id: string }; jsEvent: MouseEvent }) => {
     const ev = eventMap.get(info.event.id)
@@ -287,15 +299,17 @@ export default function CalendarPanel({
           dayHeaderFormat={{ weekday: 'short', day: 'numeric' }}
           datesSet={(info: { view: { currentStart: Date } }) => setCurrentDate(info.view.currentStart)}
           eventClick={handleEventClick}
+          dateClick={handleDateClick}
           views={{
             /* 3-day custom view */
             timeGrid3Day: {
               type: 'timeGrid',
               duration: { days: 3 },
             },
-            /* Month view: limit visible events per day so text is readable */
+            /* Month view: dots on mobile (Apple Calendar style), bars on desktop */
             dayGridMonth: {
-              dayMaxEvents: isMobile ? 2 : 4,
+              dayMaxEvents: isMobile ? 3 : 4,
+              ...(isMobile ? { eventDisplay: 'list-item' } : {}),
             },
           }}
         />
@@ -312,6 +326,117 @@ export default function CalendarPanel({
           onDelete={(id) => { onEventDelete(id); setPopup(null) }}
         />
       )}
+
+      {/* Apple-style day sheet — month view mobile */}
+      {selectedDate && isMobile && view === 'dayGridMonth' && (
+        <DaySheet
+          date={selectedDate}
+          events={events.filter(ev => isSameDay(new Date(ev.start_time), selectedDate))}
+          language={language}
+          onClose={() => setSelectedDate(null)}
+          onEventClick={(ev) => {
+            setSelectedDate(null)
+            setPopup({ event: ev, x: window.innerWidth / 2 - 140, y: window.innerHeight / 2 - 120 })
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+// ── Apple-style Day Events Sheet ─────────────────────────────────────────────
+function DaySheet({ date, events, language, onClose, onEventClick }: {
+  date: Date
+  events: CalendarEvent[]
+  language: string
+  onClose: () => void
+  onEventClick: (ev: CalendarEvent) => void
+}) {
+  const isHe = language === 'he'
+  const dfLocale = isHe ? heLocale : undefined
+  const dayLabel = format(date, isHe ? 'EEEE, d בMMMM' : 'EEEE, MMMM d', { locale: dfLocale })
+  const sorted = [...events].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(0,0,0,0.4)' }}
+      />
+      {/* Sheet */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
+        background: 'var(--bg-panel)',
+        borderRadius: '22px 22px 0 0',
+        boxShadow: '0 -12px 48px rgba(0,0,0,0.55)',
+        maxHeight: '60vh',
+        display: 'flex', flexDirection: 'column',
+        animation: 'slideUp 0.28s cubic-bezier(0.32,0.72,0,1)',
+      }}>
+        {/* Handle */}
+        <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 10, flexShrink: 0 }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--border-hi)' }} />
+        </div>
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 20px 12px', flexShrink: 0,
+          borderBottom: '1px solid var(--border)',
+        }}>
+          <span style={{ fontWeight: 800, fontSize: 16, color: 'var(--text)', direction: isHe ? 'rtl' : 'ltr' }}>
+            {dayLabel}
+          </span>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'var(--bg-input)', border: 'none', cursor: 'pointer',
+              color: 'var(--text-2)', borderRadius: '50%',
+              width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+        {/* Events list */}
+        <div style={{ overflowY: 'auto', padding: '10px 16px', flex: 1, paddingBottom: 'env(safe-area-inset-bottom, 16px)' }}>
+          {sorted.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 14, padding: '28px 0' }}>
+              {isHe ? 'אין אירועים ביום זה' : 'No events this day'}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {sorted.map(ev => (
+                <button
+                  key={ev.id}
+                  onClick={() => onEventClick(ev)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    background: 'var(--bg-card)', border: '1px solid var(--border)',
+                    borderRadius: 14, padding: '13px 16px', cursor: 'pointer',
+                    textAlign: isHe ? 'right' : 'left', width: '100%',
+                    direction: isHe ? 'rtl' : 'ltr',
+                  }}
+                >
+                  <div style={{
+                    width: 12, height: 12, borderRadius: '50%', flexShrink: 0,
+                    background: ev.color ?? '#3B7EF7',
+                    boxShadow: `0 0 8px ${ev.color ?? '#3B7EF7'}66`,
+                  }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)', lineHeight: 1.3 }}>
+                      {ev.title}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3 }}>
+                      {format(new Date(ev.start_time), 'HH:mm')} – {format(new Date(ev.end_time), 'HH:mm')}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   )
 }
