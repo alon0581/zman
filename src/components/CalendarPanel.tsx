@@ -42,8 +42,8 @@ export default function CalendarPanel({
   events, newEventIds, language = 'en', isMobile = false,
   onEventUpdate, onEventDelete,
 }: Props) {
-  // Mobile defaults to 3-day view, desktop to week
-  const [view, setView] = useState<ViewType>(isMobile ? 'timeGrid3Day' : 'timeGridWeek')
+  // Mobile defaults to day view (better event readability), desktop to week
+  const [view, setView] = useState<ViewType>(isMobile ? 'timeGridDay' : 'timeGridWeek')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [plugins, setPlugins] = useState<any[]>([])
   const [FC, setFC] = useState<FCType | null>(null)
@@ -224,6 +224,7 @@ export default function CalendarPanel({
           slotMaxTime="23:00:00"
           slotDuration="00:30:00"
           slotLabelInterval="01:00:00"
+          eventMinHeight={isMobile ? 42 : 20}
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: false }}
           dayHeaderFormat={{ weekday: 'short', day: 'numeric' }}
           datesSet={(info: { view: { currentStart: Date } }) => setCurrentDate(info.view.currentStart)}

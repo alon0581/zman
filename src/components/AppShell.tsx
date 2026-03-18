@@ -91,11 +91,12 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   }
 
   const handleTaskToggle = (id: string, newStatus: Task['status']) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t))
+    const completedAt = newStatus === 'done' ? new Date().toISOString() : undefined
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus, ...(completedAt ? { completed_at: completedAt } : { completed_at: undefined }) } : t))
     fetch(`/api/tasks/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
+      body: JSON.stringify({ status: newStatus, ...(completedAt ? { completed_at: completedAt } : {}) }),
     }).catch(() => {})
   }
 

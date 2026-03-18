@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react'
 import { CalendarEvent, Task } from '@/types'
 import { format, isPast, parseISO } from 'date-fns'
-import { CheckCircle2, Circle, Calendar, ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { CheckCircle2, Circle, Calendar, ChevronDown, ChevronRight, Plus, CheckCheck } from 'lucide-react'
 
 interface Props {
   tasks: Task[]
@@ -308,29 +308,55 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                   }}
                 >
                   {showDone ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  <CheckCheck size={13} style={{ color: '#34D399' }} />
                   {lang.doneGroup} ({done.length})
                 </button>
-                {showDone && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6, opacity: 0.55 }}>
-                    {done.map(task => (
-                      <div key={task.id} style={{
-                        background: 'var(--bg-card)', borderRadius: 8,
-                        border: '1px solid var(--border)', padding: '8px 12px',
-                        display: 'flex', alignItems: 'center', gap: 10,
-                      }}>
-                        <button
-                          onClick={() => onTaskToggle(task.id, 'pending')}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#34D399' }}
-                        >
-                          <CheckCircle2 size={16} />
-                        </button>
-                        <span style={{ fontSize: 13, textDecoration: 'line-through', color: 'var(--text)' }}>
-                          {task.title}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {showDone && (() => {
+                  // Group done tasks by topic
+                  const doneByTopic: Record<string, Task[]> = {}
+                  for (const t of done) {
+                    const topic = t.topic ?? (language === 'he' ? 'כללי' : 'General')
+                    if (!doneByTopic[topic]) doneByTopic[topic] = []
+                    doneByTopic[topic].push(t)
+                  }
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+                      {Object.entries(doneByTopic).map(([topic, topicDone]) => (
+                        <div key={topic}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', marginBottom: 4, opacity: 0.7 }}>
+                            {topic}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, opacity: 0.6 }}>
+                            {topicDone.map(task => (
+                              <div key={task.id} style={{
+                                background: 'var(--bg-card)', borderRadius: 8,
+                                border: '1px solid var(--border)', padding: '8px 12px',
+                                display: 'flex', alignItems: 'center', gap: 10,
+                              }}>
+                                <button
+                                  onClick={() => onTaskToggle(task.id, 'pending')}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#34D399', flexShrink: 0 }}
+                                >
+                                  <CheckCircle2 size={16} />
+                                </button>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 13, textDecoration: 'line-through', color: 'var(--text)', lineHeight: 1.3 }}>
+                                    {task.title}
+                                  </div>
+                                  {task.completed_at && (
+                                    <div style={{ fontSize: 11, color: '#34D399', marginTop: 2, opacity: 0.8 }}>
+                                      ✓ {format(new Date(task.completed_at), language === 'he' ? 'd MMM, HH:mm' : 'MMM d, h:mma')}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
               </div>
             )}
           </>
@@ -352,7 +378,7 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
             placeholder={lang.add}
             style={{
               flex: 1, background: 'var(--bg-input)', border: '1px solid var(--border)',
-              borderRadius: 8, padding: '8px 12px', fontSize: 13,
+              borderRadius: 8, padding: '8px 12px', fontSize: 16,
               color: 'var(--text)', outline: 'none',
             }}
           />

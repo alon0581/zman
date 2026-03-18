@@ -28,6 +28,7 @@ export interface Task {
   parent_task_id?: string
   topic?: string
   created_at: string
+  completed_at?: string
 }
 
 export interface UserProfile {
