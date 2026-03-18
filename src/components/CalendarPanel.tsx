@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarEvent } from '@/types'
 import { format } from 'date-fns'
 import { he as heLocale } from 'date-fns/locale'
@@ -53,6 +53,58 @@ export default function CalendarPanel({
   const calRef = useRef<any>(null)
   const [currentDate, setCurrentDate] = useState(new Date())
   const [popup, setPopup] = useState<PopupState | null>(null)
+
+  // Pinch-to-zoom: adjust slot height like Apple Calendar
+  const DEFAULT_SLOT_H = isMobile ? 44 : 30
+  const [slotHeight, setSlotHeight] = useState(DEFAULT_SLOT_H)
+  const slotHeightRef = useRef(DEFAULT_SLOT_H)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const updateSlotHeight = useCallback((h: number) => {
+    slotHeightRef.current = h
+    setSlotHeight(h)
+  }, [])
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || !isMobile) return
+
+    const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H }
+
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        pinch.startDist = Math.hypot(dx, dy)
+        pinch.startHeight = slotHeightRef.current
+        pinch.active = true
+      }
+    }
+
+    const onMove = (e: TouchEvent) => {
+      if (!pinch.active || e.touches.length !== 2) return
+      e.preventDefault()
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      const ratio = Math.hypot(dx, dy) / pinch.startDist
+      const newH = Math.max(20, Math.min(120, Math.round(pinch.startHeight * ratio)))
+      updateSlotHeight(newH)
+    }
+
+    const onEnd = () => { pinch.active = false }
+
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd, { passive: true })
+    el.addEventListener('touchcancel', onEnd, { passive: true })
+
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [isMobile, updateSlotHeight, DEFAULT_SLOT_H])
 
   useEffect(() => {
     const imports: Promise<unknown>[] = [
@@ -206,8 +258,14 @@ export default function CalendarPanel({
         </div>
       </div>
 
-      {/* Calendar */}
-      <div style={{ flex: 1, overflow: 'hidden', padding: isMobile ? '6px 8px 8px' : '8px 16px 12px' }}>
+      {/* Calendar — pinch gesture target */}
+      <div
+        ref={containerRef}
+        style={{
+          flex: 1, overflow: 'hidden', padding: isMobile ? '6px 8px 8px' : '8px 16px 12px',
+          '--fc-slot-height': `${slotHeight}px`,
+        } as React.CSSProperties}
+      >
         <FC
           ref={calRef}
           plugins={plugins}
@@ -224,7 +282,7 @@ export default function CalendarPanel({
           slotMaxTime="23:00:00"
           slotDuration="00:30:00"
           slotLabelInterval="01:00:00"
-          eventMinHeight={isMobile ? 42 : 20}
+          eventMinHeight={isMobile ? Math.max(24, Math.round(slotHeight * 0.55)) : 20}
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: false }}
           dayHeaderFormat={{ weekday: 'short', day: 'numeric' }}
           datesSet={(info: { view: { currentStart: Date } }) => setCurrentDate(info.view.currentStart)}

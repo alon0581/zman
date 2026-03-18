@@ -93,22 +93,48 @@ input  { touch-action: manipulation; }
   .fc .fc-col-header-cell-cushion { font-size: 10px !important; }
   .fc .fc-timegrid-slot-label-cushion { font-size: 9px !important; padding-right: 4px !important; }
 
-  /* Event bubbles: bigger text, better line-height, never clip title */
-  .fc .fc-event { font-size: 12px !important; padding: 4px 7px !important; border-radius: 7px !important; overflow: visible !important; }
-  .fc .fc-event-main { overflow: visible !important; }
-  .fc .fc-event-title-container { overflow: visible !important; }
-  .fc .fc-event-title { font-size: 12px !important; font-weight: 700 !important; line-height: 1.35 !important; white-space: normal !important; word-break: break-word !important; overflow: visible !important; }
+  /* Event bubbles: bigger text, better line-height */
+  .fc .fc-event { font-size: 12px !important; padding: 4px 7px !important; border-radius: 7px !important; }
+  .fc .fc-event-title { font-size: 12px !important; font-weight: 700 !important; line-height: 1.35 !important; }
   .fc .fc-event-time { font-size: 10px !important; opacity: 0.85 !important; display: block !important; line-height: 1.2 !important; }
 
   /* Wider time column on mobile so events get more width */
   .fc .fc-timegrid-axis { width: 34px !important; }
 
-  /* Taller time slots for touch + event readability */
-  .fc .fc-timegrid-slot { height: 44px !important; }
+  /* Slot height controlled by pinch-zoom CSS variable (default 44px) */
+  .fc .fc-timegrid-slot { height: var(--fc-slot-height, 44px) !important; }
 
-  /* Ensure timegrid event containers expand to show full title */
-  .fc .fc-timegrid-event-harness { overflow: visible !important; }
-  .fc .fc-timegrid-event { overflow: visible !important; }
+  /* Day / 3-day view: full title wrap — enough column width */
+  .fc-timeGridDay-view .fc-event-title,
+  .fc-timeGrid3Day-view .fc-event-title {
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow: visible !important;
+  }
+  .fc-timeGridDay-view .fc-timegrid-event,
+  .fc-timeGrid3Day-view .fc-timegrid-event {
+    overflow: visible !important;
+  }
+
+  /* Week view: 7 narrow columns — ellipsis + hide time */
+  .fc-timeGridWeek-view .fc-event { font-size: 10px !important; padding: 3px 5px !important; }
+  .fc-timeGridWeek-view .fc-event-title {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    font-size: 10px !important;
+  }
+  .fc-timeGridWeek-view .fc-event-time { display: none !important; }
+
+  /* Month view: event strips in tiny cells — ellipsis */
+  .fc-dayGridMonth-view .fc-daygrid-event { overflow: hidden !important; }
+  .fc-dayGridMonth-view .fc-daygrid-event .fc-event-title {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+  }
 
   /* Month view on mobile: bigger day numbers and event blocks */
   .fc .fc-daygrid-day-number { font-size: 12px !important; padding: 4px !important; }
