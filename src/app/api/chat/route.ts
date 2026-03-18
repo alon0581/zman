@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
     const deletedEventIds: string[] = []
     let lastContent = ''
     let completedProfile: UserProfile | null = null
-    const state = { completedProfile: null as UserProfile | null }
+    const state = { completedProfile: null as UserProfile | null, memoryUpdated: false }
 
     // ── Tool-call loop ──────────────────────────────────────────────────────
 
@@ -260,12 +260,6 @@ export async function POST(req: NextRequest) {
 
       if (state.completedProfile) completedProfile = state.completedProfile
 
-      // For OpenAI: if no text yet, do a fresh streaming call
-      const needsFreshStream = !lastContent
-      if (needsFreshStream) {
-        // Fall through to stream section below — handled there
-      }
-
       // Stream final response
       const readableStream = new ReadableStream({
         async start(controller) {
@@ -280,10 +274,23 @@ export async function POST(req: NextRequest) {
               ))
             }
 
-            if (lastContent) {
+            // Notify client to re-fetch memory if any save_memory calls were made
+            if (state.memoryUpdated) {
               controller.enqueue(encoder.encode(
-                `data: ${JSON.stringify({ type: 'text', content: lastContent })}\n\n`
+                `data: ${JSON.stringify({ type: 'memory_updated' })}\n\n`
               ))
+            }
+
+            if (lastContent) {
+              // Stream content word-by-word so the client shows progressive rendering
+              const words = lastContent.split(/(?<=\s)|(?=\s)/)
+              for (const word of words) {
+                if (word) {
+                  controller.enqueue(encoder.encode(
+                    `data: ${JSON.stringify({ type: 'text', content: word })}\n\n`
+                  ))
+                }
+              }
             } else {
               // No text yet — stream a fresh response
               const currentMsgs: OpenAI.ChatCompletionMessageParam[] = [
@@ -364,10 +371,21 @@ export async function POST(req: NextRequest) {
             ))
           }
 
-          if (lastContent) {
+          if (state.memoryUpdated) {
             controller.enqueue(encoder.encode(
-              `data: ${JSON.stringify({ type: 'text', content: lastContent })}\n\n`
+              `data: ${JSON.stringify({ type: 'memory_updated' })}\n\n`
             ))
+          }
+
+          if (lastContent) {
+            const words = lastContent.split(/(?<=\s)|(?=\s)/)
+            for (const word of words) {
+              if (word) {
+                controller.enqueue(encoder.encode(
+                  `data: ${JSON.stringify({ type: 'text', content: word })}\n\n`
+                ))
+              }
+            }
           }
 
           controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
@@ -408,7 +426,7 @@ async function executeTool(
   updatedEvents: CalendarEvent[],
   deletedEventIds: string[],
   profile: UserProfile | null,
-  state: { completedProfile: UserProfile | null } = { completedProfile: null }
+  state: { completedProfile: UserProfile | null; memoryUpdated: boolean } = { completedProfile: null, memoryUpdated: false }
 ): Promise<unknown> {
   // ── Input validation helpers ──────────────────────────────────────────────
   const str  = (v: unknown): string  => (typeof v === 'string' ? v : '')
@@ -829,6 +847,7 @@ async function executeTool(
           }, { onConflict: 'user_id,key' })
         }
       }
+      state.memoryUpdated = true
       return { success: true, saved: entries.length }
     }
 
@@ -853,29 +872,30 @@ async function executeTool(
         profile_updates?: Partial<UserProfile>
         memory_entries?: Array<{ key: string; value: string }>
       }
-      // Save memory entries
-      if (memory_entries?.length && DEMO_MODE) {
-        const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
-        const existing: AIMemory[] = fs.existsSync(memFile)
-          ? JSON.parse(fs.readFileSync(memFile, 'utf-8'))
-          : []
-        for (const entry of memory_entries) {
-          const idx = existing.findIndex(m => m.key === entry.key)
-          const item: AIMemory = {
-            id: idx >= 0 ? existing[idx].id : crypto.randomUUID(),
-            user_id: userId, key: entry.key, value: entry.value,
-            learned_from: 'onboarding',
-            created_at: idx >= 0 ? existing[idx].created_at : new Date().toISOString(),
-          }
-          if (idx >= 0) existing[idx] = item
-          else existing.push(item)
-        }
-        const dir = path.join(process.cwd(), 'data', 'users', userId)
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-        fs.writeFileSync(memFile, JSON.stringify(existing, null, 2))
-      }
-      // Update profile
+
       if (DEMO_MODE) {
+        // Save memory entries
+        if (memory_entries?.length) {
+          const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
+          const existing: AIMemory[] = fs.existsSync(memFile)
+            ? JSON.parse(fs.readFileSync(memFile, 'utf-8'))
+            : []
+          for (const entry of memory_entries) {
+            const idx = existing.findIndex(m => m.key === entry.key)
+            const item: AIMemory = {
+              id: idx >= 0 ? existing[idx].id : crypto.randomUUID(),
+              user_id: userId, key: entry.key, value: entry.value,
+              learned_from: 'onboarding',
+              created_at: idx >= 0 ? existing[idx].created_at : new Date().toISOString(),
+            }
+            if (idx >= 0) existing[idx] = item
+            else existing.push(item)
+          }
+          const dir = path.join(process.cwd(), 'data', 'users', userId)
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+          fs.writeFileSync(memFile, JSON.stringify(existing, null, 2))
+        }
+        // Update profile
         const profFile = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
         const existing: UserProfile = fs.existsSync(profFile)
           ? JSON.parse(fs.readFileSync(profFile, 'utf-8'))
@@ -883,7 +903,32 @@ async function executeTool(
         const updated: UserProfile = { ...existing, ...(profile_updates ?? {}), onboarding_completed: true, user_id: userId }
         fs.writeFileSync(profFile, JSON.stringify(updated, null, 2))
         state.completedProfile = updated
+      } else {
+        // Supabase mode
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        // Save memory entries
+        if (memory_entries?.length) {
+          for (const entry of memory_entries) {
+            await supabase.from('ai_memory').upsert({
+              user_id: userId, key: entry.key, value: entry.value, learned_from: 'onboarding',
+            }, { onConflict: 'user_id,key' })
+          }
+        }
+        // Update profile
+        const { data: existing } = await supabase
+          .from('user_profiles').select('*').eq('user_id', userId).single()
+        const updated: UserProfile = {
+          ...(existing ?? { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' }),
+          ...(profile_updates ?? {}),
+          onboarding_completed: true,
+          user_id: userId,
+        } as UserProfile
+        await supabase.from('user_profiles').upsert(updated)
+        state.completedProfile = updated
       }
+
+      if (memory_entries?.length) state.memoryUpdated = true
       return { success: true }
     }
 

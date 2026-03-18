@@ -3,29 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { User } from '@supabase/supabase-js'
 import { AIMemory, CalendarEvent, Message, UserProfile } from '@/types'
-import { Send, Mic, Square } from 'lucide-react'
-
-// ─── Session-storage persistence ────────────────────────────────────────────
-const CHAT_KEY = 'zman_chat'
-
-function loadStoredMessages(): Message[] | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = sessionStorage.getItem(CHAT_KEY)
-    if (!raw) return null
-    const arr = JSON.parse(raw) as Array<{ id: string; role: string; content: string; timestamp: string }>
-    if (!Array.isArray(arr) || arr.length === 0) return null
-    return arr.map(m => ({ ...m, role: m.role as Message['role'], timestamp: new Date(m.timestamp) }))
-  } catch { return null }
-}
-
-function persistMessages(msgs: Message[]) {
-  try { sessionStorage.setItem(CHAT_KEY, JSON.stringify(msgs.slice(-100))) } catch { /* ignore */ }
-}
-
-function clearStoredMessages() {
-  try { sessionStorage.removeItem(CHAT_KEY) } catch { /* ignore */ }
-}
+import { Send, Mic, Square, RotateCcw } from 'lucide-react'
 
 // ─── Dynamic welcome builder ─────────────────────────────────────────────────
 function buildDynamicWelcome(
@@ -116,16 +94,17 @@ function buildDynamicWelcome(
 function hasCalendarIntent(text: string): boolean {
   const t = text.toLowerCase()
   const keywords = [
-    // Hebrew — scheduling verbs & nouns
-    'הוסף', 'צור', 'קבע', 'תזמן', 'שים ', 'תוסיף', 'תקבע', 'לוח שנה', 'לו"ז', 'לוח שנה',
-    'אירוע', 'פגישה', 'שיעור', 'מבחן', 'בחינה', 'הגשה', 'דדליין', 'מחר', 'שבוע הבא',
-    'ביום', 'בשבוע', 'כל שלישי', 'כל ראשון', 'כל שני', 'כל רביעי', 'כל חמישי', 'כל שישי',
-    'ב-', 'בשעה', ':00', ':30',
-    // English — scheduling verbs & nouns
-    'add', 'create', 'schedule', 'put on', 'calendar', 'event', 'meeting', 'class',
-    'exam', 'appointment', 'deadline', 'remind', 'tomorrow', 'next week', 'every',
-    'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-    'am', 'pm', 'o\'clock',
+    // Hebrew — clear scheduling actions/nouns only
+    'הוסף', 'צור', 'קבע', 'תזמן', 'תוסיף', 'תקבע', 'לוח שנה', 'לו"ז',
+    'אירוע', 'פגישה', 'הגשה', 'דדליין', 'שבוע הבא',
+    'כל שלישי', 'כל ראשון', 'כל שני', 'כל רביעי', 'כל חמישי', 'כל שישי',
+    'בשעה ',
+    // English — clear scheduling actions only
+    'add to calendar', 'create event', 'schedule ', 'put on calendar',
+    'calendar', 'meeting at', 'class at', 'exam on',
+    'appointment', 'deadline', 'next week',
+    'every monday', 'every tuesday', 'every wednesday', 'every thursday',
+    'every friday', 'every saturday', 'every sunday',
   ]
   return keywords.some(k => t.includes(k))
 }
@@ -174,20 +153,14 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   const [isOnboarding, setIsOnboarding] = useState(!!initIsOnboarding)
   const [memory, setMemory] = useState<AIMemory[]>([])
 
-  // Restore conversation from sessionStorage (survives Settings navigation)
-  const [messages, setMessages] = useState<Message[]>(() => {
-    if (!initIsOnboarding) {
-      const stored = loadStoredMessages()
-      if (stored && stored.length > 0) return stored
-    }
-    return [{
-      id: 'welcome', role: 'assistant' as const,
-      content: initIsOnboarding
-        ? (T[initProfile?.language as keyof typeof T]?.onboardingWelcome ?? T.en.onboardingWelcome)
-        : tr(initProfile?.language ?? language, 'welcome'),
-      timestamp: new Date(),
-    }]
-  })
+  // Chat lives in React state only — fresh on every page load, persists within session
+  const [messages, setMessages] = useState<Message[]>([{
+    id: 'welcome', role: 'assistant' as const,
+    content: initIsOnboarding
+      ? (T[initProfile?.language as keyof typeof T]?.onboardingWelcome ?? T.en.onboardingWelcome)
+      : tr(initProfile?.language ?? language, 'welcome'),
+    timestamp: new Date(),
+  }])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [streamingId, setStreamingId] = useState<string | null>(null)
@@ -204,17 +177,14 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   const recordingRef      = useRef(false)              // mirror of `recording` state — always current in event handlers
   const lastTranscriptRef = useRef('')                 // accumulated Web Speech transcript
   const cachedStreamRef   = useRef<MediaStream | null>(null) // cached mic stream — keeps permission warm in session
-  const loadingRef        = useRef(false)              // mirror of loading for polling callback
-  const isOnboardingRef   = useRef(!!initIsOnboarding) // mirror for polling callback
-  const msgCountRef       = useRef(0)                  // tracks synced message count for cross-device polling
 
+  // On mount: load events, profile, memory — then build smart welcome
   useEffect(() => {
     Promise.all([
       fetch('/api/events').then(r => r.ok ? r.json() : null),
       fetch('/api/profile').then(r => r.ok ? r.json() : null),
       fetch('/api/memory').then(r => r.ok ? r.json() : []),
-      fetch('/api/chat-history').then(r => r.ok ? r.json() : null),
-    ]).then(([evData, profData, memData, chatData]) => {
+    ]).then(([evData, profData, memData]) => {
       const loadedEvents: CalendarEvent[] = evData?.events ?? []
       const loadedMemory: AIMemory[] = Array.isArray(memData) ? memData : []
       const loadedProfile: UserProfile | null = profData ?? null
@@ -223,23 +193,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
       if (loadedProfile) { setProfile(loadedProfile); onProfileUpdate(loadedProfile) }
       if (loadedMemory.length > 0) setMemory(loadedMemory)
 
-      // Restore chat from server if sessionStorage was empty (e.g. new session on another device)
-      if (!initIsOnboarding && chatData?.messages?.length > 0) {
-        setMessages(prev => {
-          if (prev.length === 1 && prev[0].id === 'welcome') {
-            const restored = (chatData.messages as Array<{id: string; role: string; content: string; timestamp: string}>).map(m => ({
-              id: m.id, role: m.role as Message['role'], content: m.content, timestamp: new Date(m.timestamp),
-            }))
-            msgCountRef.current = restored.length
-            persistMessages(restored)
-            return restored
-          }
-          return prev
-        })
-      }
-
-      // Smart onboarding bypass: if we already have memory, the user clearly knows us —
-      // exit onboarding mode automatically without any button or AI interaction needed.
+      // Smart onboarding bypass: user has memory → they've been here before
       if (initIsOnboarding && loadedMemory.length > 0) {
         setIsOnboarding(false)
         const baseProfile = loadedProfile ?? initProfile
@@ -251,67 +205,15 @@ export default function ChatPanel({ user, profile: initProfile, events, language
           }).catch(() => {})
           onProfileUpdate(fixed)
         }
-        // Switch welcome message to the dynamic one
+      }
+
+      // Update welcome with personalized greeting (always fresh on load)
+      if (!initIsOnboarding || loadedMemory.length > 0) {
         const lang = loadedProfile?.language ?? language
         const dynamic = buildDynamicWelcome(loadedEvents, loadedMemory, lang)
         setMessages([{ id: 'welcome', role: 'assistant', content: dynamic, timestamp: new Date() }])
-        return
-      }
-
-      // Update welcome message only if still showing the initial placeholder
-      // (i.e. we did NOT restore a conversation from sessionStorage)
-      if (!initIsOnboarding) {
-        setMessages(prev => {
-          if (prev.length === 1 && prev[0].id === 'welcome') {
-            const lang = loadedProfile?.language ?? language
-            const dynamic = buildDynamicWelcome(loadedEvents, loadedMemory, lang)
-            return [{ ...prev[0], content: dynamic }]
-          }
-          return prev
-        })
       }
     })
-  }, [])
-
-  // Persist conversation in sessionStorage
-  useEffect(() => {
-    if (!isOnboarding) persistMessages(messages)
-  }, [messages, isOnboarding])
-
-  // Keep refs current for polling callbacks
-  useEffect(() => { loadingRef.current = loading }, [loading])
-  useEffect(() => { isOnboardingRef.current = isOnboarding }, [isOnboarding])
-
-  // Save conversation to server after each complete exchange (cross-device sync)
-  useEffect(() => {
-    if (isOnboarding || loading) return
-    const realMsgs = messages.filter(m => m.id !== 'welcome')
-    msgCountRef.current = realMsgs.length
-    if (realMsgs.length === 0) return
-    const toSave = realMsgs.map(m => ({ id: m.id, role: m.role, content: m.content, timestamp: m.timestamp.toISOString() }))
-    const timer = setTimeout(() => {
-      fetch('/api/chat-history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: toSave }) }).catch(() => {})
-    }, 800)
-    return () => clearTimeout(timer)
-  }, [messages, isOnboarding, loading])
-
-  // Poll every 5s: if another device added messages, sync them here
-  useEffect(() => {
-    const poll = async () => {
-      if (loadingRef.current || isOnboardingRef.current) return
-      try {
-        const res = await fetch('/api/chat-history')
-        if (!res.ok) return
-        const { messages: serverMsgs } = await res.json() as { messages: Array<{id: string; role: string; content: string; timestamp: string}> }
-        if (!serverMsgs?.length || serverMsgs.length <= msgCountRef.current) return
-        const restored = serverMsgs.map(m => ({ id: m.id, role: m.role as Message['role'], content: m.content, timestamp: new Date(m.timestamp) }))
-        msgCountRef.current = restored.length
-        setMessages(restored)
-        persistMessages(restored)
-      } catch { /* ignore */ }
-    }
-    const id = setInterval(poll, 30000)
-    return () => clearInterval(id)
   }, [])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
@@ -344,10 +246,18 @@ export default function ChatPanel({ user, profile: initProfile, events, language
     // ────────────────────────────────────────────────────────────────────────
 
     try {
-      const history = messages.filter(m => m.id !== 'welcome').map(m => ({ role: m.role, content: m.content }))
+      // Include welcome message as first assistant turn so AI knows what it already asked.
+      // Then limit history to last 40 messages to avoid context overflow.
+      const welcomeMsg = messages.find(m => m.id === 'welcome')
+      const history = messages.filter(m => m.id !== 'welcome').slice(-40).map(m => ({ role: m.role, content: m.content }))
+      const contextMessages = [
+        ...(welcomeMsg ? [{ role: 'assistant' as const, content: welcomeMsg.content }] : []),
+        ...history,
+        { role: 'user' as const, content: text.trim() },
+      ]
       const res = await fetch('/api/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [...history, { role: 'user', content: text.trim() }], events: eventsSnapshot, profile, isOnboarding: activeOnboarding, memory }),
+        body: JSON.stringify({ messages: contextMessages, events: eventsSnapshot, profile, isOnboarding: activeOnboarding, memory }),
       })
       if (!res.ok || !res.body) throw new Error()
 
@@ -382,11 +292,18 @@ export default function ChatPanel({ user, profile: initProfile, events, language
               } else {
                 setMessages(p => p.map(m => m.id === assistantId ? { ...m, content: m.content + parsed.content } : m))
               }
+            } else if (parsed.type === 'memory_updated') {
+              // AI called save_memory — re-fetch so next messages include new memory
+              fetch('/api/memory').then(r => r.ok ? r.json() : []).then(data => {
+                if (Array.isArray(data)) setMemory(data)
+              }).catch(() => {})
             } else if (parsed.type === 'onboarding_complete') {
               setIsOnboarding(false)
               onProfileUpdate(parsed.profile)
-              setMemory([]) // will reload on next fetch if needed
-              clearStoredMessages() // fresh start after onboarding
+              // Re-fetch memory saved during onboarding
+              fetch('/api/memory').then(r => r.ok ? r.json() : []).then(data => {
+                if (Array.isArray(data)) setMemory(data)
+              }).catch(() => {})
               // Safety save: ensure onboarding_completed:true is persisted even if server write failed
               fetch('/api/profile', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -524,6 +441,27 @@ export default function ChatPanel({ user, profile: initProfile, events, language
           <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text)' }}>
             {tr(lang, 'header')}
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* New chat button — resets conversation, memory stays intact */}
+          {!isOnboarding && messages.filter(m => m.role === 'user').length >= 1 && (
+            <button
+              onClick={() => {
+                const dynamic = buildDynamicWelcome(events, memory, profile?.language ?? language)
+                setMessages([{ id: 'welcome', role: 'assistant', content: dynamic, timestamp: new Date() }])
+              }}
+              title={lang === 'he' ? 'שיחה חדשה' : 'New chat'}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border-hi)',
+                background: 'transparent', color: 'var(--text-2)', cursor: 'pointer',
+                transition: 'background 0.15s, color 0.15s', flexShrink: 0,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg-card)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-2)' }}
+            >
+              <RotateCcw size={13} />
+            </button>
+          )}
           {/* Skip onboarding — shown after first user message so the user is never trapped */}
           {isOnboarding && messages.filter(m => m.role === 'user').length >= 1 && (
             <button
@@ -535,7 +473,6 @@ export default function ChatPanel({ user, profile: initProfile, events, language
                 }).catch(() => { /* ignore */ })
                 setIsOnboarding(false)
                 onProfileUpdate(updatedProfile)
-                clearStoredMessages()
               }}
               style={{
                 fontSize: 12, fontWeight: 600, color: 'var(--blue)', background: 'transparent',
@@ -546,6 +483,7 @@ export default function ChatPanel({ user, profile: initProfile, events, language
               {lang === 'he' ? 'דלג ←' : 'Skip →'}
             </button>
           )}
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
           {!isOnboarding && (
@@ -634,6 +572,51 @@ export default function ChatPanel({ user, profile: initProfile, events, language
   )
 }
 
+// ─── Markdown renderer (no external dependency) ──────────────────────────────
+function renderInline(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4)
+      return <strong key={i}>{part.slice(2, -2)}</strong>
+    if (part.startsWith('*') && part.endsWith('*') && part.length > 2)
+      return <em key={i}>{part.slice(1, -1)}</em>
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2)
+      return <code key={i} style={{ background: 'rgba(255,255,255,0.12)', padding: '1px 5px', borderRadius: 4, fontSize: '0.88em', fontFamily: 'monospace' }}>{part.slice(1, -1)}</code>
+    return part
+  })
+}
+
+function renderMarkdown(text: string, isUser: boolean): React.ReactNode {
+  const lines = text.split('\n')
+  const nodes: React.ReactNode[] = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    // Bullet list item
+    if (/^[\-\*•]\s+/.test(line)) {
+      nodes.push(
+        <div key={i} style={{ display: 'flex', gap: 7, marginTop: nodes.length ? 3 : 0 }}>
+          <span style={{ opacity: 0.6, flexShrink: 0, lineHeight: 1.55 }}>•</span>
+          <span>{renderInline(line.replace(/^[\-\*•]\s+/, ''))}</span>
+        </div>
+      )
+    } else if (line === '') {
+      // Only add spacing if there's something before and after
+      if (nodes.length > 0 && i < lines.length - 1) {
+        nodes.push(<div key={i} style={{ height: 5 }} />)
+      }
+    } else {
+      nodes.push(
+        <div key={i} style={{ marginTop: nodes.length && lines[i - 1] !== '' ? 3 : 0 }}>
+          {renderInline(line)}
+        </div>
+      )
+    }
+    i++
+  }
+  return isUser ? <span>{nodes}</span> : <>{nodes}</>
+}
+
 function Bubble({ msg, isRTL, isStreaming }: { msg: Message; isRTL: boolean; isStreaming?: boolean }) {
   const isUser = msg.role === 'user'
   return (
@@ -653,10 +636,10 @@ function Bubble({ msg, isRTL, isStreaming }: { msg: Message; isRTL: boolean; isS
         WebkitBackdropFilter: isUser ? undefined : 'blur(12px)',
         color: isUser ? '#fff' : 'var(--text)',
         border: isUser ? 'none' : '1px solid rgba(255,255,255,0.09)',
-        fontSize: 14, lineHeight: 1.55, whiteSpace: 'pre-wrap', direction: isRTL ? 'rtl' : 'ltr',
+        fontSize: 14, lineHeight: 1.55, direction: isRTL ? 'rtl' : 'ltr',
         boxShadow: isUser ? '0 4px 20px rgba(59,126,247,0.45), 0 2px 8px rgba(0,0,0,0.3)' : '0 2px 16px rgba(0,0,0,0.4)',
       }}>
-        {msg.content}
+        {renderMarkdown(msg.content, isUser)}
         {isStreaming && <span style={{ display: 'inline-block', width: 8, height: 14, background: 'var(--blue)', borderRadius: 2, marginLeft: 3, verticalAlign: 'middle', animation: 'blink 0.8s step-end infinite' }} />}
       </div>
     </div>
