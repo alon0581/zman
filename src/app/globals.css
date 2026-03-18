@@ -128,23 +128,26 @@ input  { touch-action: manipulation; }
     font-size: 10px !important;
   }
 
-  /* Month view (mobile): compact colored pill + truncated title, no time */
+  /* Month view (mobile): block mode — colored pill + truncated title, no time */
   .fc-dayGridMonth-view .fc-event-time { display: none !important; }
-  .fc-dayGridMonth-view .fc-event-title {
+  /* Block-event title: tiny, truncated with ellipsis — 4 classes = wins over generic 3-class rule */
+  .fc-dayGridMonth-view .fc-daygrid-block-event .fc-event-main .fc-event-title {
     font-size: 9px !important;
-    font-weight: 600 !important;
+    font-weight: 700 !important;
     white-space: nowrap !important;
     overflow: hidden !important;
     text-overflow: ellipsis !important;
     color: #fff !important;
-    line-height: 1.5 !important;
+    line-height: 1.4 !important;
+    padding: 0 !important;
+  }
+  .fc-dayGridMonth-view .fc-daygrid-block-event .fc-event-main {
+    padding: 1px 3px !important;
   }
   .fc-dayGridMonth-view .fc-daygrid-event {
     border-radius: 3px !important;
-    padding: 1px 3px !important;
     margin: 0 1px 1px !important;
     box-shadow: none !important;
-    min-height: 0 !important;
   }
   .fc-dayGridMonth-view .fc-daygrid-event-harness {
     display: block !important;
