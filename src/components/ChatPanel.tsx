@@ -27,6 +27,9 @@ function buildDynamicWelcome(
 
   const nextEvent = todayEvents.find(e => new Date(e.start_time) > now)
 
+  // Ongoing task from memory (for cross-device continuity)
+  const ongoingTask = memory.find(m => m.key === 'ongoing_task' || m.key === 'ongoing_project')?.value
+
   // Upcoming urgent (exam / deadline) in next 7 days
   const urgentKw = ['מבחן', 'בחינה', 'exam', 'deadline', 'due', 'הגשה', 'test', 'quiz']
   const urgent = events
@@ -53,7 +56,9 @@ function buildDynamicWelcome(
       msg += '.'
     }
 
-    if (urgent.length > 0) {
+    if (ongoingTask) {
+      msg += `\n\n🔄 המשך מהשיחה הקודמת: **${ongoingTask}** — רוצה להמשיך?`
+    } else if (urgent.length > 0) {
       const days = Math.ceil((new Date(urgent[0].start_time).getTime() - now.getTime()) / 86400000)
       msg += `\n\n⚠️ **${urgent[0].title}** בעוד ${days} ${days === 1 ? 'יום' : 'ימים'} — רוצה שנתכנן הכנה?`
     } else if (todayEvents.length === 0) {
@@ -78,7 +83,9 @@ function buildDynamicWelcome(
       msg += '.'
     }
 
-    if (urgent.length > 0) {
+    if (ongoingTask) {
+      msg += `\n\n🔄 Continuing from last time: **${ongoingTask}** — want to pick up where we left off?`
+    } else if (urgent.length > 0) {
       const days = Math.ceil((new Date(urgent[0].start_time).getTime() - now.getTime()) / 86400000)
       msg += `\n\n⚠️ **${urgent[0].title}** is in ${days} ${days === 1 ? 'day' : 'days'} — want to plan prep sessions?`
     } else if (todayEvents.length === 0) {
