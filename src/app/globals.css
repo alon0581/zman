@@ -131,9 +131,11 @@ input  { touch-action: manipulation; }
   /* Month view (mobile): compact events — hide time, show truncated title */
   .fc-dayGridMonth-view .fc-event-time { display: none !important; }
 
-  /* DOT-events (FullCalendar default for timed events in dayGrid) */
-  .fc-dayGridMonth-view .fc-daygrid-dot-event {
+  /* DOT-events — 3-class selector (0,3,0) beats global .fc .fc-event (0,2,0) */
+  .fc-dayGridMonth-view .fc-daygrid-dot-event.fc-event {
     padding: 1px 3px !important;
+    border-radius: 3px !important;
+    box-shadow: none !important;
     align-items: center !important;
   }
   .fc-dayGridMonth-view .fc-daygrid-dot-event .fc-daygrid-event-dot {
@@ -142,8 +144,8 @@ input  { touch-action: manipulation; }
     margin: 0 3px 0 0 !important;
     flex-shrink: 0 !important;
   }
-  /* Force title to fill remaining space — flex:1 1 0px + min-width:0 is the standard
-     trick for text-overflow in flex containers */
+  /* Force title to fill remaining space — flex:1 1 0px + min-width:0 is the
+     standard trick for text-overflow in flex containers */
   .fc-dayGridMonth-view .fc-daygrid-dot-event .fc-event-title {
     flex: 1 1 0px !important;
     min-width: 0 !important;
