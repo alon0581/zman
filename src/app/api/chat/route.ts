@@ -9,6 +9,7 @@ import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay }
 import { demoStorage } from '@/lib/demo/storage'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { decryptApiKey } from '@/lib/encryption'
+import { sendPush } from '@/lib/push'
 import fs from 'fs'
 import path from 'path'
 
@@ -260,6 +261,19 @@ export async function POST(req: NextRequest) {
       }
 
       if (state.completedProfile) completedProfile = state.completedProfile
+
+      // Send push notification when AI creates events
+      if (createdEvents.length > 0 && profile?.push_subscription) {
+        const lang = profile.language ?? 'en'
+        const titles = createdEvents.slice(0, 2).map(e => e.title).join(', ')
+        const more = createdEvents.length > 2 ? (lang === 'he' ? ` ועוד ${createdEvents.length - 2}` : ` +${createdEvents.length - 2} more`) : ''
+        sendPush(profile.push_subscription, {
+          title: lang === 'he' ? '📅 זמן הוסיף לוח שנה' : '📅 Zman added to calendar',
+          body: titles + more,
+          url: '/app',
+          tag: 'zman-events',
+        }).catch(() => {})
+      }
 
       // Stream final response
       const readableStream = new ReadableStream({

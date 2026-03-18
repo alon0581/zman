@@ -8,18 +8,38 @@ export const metadata: Metadata = {
   title: 'Zman — AI Life Scheduler',
   description: 'Your AI-powered life scheduler. Just talk, Zman handles the rest.',
   manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'Zman',
+    statusBarStyle: 'black-translucent',
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 }
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#080D1A',
+  themeColor: '#07070F',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" data-theme="dark">
-      <body className={inter.variable}>{children}</body>
+      <head>
+        <link rel="apple-touch-icon" href="/api/icon/192" />
+      </head>
+      <body className={inter.variable}>
+        {children}
+        <script dangerouslySetInnerHTML={{ __html: `
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+              navigator.serviceWorker.register('/sw.js').catch(function() {});
+            });
+          }
+        `}} />
+      </body>
     </html>
   )
 }

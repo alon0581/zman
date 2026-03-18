@@ -3,8 +3,9 @@
 import { User } from '@supabase/supabase-js'
 import { UserProfile } from '@/types'
 import { createClient } from '@/lib/supabase/client'
-import { Settings, Sun, Moon, LogOut } from 'lucide-react'
+import { Settings, Sun, Moon, LogOut, Bell, BellOff } from 'lucide-react'
 import Link from 'next/link'
+import { useState, useEffect } from 'react'
 
 interface Props {
   user: User
@@ -18,6 +19,54 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
   const supabase = createClient()
   const isDark = profile?.theme !== 'light'
   const isHe = language === 'he'
+
+  // Push notification state
+  const [notifState, setNotifState] = useState<'unsupported' | 'default' | 'granted' | 'denied'>('default')
+  const [notifLoading, setNotifLoading] = useState(false)
+
+  useEffect(() => {
+    if (typeof Notification === 'undefined' || !('serviceWorker' in navigator)) {
+      setNotifState('unsupported')
+      return
+    }
+    setNotifState(Notification.permission as 'default' | 'granted' | 'denied')
+  }, [])
+
+  const subscribePush = async () => {
+    if (notifLoading) return
+    setNotifLoading(true)
+    try {
+      const permission = await Notification.requestPermission()
+      setNotifState(permission as 'default' | 'granted' | 'denied')
+      if (permission !== 'granted') return
+
+      const reg = await navigator.serviceWorker.ready
+      const existing = await reg.pushManager.getSubscription()
+      const sub = existing ?? await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+      })
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: JSON.stringify(sub) }),
+      })
+    } catch { /* ignore */ }
+    finally { setNotifLoading(false) }
+  }
+
+  const unsubscribePush = async () => {
+    if (notifLoading) return
+    setNotifLoading(true)
+    try {
+      const reg = await navigator.serviceWorker.ready
+      const sub = await reg.pushManager.getSubscription()
+      if (sub) await sub.unsubscribe()
+      await fetch('/api/push/subscribe', { method: 'DELETE' })
+      setNotifState('default')
+    } catch { /* ignore */ }
+    finally { setNotifLoading(false) }
+  }
 
   return (
     <header style={{
@@ -50,6 +99,22 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
         <Btn onClick={onToggleTheme} title={isDark ? (isHe ? 'מצב בהיר' : 'Light mode') : (isHe ? 'מצב כהה' : 'Dark mode')}>
           {isDark ? <Sun size={17} /> : <Moon size={17} />}
         </Btn>
+
+        {/* Notification bell — hidden if unsupported */}
+        {notifState !== 'unsupported' && notifState !== 'denied' && (
+          <Btn
+            onClick={notifState === 'granted' ? unsubscribePush : subscribePush}
+            title={notifState === 'granted'
+              ? (isHe ? 'כבה התראות' : 'Disable notifications')
+              : (isHe ? 'הפעל התראות' : 'Enable notifications')}
+            style={notifState === 'granted' ? { color: '#3B7EF7' } : {}}
+          >
+            {notifLoading
+              ? <span style={{ width: 17, height: 17, border: '2px solid var(--border-hi)', borderTopColor: 'var(--blue)', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+              : notifState === 'granted' ? <Bell size={17} /> : <BellOff size={17} />
+            }
+          </Btn>
+        )}
 
         <Btn onClick={onOpenSettings} title={isHe ? 'הגדרות' : 'Settings'}>
           <Settings size={17} />
