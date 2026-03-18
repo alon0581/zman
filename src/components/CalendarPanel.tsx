@@ -308,6 +308,33 @@ export default function CalendarPanel({
           datesSet={(info: { view: { currentStart: Date } }) => setCurrentDate(info.view.currentStart)}
           eventClick={handleEventClick}
           dateClick={handleDateClick}
+          /* Custom render for month-view events on mobile: bypasses FC's 6px 10px
+             padding entirely using negative margins + our own compact layout */
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          eventContent={(arg: any) => {
+            if (isMobile && view === 'dayGridMonth') {
+              const color = arg.event.backgroundColor || '#3B7EF7'
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 3,
+                  // Negative margins cancel out .fc .fc-event { padding: 6px 10px }
+                  margin: '-6px -10px', padding: '2px 4px',
+                  borderRadius: 3, overflow: 'hidden',
+                }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: color }} />
+                  <div style={{
+                    flex: 1, minWidth: 0,
+                    fontSize: 9, fontWeight: 700, lineHeight: '1.4',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    color: 'var(--text)',
+                  }}>
+                    {arg.event.title}
+                  </div>
+                </div>
+              )
+            }
+            return true // default rendering for time-grid views
+          }}
           views={{
             /* 3-day custom view */
             timeGrid3Day: {
