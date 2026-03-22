@@ -177,18 +177,22 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
 
-  const [micPending, setMicPending] = useState(false)  // true while Whisper is transcribing
+  const [micPending, setMicPending] = useState(false)
 
   const bottomRef          = useRef<HTMLDivElement>(null)
   const inputRef           = useRef<HTMLInputElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef     = useRef<any>(null)
   const mediaRecorderRef   = useRef<MediaRecorder | null>(null)
   const chunksRef          = useRef<Blob[]>([])
-  const isHoldingRef       = useRef(false)   // pointer currently pressed?
-  const holdModeRef        = useRef(false)   // true = hold mode (auto-send on release)
+  const isHoldingRef       = useRef(false)
+  const holdModeRef        = useRef(false)
   const sendMsgRef         = useRef<(t: string) => void>(() => {})
-  const pressStartRef      = useRef<number>(0)         // timestamp of pointer-down
-  const recordingRef       = useRef(false)              // mirror of `recording` state — always current in event handlers
-  const cachedStreamRef    = useRef<MediaStream | null>(null) // cached mic stream — keeps permission warm in session
+  const pressStartRef      = useRef<number>(0)
+  const recordingRef       = useRef(false)
+  const activeRef          = useRef(false)   // sync flag — set immediately on start/stop (no React delay)
+  const lastTranscriptRef  = useRef('')
+  const cachedStreamRef    = useRef<MediaStream | null>(null)
 
   // On mount: load events, profile, memory — then build smart welcome
   useEffect(() => {
@@ -375,66 +379,59 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const lang  = profile?.language ?? language
   const isRTL = lang === 'he' || lang === 'ar'
 
-  const startRecording = async () => {
-    // ── Detect iOS (any: Capacitor, PWA, Safari) — MediaRecorder unreliable on iOS ──
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-
-    // ── MediaRecorder + Whisper (desktop & Android only) ──
-    if (!isIOS && typeof MediaRecorder !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+  const startRecording = async (accumulated = '') => {
+    // Warm up mic permission (works for both getUserMedia and webkitSpeechRecognition on iOS)
+    if (!cachedStreamRef.current && navigator.mediaDevices?.getUserMedia) {
       try {
-        if (!cachedStreamRef.current) {
-          cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
-        }
-        const stream = cachedStreamRef.current
-
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/mp4')
-          ? 'audio/mp4'
-          : ''
-
-        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {})
-        chunksRef.current = []
-        recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-        recorder.onstop = async () => {
-          const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
-          const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
-          if (blob.size < 1000) return  // too small — ignore
-          setMicPending(true)
-          try {
-            const fd = new FormData()
-            fd.append('audio', blob, `recording.${ext}`)
-            fd.append('lang', lang)
-            const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
-            if (!res.ok) throw new Error(`transcribe ${res.status}`)
-            const data = await res.json()
-            if (data.text) {
-              if (holdModeRef.current) { sendMsgRef.current(data.text) }
-              else { setInput(data.text); setTimeout(() => inputRef.current?.focus(), 50) }
-            }
-          } catch (err) {
-            setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const,
-              content: lang === 'he' ? `❌ שגיאת תמלול: ${(err as Error).message}` : `❌ Transcription error: ${(err as Error).message}`,
-              timestamp: new Date() }])
-          }
-          finally { setMicPending(false) }
-        }
-        mediaRecorderRef.current = recorder
-        recorder.start(250)  // collect chunks every 250ms
-        setRecording(true)
-        return
+        cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
       } catch (err) {
         const name = (err as DOMException)?.name
         if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
           setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
           return
         }
-        // Other error → fall through to Web Speech API
       }
     }
 
-    // ── Web Speech API — used on Capacitor iOS ──
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
+    // ── Desktop / Android: MediaRecorder + Whisper ──
+    if (!isIOS && typeof MediaRecorder !== 'undefined' && cachedStreamRef.current) {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
+      const recorder = new MediaRecorder(cachedStreamRef.current, mimeType ? { mimeType } : {})
+      chunksRef.current = []
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      recorder.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
+        if (blob.size < 1000) return
+        setMicPending(true)
+        try {
+          const fd = new FormData()
+          fd.append('audio', blob, `recording.${mimeType.includes('mp4') ? 'm4a' : 'webm'}`)
+          fd.append('lang', lang)
+          const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
+          if (!res.ok) throw new Error(`transcribe ${res.status}`)
+          const data = await res.json()
+          if (data.text) {
+            if (holdModeRef.current) { sendMsgRef.current(data.text) }
+            else { setInput(data.text); setTimeout(() => inputRef.current?.focus(), 50) }
+          }
+        } catch (err) {
+          setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const,
+            content: `❌ ${(err as Error).message}`, timestamp: new Date() }])
+        } finally { setMicPending(false) }
+      }
+      mediaRecorderRef.current = recorder
+      recorder.start(250)
+      activeRef.current = true
+      setRecording(true)
+      return
+    }
+
+    // ── iOS: Web Speech API (native, works in Capacitor + Safari) ──
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) {
@@ -443,44 +440,45 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
     }
     const recognition = new SR()
     recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
-    recognition.continuous = false
+    recognition.continuous = true
     recognition.interimResults = false
-    let transcript = ''
-    // Use a plain object ref (NOT React state) to avoid async update issues
-    const isActive = { current: true }
+    recognition.maxAlternatives = 1
+    recognitionRef.current = recognition
+    lastTranscriptRef.current = accumulated
+    if (!accumulated) holdModeRef.current = false
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (e: any) => {
+      let s = ''
       for (let i = 0; i < e.results.length; i++) {
-        if (e.results[i].isFinal) transcript += (transcript ? ' ' : '') + e.results[i][0].transcript
+        if (e.results[i].isFinal) s += (s ? ' ' : '') + e.results[i][0].transcript
       }
+      lastTranscriptRef.current = accumulated ? (s ? `${accumulated} ${s}` : accumulated) : s.trim()
     }
-    recognition.onerror = (e: Event & { error?: string }) => {
-      if ((e as Event & {error:string}).error === 'not-allowed') {
-        setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
-      }
-      isActive.current = false
-      setRecording(false)
-    }
+    recognition.onerror = () => { activeRef.current = false; setRecording(false); recognitionRef.current = null }
     recognition.onend = () => {
-      if (isActive.current) {
-        // Silence auto-stop → restart seamlessly (isActive is plain ref, always current)
-        try { recognition.start() } catch { /* ignore */ }
+      recognitionRef.current = null
+      if (activeRef.current) {
+        // Silence timeout — restart and carry over transcript
+        startRecording(lastTranscriptRef.current)
         return
       }
       setRecording(false)
-      if (transcript) {
-        if (holdModeRef.current) { sendMsgRef.current(transcript) }
-        else { setInput(transcript); setTimeout(() => inputRef.current?.focus(), 50) }
+      const text = lastTranscriptRef.current
+      if (text) {
+        if (holdModeRef.current) { sendMsgRef.current(text) }
+        else { setInput(text); setTimeout(() => inputRef.current?.focus(), 50) }
       }
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(mediaRecorderRef as any).current = { stop: () => { isActive.current = false; recognition.stop() } }
     recognition.start()
+    activeRef.current = true
     setRecording(true)
   }
 
   const stopRecording = () => {
+    activeRef.current = false   // set FIRST — prevents onend from restarting
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
     mediaRecorderRef.current?.stop()
     mediaRecorderRef.current = null
     setRecording(false)
