@@ -376,15 +376,19 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const isRTL = lang === 'he' || lang === 'ar'
 
   const startRecording = async () => {
-    // ── Try MediaRecorder + Whisper (best quality, works on iOS Capacitor) ──
-    if (typeof MediaRecorder !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+    // ── Detect Capacitor iOS ──
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const isCapacitorIOS = typeof (window as any).Capacitor !== 'undefined'
+      && /iPad|iPhone|iPod/.test(navigator.userAgent)
+
+    // ── MediaRecorder + Whisper (desktop, Android, and non-Capacitor iOS) ──
+    if (!isCapacitorIOS && typeof MediaRecorder !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
       try {
         if (!cachedStreamRef.current) {
           cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
         }
         const stream = cachedStreamRef.current
 
-        // Pick best MIME type: webm on desktop/Android, mp4 on iOS
         const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
           ? 'audio/webm;codecs=opus'
           : MediaRecorder.isTypeSupported('audio/mp4')
@@ -412,21 +416,20 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
           finally { setMicPending(false) }
         }
         mediaRecorderRef.current = recorder
-        recorder.start()
+        recorder.start(250)  // collect chunks every 250ms
         setRecording(true)
         return
       } catch (err) {
-        // If explicitly denied — show error and stop. Otherwise fall through to Web Speech API.
         const name = (err as DOMException)?.name
         if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
           setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
           return
         }
-        // Otherwise: MediaRecorder failed for other reason → fall through to Web Speech API
+        // Other error → fall through to Web Speech API
       }
     }
 
-    // ── Fallback: Web Speech API (desktop Chrome / Safari PWA) ──
+    // ── Web Speech API — used on Capacitor iOS (native iOS speech recognition) ──
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) {
@@ -435,23 +438,38 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
     }
     const recognition = new SR()
     recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
-    recognition.continuous = true
+    recognition.continuous = false   // iOS works better with continuous=false
     recognition.interimResults = false
     let transcript = ''
+    const stoppedByUser = { current: false }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (e: any) => {
       for (let i = 0; i < e.results.length; i++) {
         if (e.results[i].isFinal) transcript += (transcript ? ' ' : '') + e.results[i][0].transcript
       }
     }
-    recognition.onerror = () => { setRecording(false) }
+    recognition.onerror = (e: Event & { error?: string }) => {
+      if (e.error === 'not-allowed') {
+        setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
+      }
+      stoppedByUser.current = true
+      setRecording(false)
+    }
     recognition.onend = () => {
+      // If stopped by silence (not by user) and toggle mode → restart seamlessly
+      if (!stoppedByUser.current && recordingRef.current) {
+        recognition.start()
+        return
+      }
       setRecording(false)
       if (transcript) {
         if (holdModeRef.current) { sendMsgRef.current(transcript) }
         else { setInput(transcript); setTimeout(() => inputRef.current?.focus(), 50) }
       }
     }
+    // Store in mediaRecorderRef so stopRecording can stop it
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(mediaRecorderRef as any).current = { stop: () => { stoppedByUser.current = true; recognition.stop() } }
     recognition.start()
     setRecording(true)
   }
