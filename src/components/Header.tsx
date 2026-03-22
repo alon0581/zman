@@ -70,8 +70,10 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
 
   return (
     <header style={{
-      height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0 24px', flexShrink: 0,
+      height: 'calc(60px + env(safe-area-inset-top))',
+      paddingTop: 'env(safe-area-inset-top)',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: 'env(safe-area-inset-top) 24px 0', flexShrink: 0,
       background: 'var(--bg-panel)',
       backdropFilter: 'blur(28px) saturate(180%)',
       WebkitBackdropFilter: 'blur(28px) saturate(180%)',
