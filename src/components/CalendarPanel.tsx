@@ -210,19 +210,19 @@ export default function CalendarPanel({
     // Ongoing event → scroll to its start
     const ongoing = events.find(e => new Date(e.start_time) <= now && new Date(e.end_time) >= now)
     if (ongoing) {
-      const h = new Date(ongoing.start_time).getHours()
+      const h = Math.max(0, new Date(ongoing.start_time).getHours() - 4)
       return `${String(h).padStart(2, '0')}:00:00`
     }
-    // Next upcoming event today → scroll 1h before
+    // Next upcoming event today → scroll 4h before to center it
     const upcoming = events
       .filter(e => new Date(e.start_time) > now && new Date(e.start_time) <= todayEnd)
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
     if (upcoming) {
-      const h = Math.max(0, new Date(upcoming.start_time).getHours() - 1)
+      const h = Math.max(0, new Date(upcoming.start_time).getHours() - 4)
       return `${String(h).padStart(2, '0')}:00:00`
     }
-    // Default: current time minus 1 hour
-    const h = Math.max(0, now.getHours() - 1)
+    // Default: current time minus 4 hours to center current time
+    const h = Math.max(0, now.getHours() - 4)
     return `${String(h).padStart(2, '0')}:00:00`
   }, [events])
 
@@ -411,6 +411,7 @@ export default function CalendarPanel({
           event={popup.event}
           x={popup.x}
           y={popup.y}
+          language={language}
           onClose={() => setPopup(null)}
           onSave={(id, changes) => { onEventUpdate(id, changes); setPopup(null) }}
           onDelete={(id) => { onEventDelete(id); setPopup(null) }}

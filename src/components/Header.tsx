@@ -72,7 +72,7 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
     <header style={{
       height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '0 24px', flexShrink: 0,
-      background: 'rgba(7,7,12,0.84)',
+      background: 'var(--bg-panel)',
       backdropFilter: 'blur(28px) saturate(180%)',
       WebkitBackdropFilter: 'blur(28px) saturate(180%)',
       borderBottom: '1px solid var(--border)',

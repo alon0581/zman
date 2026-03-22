@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { CalendarEvent } from '@/types'
 import { format, parseISO } from 'date-fns'
+import { he as heLocale } from 'date-fns/locale'
 import { X, Trash2, Check } from 'lucide-react'
 
 const COLORS = [
@@ -18,12 +19,14 @@ interface Props {
   event: CalendarEvent
   x: number
   y: number
+  language?: string
   onClose: () => void
   onSave: (id: string, changes: Partial<CalendarEvent>) => void
   onDelete: (id: string) => void
 }
 
-export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: Props) {
+export default function EventPopup({ event, x, y, language = 'en', onClose, onSave, onDelete }: Props) {
+  const isHe = language === 'he'
   const [title, setTitle] = useState(event.title)
   const [color, setColor] = useState(event.color ?? '#3B7EF7')
   const [saving, setSaving] = useState(false)
@@ -82,9 +85,12 @@ export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: P
     } catch { /* ignore */ }
   }
 
-  const startDate = format(parseISO(event.start_time), 'EEE, MMM d')
-  const startTime = format(parseISO(event.start_time), 'h:mm a')
-  const endTime   = format(parseISO(event.end_time),   'h:mm a')
+  const dfLocale = isHe ? heLocale : undefined
+  const startDate = isHe
+    ? format(parseISO(event.start_time), "EEEE, d בMMMM", { locale: dfLocale })
+    : format(parseISO(event.start_time), 'EEE, MMM d')
+  const startTime = format(parseISO(event.start_time), 'HH:mm')
+  const endTime   = format(parseISO(event.end_time),   'HH:mm')
 
   return (
     <div
@@ -171,7 +177,7 @@ export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: P
             onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.16)')}
             onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.08)')}
           >
-            <Trash2 size={12} /> Delete
+            <Trash2 size={12} /> {isHe ? 'מחק' : 'Delete'}
           </button>
           <button
             onClick={handleSave}
@@ -183,7 +189,7 @@ export default function EventPopup({ event, x, y, onClose, onSave, onDelete }: P
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
             }}
           >
-            <Check size={12} /> Save
+            <Check size={12} /> {isHe ? 'שמור' : 'Save'}
           </button>
         </div>
       </div>
