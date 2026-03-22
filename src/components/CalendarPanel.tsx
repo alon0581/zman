@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarEvent } from '@/types'
-import { format, isSameDay } from 'date-fns'
+import { format, isSameDay, endOfDay } from 'date-fns'
 import { he as heLocale } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import EventPopup from './EventPopup'
@@ -63,7 +63,7 @@ export default function CalendarPanel({
   }, [isMobile, view])
 
   // Pinch-to-zoom: adjust slot height like Apple Calendar
-  const DEFAULT_SLOT_H = isMobile ? 44 : 30
+  const DEFAULT_SLOT_H = isMobile ? 44 : 44
   const [slotHeight, setSlotHeight] = useState(DEFAULT_SLOT_H)
   const slotHeightRef = useRef(DEFAULT_SLOT_H)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -204,6 +204,28 @@ export default function CalendarPanel({
   const dfLocale  = language === 'he' ? heLocale : undefined
   const monthTitle = format(currentDate, 'MMMM yyyy', { locale: dfLocale })
 
+  const scrollTime = useMemo(() => {
+    const now = new Date()
+    const todayEnd = endOfDay(now)
+    // Ongoing event → scroll to its start
+    const ongoing = events.find(e => new Date(e.start_time) <= now && new Date(e.end_time) >= now)
+    if (ongoing) {
+      const h = new Date(ongoing.start_time).getHours()
+      return `${String(h).padStart(2, '0')}:00:00`
+    }
+    // Next upcoming event today → scroll 1h before
+    const upcoming = events
+      .filter(e => new Date(e.start_time) > now && new Date(e.start_time) <= todayEnd)
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
+    if (upcoming) {
+      const h = Math.max(0, new Date(upcoming.start_time).getHours() - 1)
+      return `${String(h).padStart(2, '0')}:00:00`
+    }
+    // Default: current time minus 1 hour
+    const h = Math.max(0, now.getHours() - 1)
+    return `${String(h).padStart(2, '0')}:00:00`
+  }, [events])
+
   if (!FC || plugins.length === 0) {
     return (
       <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: '#86868B' }}>
@@ -322,16 +344,17 @@ export default function CalendarPanel({
           ref={calRef}
           plugins={plugins}
           initialView={view}
-          key={language}               /* remount only on language change, not view change */
+          key={`${language}-${language === 'he' ? 'rtl' : 'ltr'}`}  /* remount on language/direction change */
           events={fcEvents}
           locale={language === 'he' && localeData ? localeData : language}
           direction={language === 'he' ? 'rtl' : 'ltr'}
           headerToolbar={false}        /* we use our own prev/next buttons above */
           height="100%"
           nowIndicator
+          scrollTime={scrollTime}
           allDaySlot={false}
-          slotMinTime="06:00:00"
-          slotMaxTime="23:00:00"
+          slotMinTime="00:00:00"
+          slotMaxTime="24:00:00"
           slotDuration="00:30:00"
           slotLabelInterval="01:00:00"
           eventMinHeight={isMobile ? Math.max(24, Math.round(slotHeight * 0.55)) : 20}

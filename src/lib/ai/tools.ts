@@ -240,6 +240,29 @@ ALWAYS call save_memory after learning something new. This is your long-term bra
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'send_notification',
+      description: "Send a real push notification to the user's device. Use when the user asks you to send a reminder, motivational message, or any notification. DO NOT just write text — call this tool to actually send it.",
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Notification title (short, ≤50 chars)' },
+          body: { type: 'string', description: 'Notification body text' },
+        },
+        required: ['title', 'body'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_all_events',
+      description: 'Delete ALL calendar events for this user. Only call after the user explicitly confirms with "yes", "כן", "מחק", etc. Never call speculatively.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
 ]
 
 export const onboardingTools: OpenAI.ChatCompletionTool[] = [

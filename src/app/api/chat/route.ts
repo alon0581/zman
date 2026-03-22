@@ -62,6 +62,24 @@ function toAnthropicTools(tools: OpenAI.ChatCompletionTool[]) {
   })
 }
 
+function parseXmlToolCalls(content: string): { name: string; args: Record<string, unknown> }[] {
+  const calls: { name: string; args: Record<string, unknown> }[] = []
+  const invokeRe = /<invoke name="([^"]+)">([\s\S]*?)<\/invoke>/g
+  let m
+  while ((m = invokeRe.exec(content)) !== null) {
+    const args: Record<string, unknown> = {}
+    const paramRe = /<parameter name="([^"]+)">([\s\S]*?)<\/parameter>/g
+    let pm
+    while ((pm = paramRe.exec(m[2])) !== null) {
+      let val: unknown = pm[2].trim()
+      try { val = JSON.parse(val as string) } catch { /* keep as string */ }
+      args[pm[1]] = val
+    }
+    calls.push({ name: m[1], args })
+  }
+  return calls
+}
+
 // ─── Main handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -180,6 +198,7 @@ export async function POST(req: NextRequest) {
                 deletedEventIds,
                 profile,
                 state,
+                freshProfile?.push_subscription,
               )
               toolResults.push({
                 type: 'tool_result',
@@ -243,7 +262,8 @@ export async function POST(req: NextRequest) {
             const input = JSON.parse(tc.function.arguments) as Record<string, unknown>
             const result = await executeTool(
               tc.function.name, input, userId as string, events,
-              createdEvents, updatedEvents, deletedEventIds, profile, state
+              createdEvents, updatedEvents, deletedEventIds, profile, state,
+              freshProfile?.push_subscription,
             )
             currentMessages.push({
               role: 'tool',
@@ -255,8 +275,32 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // No more tool calls — capture final text (strip <think> reasoning blocks)
-        lastContent = (message.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+        // Fallback: MiniMax M2.5 sometimes outputs XML tool calls in content
+        if (!message.tool_calls?.length && message.content?.includes('<invoke name=')) {
+          const xmlCalls = parseXmlToolCalls(message.content)
+          if (xmlCalls.length > 0) {
+            currentMessages.push(message)
+            for (const tc of xmlCalls) {
+              const result = await executeTool(
+                tc.name, tc.args, userId as string, events,
+                createdEvents, updatedEvents, deletedEventIds, profile, state,
+                freshProfile?.push_subscription,
+              )
+              currentMessages.push({
+                role: 'tool',
+                tool_call_id: `xml-${tc.name}-${Date.now()}`,
+                content: JSON.stringify(result),
+              })
+            }
+            continue
+          }
+        }
+
+        // No more tool calls — capture final text (strip reasoning + XML blocks)
+        lastContent = (message.content ?? '')
+          .replace(/<think>[\s\S]*?<\/think>/g, '')
+          .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
+          .trim()
         break
       }
 
@@ -454,7 +498,8 @@ async function executeTool(
   updatedEvents: CalendarEvent[],
   deletedEventIds: string[],
   profile: UserProfile | null,
-  state: { completedProfile: UserProfile | null; memoryUpdated: boolean; tasksUpdated: boolean } = { completedProfile: null, memoryUpdated: false, tasksUpdated: false }
+  state: { completedProfile: UserProfile | null; memoryUpdated: boolean; tasksUpdated: boolean } = { completedProfile: null, memoryUpdated: false, tasksUpdated: false },
+  pushSubscription?: string,
 ): Promise<unknown> {
   // ── Input validation helpers ──────────────────────────────────────────────
   const str  = (v: unknown): string  => (typeof v === 'string' ? v : '')
@@ -1038,6 +1083,27 @@ async function executeTool(
 
       if (memory_entries?.length) state.memoryUpdated = true
       return { success: true }
+    }
+
+    case 'send_notification': {
+      const { title, body } = input as { title: string; body: string }
+      if (pushSubscription) {
+        await sendPush(pushSubscription, { title, body, url: '/app', tag: 'zman-message' }).catch(() => {})
+      }
+      return { success: true }
+    }
+
+    case 'delete_all_events': {
+      const allIds = currentEvents.map(e => e.id)
+      if (DEMO_MODE) {
+        for (const id of allIds) demoStorage.deleteEvent(id, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        await supabase.from('events').delete().eq('user_id', userId)
+      }
+      deletedEventIds.push(...allIds)
+      return { success: true, deleted_count: allIds.length }
     }
 
     default:
