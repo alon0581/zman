@@ -177,18 +177,18 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [recording, setRecording] = useState(false)
 
-  const bottomRef         = useRef<HTMLDivElement>(null)
-  const inputRef          = useRef<HTMLInputElement>(null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef    = useRef<any>(null)
-  const isHoldingRef      = useRef(false)   // pointer currently pressed?
-  const holdModeRef       = useRef(false)   // true = hold mode (auto-send on release)
-  const sendMsgRef        = useRef<(t: string) => void>(() => {})
-  const pressStartRef     = useRef<number>(0)         // timestamp of pointer-down
-  const recordingRef      = useRef(false)              // mirror of `recording` state — always current in event handlers
-  const lastTranscriptRef = useRef('')                 // accumulated Web Speech transcript (persists across auto-restarts)
-  const cachedStreamRef   = useRef<MediaStream | null>(null) // cached mic stream — keeps permission warm in session
-  const shouldRestartRef  = useRef(false)              // true = keep restarting when browser auto-stops (silence timeout)
+  const [micPending, setMicPending] = useState(false)  // true while Whisper is transcribing
+
+  const bottomRef          = useRef<HTMLDivElement>(null)
+  const inputRef           = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef   = useRef<MediaRecorder | null>(null)
+  const chunksRef          = useRef<Blob[]>([])
+  const isHoldingRef       = useRef(false)   // pointer currently pressed?
+  const holdModeRef        = useRef(false)   // true = hold mode (auto-send on release)
+  const sendMsgRef         = useRef<(t: string) => void>(() => {})
+  const pressStartRef      = useRef<number>(0)         // timestamp of pointer-down
+  const recordingRef       = useRef(false)              // mirror of `recording` state — always current in event handlers
+  const cachedStreamRef    = useRef<MediaStream | null>(null) // cached mic stream — keeps permission warm in session
 
   // On mount: load events, profile, memory — then build smart welcome
   useEffect(() => {
@@ -375,74 +375,55 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const lang  = profile?.language ?? language
   const isRTL = lang === 'he' || lang === 'ar'
 
-  // accumulated param carries text from a previous session when auto-restarting
-  const startRecording = async (accumulated = '') => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) {
-      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
-      return
-    }
-
-    // Cache the MediaStream on first use so the browser keeps the permission warm
-    // for the rest of this page session (avoids repeated prompts within same visit)
-    if (!cachedStreamRef.current && navigator.mediaDevices?.getUserMedia) {
-      try {
+  const startRecording = async () => {
+    try {
+      // Cache mic stream — keeps permission warm for the whole session
+      if (!cachedStreamRef.current) {
         cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
-      } catch {
-        // Permission denied — Web Speech API will surface its own error via onerror
       }
-    }
+      const stream = cachedStreamRef.current
 
-    const recognition = new SR()
-    recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
-    recognition.continuous = true
-    recognition.interimResults = false
-    recognition.maxAlternatives = 1
-    recognitionRef.current = recognition
-    if (!accumulated) holdModeRef.current = false  // only reset on fresh start, not on auto-restart
-    lastTranscriptRef.current = accumulated        // carry over any text from previous session
-    shouldRestartRef.current = true                // allow auto-restart on silence timeout
+      // Pick best MIME type: webm on desktop/Android, mp4 on iOS
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : ''
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (e: any) => {
-      // Accumulate final results from this session, prepending any carried-over text
-      let sessionText = ''
-      for (let i = 0; i < e.results.length; i++) {
-        if (e.results[i].isFinal) sessionText += (sessionText ? ' ' : '') + e.results[i][0].transcript
-      }
-      lastTranscriptRef.current = accumulated
-        ? sessionText ? `${accumulated} ${sessionText}` : accumulated
-        : sessionText.trim()
-    }
-    recognition.onerror = () => {
-      shouldRestartRef.current = false
-      setRecording(false)
-      recognitionRef.current = null
-    }
-    recognition.onend = () => {
-      recognitionRef.current = null
-      const text = lastTranscriptRef.current
-      if (shouldRestartRef.current) {
-        // Browser auto-stopped (silence timeout) — restart seamlessly, carry over transcript
-        startRecording(text)
-        return
-      }
-      setRecording(false)
-      if (text) {
-        if (holdModeRef.current) { sendMsgRef.current(text) }
-        else { setInput(text); setTimeout(() => inputRef.current?.focus(), 50) }
-      }
-    }
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {})
+      chunksRef.current = []
 
-    recognition.start()
-    setRecording(true)
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
+        const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
+        setMicPending(true)
+        try {
+          const fd = new FormData()
+          fd.append('audio', blob, `recording.${ext}`)
+          fd.append('lang', lang)
+          const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
+          const data = await res.json()
+          if (data.text) {
+            if (holdModeRef.current) { sendMsgRef.current(data.text) }
+            else { setInput(data.text); setTimeout(() => inputRef.current?.focus(), 50) }
+          }
+        } catch { /* ignore */ }
+        finally { setMicPending(false) }
+      }
+
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setRecording(true)
+    } catch {
+      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
+    }
   }
 
   const stopRecording = () => {
-    shouldRestartRef.current = false   // prevent auto-restart in onend
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
+    mediaRecorderRef.current?.stop()
+    mediaRecorderRef.current = null
     setRecording(false)
   }
 
@@ -552,17 +533,21 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerUp}
             onContextMenu={e => e.preventDefault()}
+            disabled={micPending}
             className={recording ? 'mic-recording' : ''}
             style={{
-              width: 44, height: 44, borderRadius: 14, border: 'none', cursor: 'pointer', flexShrink: 0,
+              width: 44, height: 44, borderRadius: 14, border: 'none', cursor: micPending ? 'default' : 'pointer', flexShrink: 0,
               background: recording ? 'linear-gradient(135deg,#EF4444,#DC2626)' : 'linear-gradient(135deg,#3B7EF7,#6366F1)',
               color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
               boxShadow: recording ? '0 4px 20px rgba(239,68,68,0.5)' : '0 4px 20px rgba(59,126,247,0.45)',
               transition: 'background 0.2s, box-shadow 0.2s',
+              opacity: micPending ? 0.6 : 1,
               WebkitUserSelect: 'none', userSelect: 'none', touchAction: 'manipulation',
             } as React.CSSProperties}
           >
-            {recording ? <Square size={14} fill="white" /> : <Mic size={18} />}
+            {micPending
+              ? <span style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
+              : recording ? <Square size={14} fill="white" /> : <Mic size={18} />}
           </button>
         </div>
 
