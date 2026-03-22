@@ -475,7 +475,7 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
     startRecording()  // async — permission/stream cached on first call
   }
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e?: React.PointerEvent) => {
     isHoldingRef.current = false
     const elapsed = Date.now() - pressStartRef.current
     if (recordingRef.current && elapsed >= 400) {
@@ -484,6 +484,12 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
       stopRecording()
     }
     // Quick tap (< 400 ms): leave recording running — user taps again to stop (toggle mode)
+  }
+
+  // Only fire on mouse drag-off (not touch) — touch pointerleave fires unreliably
+  // and causes false-stop due to async getUserMedia timing
+  const handlePointerLeave = (e: React.PointerEvent) => {
+    if (e.pointerType === 'mouse') handlePointerUp(e)
   }
 
   return (
@@ -566,7 +572,7 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
           <button
             onPointerDown={handlePointerDown}
             onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
+            onPointerLeave={handlePointerLeave}
             onContextMenu={e => e.preventDefault()}
             disabled={micPending}
             className={recording ? 'mic-recording' : ''}
