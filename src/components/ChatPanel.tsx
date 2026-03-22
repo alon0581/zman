@@ -401,18 +401,24 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
         recorder.onstop = async () => {
           const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
           const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
+          if (blob.size < 1000) return  // too small — ignore
           setMicPending(true)
           try {
             const fd = new FormData()
             fd.append('audio', blob, `recording.${ext}`)
             fd.append('lang', lang)
             const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
+            if (!res.ok) throw new Error(`transcribe ${res.status}`)
             const data = await res.json()
             if (data.text) {
               if (holdModeRef.current) { sendMsgRef.current(data.text) }
               else { setInput(data.text); setTimeout(() => inputRef.current?.focus(), 50) }
             }
-          } catch { /* ignore */ }
+          } catch (err) {
+            setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const,
+              content: lang === 'he' ? `❌ שגיאת תמלול: ${(err as Error).message}` : `❌ Transcription error: ${(err as Error).message}`,
+              timestamp: new Date() }])
+          }
           finally { setMicPending(false) }
         }
         mediaRecorderRef.current = recorder
@@ -429,7 +435,7 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
       }
     }
 
-    // ── Web Speech API — used on Capacitor iOS (native iOS speech recognition) ──
+    // ── Web Speech API — used on Capacitor iOS ──
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) {
@@ -438,10 +444,12 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
     }
     const recognition = new SR()
     recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
-    recognition.continuous = false   // iOS works better with continuous=false
+    recognition.continuous = false
     recognition.interimResults = false
     let transcript = ''
-    const stoppedByUser = { current: false }
+    // Use a plain object ref (NOT React state) to avoid async update issues
+    const isActive = { current: true }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (e: any) => {
       for (let i = 0; i < e.results.length; i++) {
@@ -449,16 +457,16 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
       }
     }
     recognition.onerror = (e: Event & { error?: string }) => {
-      if (e.error === 'not-allowed') {
+      if ((e as Event & {error:string}).error === 'not-allowed') {
         setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
       }
-      stoppedByUser.current = true
+      isActive.current = false
       setRecording(false)
     }
     recognition.onend = () => {
-      // If stopped by silence (not by user) and toggle mode → restart seamlessly
-      if (!stoppedByUser.current && recordingRef.current) {
-        recognition.start()
+      if (isActive.current) {
+        // Silence auto-stop → restart seamlessly (isActive is plain ref, always current)
+        try { recognition.start() } catch { /* ignore */ }
         return
       }
       setRecording(false)
@@ -467,9 +475,8 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
         else { setInput(transcript); setTimeout(() => inputRef.current?.focus(), 50) }
       }
     }
-    // Store in mediaRecorderRef so stopRecording can stop it
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(mediaRecorderRef as any).current = { stop: () => { stoppedByUser.current = true; recognition.stop() } }
+    ;(mediaRecorderRef as any).current = { stop: () => { isActive.current = false; recognition.stop() } }
     recognition.start()
     setRecording(true)
   }
