@@ -9,6 +9,7 @@ import TasksPanel from './TasksPanel'
 import Header from './Header'
 import SettingsClient from '@/app/settings/SettingsClient'
 import { CalendarDays, MessageCircle, CheckSquare } from 'lucide-react'
+import { registerCapacitorPush } from '@/lib/capacitor-push'
 
 interface Props {
   user: User
@@ -47,6 +48,17 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     check()
     window.addEventListener('resize', check)
     return () => window.removeEventListener('resize', check)
+  }, [])
+
+  // Register native push notifications when running inside Capacitor (Android/iOS)
+  useEffect(() => {
+    registerCapacitorPush(async (fcmToken) => {
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: fcmToken, type: 'fcm' }),
+      })
+    })
   }, [])
 
   // Fetch + poll tasks — same cross-device sync pattern as events

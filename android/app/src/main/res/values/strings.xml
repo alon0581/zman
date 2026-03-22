@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Zman</string>
+    <string name="title_activity_main">Zman</string>
+    <string name="package_name">com.zman.app</string>
+    <string name="custom_url_scheme">com.zman.app</string>
+</resources>

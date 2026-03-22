@@ -21,8 +21,14 @@ function profilePath(userId: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const { subscription } = await req.json() as { subscription: string }
+  const body = await req.json() as { subscription: string; type?: string }
+  const { subscription, type } = body
   if (!subscription) return NextResponse.json({ error: 'missing subscription' }, { status: 400 })
+
+  // type='fcm' means this is a native Capacitor FCM token (Android/iOS)
+  // type='vapid' or undefined means this is a Web Push subscription object
+  const isFcm = type === 'fcm'
+  const field = isFcm ? 'fcm_token' : 'push_subscription'
 
   if (DEMO_MODE) {
     const userId = getUserId(req)
@@ -30,7 +36,7 @@ export async function POST(req: NextRequest) {
     const p = profilePath(userId)
     try {
       const profile = JSON.parse(fs.readFileSync(p, 'utf8'))
-      profile.push_subscription = subscription
+      profile[field] = subscription
       fs.writeFileSync(p, JSON.stringify(profile, null, 2))
     } catch { return NextResponse.json({ error: 'profile not found' }, { status: 404 }) }
     return NextResponse.json({ ok: true })
@@ -40,7 +46,7 @@ export async function POST(req: NextRequest) {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  await supabase.from('user_profiles').upsert({ user_id: user.id, push_subscription: subscription })
+  await supabase.from('user_profiles').upsert({ user_id: user.id, [field]: subscription })
   return NextResponse.json({ ok: true })
 }
 

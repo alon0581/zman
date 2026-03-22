@@ -47,7 +47,8 @@ export interface UserProfile {
   ai_model?: string
   ai_api_key_masked?: string       // shown in UI: "sk-****abcd" — never the raw key
   ai_api_key_encrypted?: string    // AES-256-GCM encrypted — NEVER sent to frontend
-  push_subscription?: string       // JSON-serialised PushSubscription for Web Push
+  push_subscription?: string       // JSON-serialised PushSubscription for Web Push (browser PWA)
+  fcm_token?: string               // Firebase Cloud Messaging token for native Capacitor push
 }
 
 export interface Message {

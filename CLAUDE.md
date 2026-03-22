@@ -325,3 +325,47 @@ npm run dev        # starts on http://localhost:3000
 npx tsc --noEmit   # type check only (no build)
 npm run lint       # eslint
 ```
+
+---
+
+## Capacitor (Android/iOS Native App)
+
+**Approach:** `server.url` in `capacitor.config.ts` points to Railway. The native app loads Railway in a native WebView. No static export needed.
+
+**Key benefit:** Mic permission is remembered permanently (per-app, not per-session like Safari).
+
+### Setup Status
+- ✅ Capacitor 8 installed (`@capacitor/core`, `@capacitor/android`)
+- ✅ Android project generated (`/android/`)
+- ✅ `@capacitor/push-notifications`, `@capacitor/splash-screen`, `@capacitor/status-bar` installed
+- ✅ `firebase-admin` installed for server-side FCM push
+- ⏳ Firebase project needed (see below)
+- ⏳ Update `server.url` in `capacitor.config.ts` to actual Railway URL
+- ⏳ iOS: requires macOS + Xcode
+
+### To Build Android APK
+
+1. **Set Railway URL** in `capacitor.config.ts`:
+   ```ts
+   server: { url: 'https://YOUR-APP.up.railway.app' }
+   ```
+
+2. **Firebase setup** (for native push notifications):
+   - Go to https://console.firebase.google.com → create project "Zman"
+   - Add Android app with package `com.zman.app`
+   - Download `google-services.json` → put in `android/app/`
+   - Go to Project Settings → Service Accounts → Generate new private key
+   - Add to Railway env: `FIREBASE_SERVICE_ACCOUNT=<JSON string>`
+
+3. **Sync and open Android Studio:**
+   ```bash
+   npx cap sync android
+   npx cap open android
+   ```
+
+4. **In Android Studio:** Build → Generate Signed APK (or Run on connected device)
+
+### Push Notification Flow
+- **Native (Capacitor):** `registerCapacitorPush()` in AppShell → FCM token → `POST /api/push/subscribe` with `type:'fcm'` → stored as `fcm_token` in profile → `sendFcmPush()` via Firebase Admin
+- **Browser (PWA):** VAPID web-push via `web-push` npm package (unchanged)
+- Both are supported simultaneously; FCM takes priority in `send_notification` tool

@@ -9,7 +9,7 @@ import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay }
 import { demoStorage } from '@/lib/demo/storage'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { decryptApiKey } from '@/lib/encryption'
-import { sendPush } from '@/lib/push'
+import { sendPush, sendFcmPush } from '@/lib/push'
 import fs from 'fs'
 import path from 'path'
 
@@ -199,6 +199,7 @@ export async function POST(req: NextRequest) {
                 profile,
                 state,
                 freshProfile?.push_subscription,
+                freshProfile?.fcm_token,
               )
               toolResults.push({
                 type: 'tool_result',
@@ -285,6 +286,7 @@ export async function POST(req: NextRequest) {
                 tc.name, tc.args, userId as string, events,
                 createdEvents, updatedEvents, deletedEventIds, profile, state,
                 freshProfile?.push_subscription,
+                freshProfile?.fcm_token,
               )
               currentMessages.push({
                 role: 'tool',
@@ -306,17 +308,21 @@ export async function POST(req: NextRequest) {
 
       if (state.completedProfile) completedProfile = state.completedProfile
 
-      // Send push notification when AI creates events
-      if (createdEvents.length > 0 && profile?.push_subscription) {
-        const lang = profile.language ?? 'en'
+      // Send push notification when AI creates events (FCM for native, VAPID for browser)
+      if (createdEvents.length > 0 && freshProfile && (freshProfile.fcm_token || freshProfile.push_subscription)) {
+        const lang = freshProfile.language ?? 'en'
         const titles = createdEvents.slice(0, 2).map(e => e.title).join(', ')
         const more = createdEvents.length > 2 ? (lang === 'he' ? ` ועוד ${createdEvents.length - 2}` : ` +${createdEvents.length - 2} more`) : ''
-        sendPush(profile.push_subscription, {
+        const pushPayload = {
           title: lang === 'he' ? '📅 זמן הוסיף לוח שנה' : '📅 Zman added to calendar',
           body: titles + more,
           url: '/app',
-          tag: 'zman-events',
-        }).catch(() => {})
+        }
+        if (freshProfile.fcm_token) {
+          sendFcmPush(freshProfile.fcm_token, pushPayload).catch(() => {})
+        } else if (freshProfile.push_subscription) {
+          sendPush(freshProfile.push_subscription, { ...pushPayload, tag: 'zman-events' }).catch(() => {})
+        }
       }
 
       // Stream final response
@@ -500,6 +506,7 @@ async function executeTool(
   profile: UserProfile | null,
   state: { completedProfile: UserProfile | null; memoryUpdated: boolean; tasksUpdated: boolean } = { completedProfile: null, memoryUpdated: false, tasksUpdated: false },
   pushSubscription?: string,
+  fcmToken?: string,
 ): Promise<unknown> {
   // ── Input validation helpers ──────────────────────────────────────────────
   const str  = (v: unknown): string  => (typeof v === 'string' ? v : '')
@@ -1087,7 +1094,10 @@ async function executeTool(
 
     case 'send_notification': {
       const { title, body } = input as { title: string; body: string }
-      if (pushSubscription) {
+      // Try FCM (native Capacitor) first, then fall back to VAPID (browser PWA)
+      if (fcmToken) {
+        await sendFcmPush(fcmToken, { title, body, url: '/app' }).catch(() => {})
+      } else if (pushSubscription) {
         await sendPush(pushSubscription, { title, body, url: '/app', tag: 'zman-message' }).catch(() => {})
       }
       return { success: true }
