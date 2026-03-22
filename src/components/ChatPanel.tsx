@@ -376,13 +376,12 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const isRTL = lang === 'he' || lang === 'ar'
 
   const startRecording = async () => {
-    // ── Detect Capacitor iOS ──
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const isCapacitorIOS = typeof (window as any).Capacitor !== 'undefined'
-      && /iPad|iPhone|iPod/.test(navigator.userAgent)
+    // ── Detect iOS (any: Capacitor, PWA, Safari) — MediaRecorder unreliable on iOS ──
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 
-    // ── MediaRecorder + Whisper (desktop, Android, and non-Capacitor iOS) ──
-    if (!isCapacitorIOS && typeof MediaRecorder !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+    // ── MediaRecorder + Whisper (desktop & Android only) ──
+    if (!isIOS && typeof MediaRecorder !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
       try {
         if (!cachedStreamRef.current) {
           cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
