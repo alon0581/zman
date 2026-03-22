@@ -376,49 +376,84 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
   const isRTL = lang === 'he' || lang === 'ar'
 
   const startRecording = async () => {
-    try {
-      // Cache mic stream — keeps permission warm for the whole session
-      if (!cachedStreamRef.current) {
-        cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+    // ── Try MediaRecorder + Whisper (best quality, works on iOS Capacitor) ──
+    if (typeof MediaRecorder !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        if (!cachedStreamRef.current) {
+          cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+        }
+        const stream = cachedStreamRef.current
+
+        // Pick best MIME type: webm on desktop/Android, mp4 on iOS
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/mp4')
+          ? 'audio/mp4'
+          : ''
+
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {})
+        chunksRef.current = []
+        recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+        recorder.onstop = async () => {
+          const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
+          const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
+          setMicPending(true)
+          try {
+            const fd = new FormData()
+            fd.append('audio', blob, `recording.${ext}`)
+            fd.append('lang', lang)
+            const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
+            const data = await res.json()
+            if (data.text) {
+              if (holdModeRef.current) { sendMsgRef.current(data.text) }
+              else { setInput(data.text); setTimeout(() => inputRef.current?.focus(), 50) }
+            }
+          } catch { /* ignore */ }
+          finally { setMicPending(false) }
+        }
+        mediaRecorderRef.current = recorder
+        recorder.start()
+        setRecording(true)
+        return
+      } catch (err) {
+        // If explicitly denied — show error and stop. Otherwise fall through to Web Speech API.
+        const name = (err as DOMException)?.name
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
+          return
+        }
+        // Otherwise: MediaRecorder failed for other reason → fall through to Web Speech API
       }
-      const stream = cachedStreamRef.current
-
-      // Pick best MIME type: webm on desktop/Android, mp4 on iOS
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : ''
-
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {})
-      chunksRef.current = []
-
-      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-
-      recorder.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
-        const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
-        setMicPending(true)
-        try {
-          const fd = new FormData()
-          fd.append('audio', blob, `recording.${ext}`)
-          fd.append('lang', lang)
-          const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
-          const data = await res.json()
-          if (data.text) {
-            if (holdModeRef.current) { sendMsgRef.current(data.text) }
-            else { setInput(data.text); setTimeout(() => inputRef.current?.focus(), 50) }
-          }
-        } catch { /* ignore */ }
-        finally { setMicPending(false) }
-      }
-
-      mediaRecorderRef.current = recorder
-      recorder.start()
-      setRecording(true)
-    } catch {
-      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
     }
+
+    // ── Fallback: Web Speech API (desktop Chrome / Safari PWA) ──
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) {
+      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant' as const, content: tr(lang, 'micDenied'), timestamp: new Date() }])
+      return
+    }
+    const recognition = new SR()
+    recognition.lang = lang === 'he' ? 'he-IL' : lang === 'ar' ? 'ar-SA' : 'en-US'
+    recognition.continuous = true
+    recognition.interimResults = false
+    let transcript = ''
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (e: any) => {
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) transcript += (transcript ? ' ' : '') + e.results[i][0].transcript
+      }
+    }
+    recognition.onerror = () => { setRecording(false) }
+    recognition.onend = () => {
+      setRecording(false)
+      if (transcript) {
+        if (holdModeRef.current) { sendMsgRef.current(transcript) }
+        else { setInput(transcript); setTimeout(() => inputRef.current?.focus(), 50) }
+      }
+    }
+    recognition.start()
+    setRecording(true)
   }
 
   const stopRecording = () => {
