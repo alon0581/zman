@@ -393,11 +393,8 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
       }
     }
 
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-
-    // ── Desktop / Android: MediaRecorder + Whisper ──
-    if (!isIOS && typeof MediaRecorder !== 'undefined' && cachedStreamRef.current) {
+    // ── MediaRecorder + Whisper (ALL platforms including iOS Capacitor) ──
+    if (typeof MediaRecorder !== 'undefined' && cachedStreamRef.current) {
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
