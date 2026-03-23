@@ -1,9 +1,19 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
 import { CalendarEvent, Task } from '@/types'
 import { format, isPast, parseISO } from 'date-fns'
 import { CheckCircle2, Circle, Calendar, ChevronDown, ChevronRight, Plus, CheckCheck } from 'lucide-react'
+
+const listVariants = {
+  show: { transition: { staggerChildren: 0.04 } },
+}
+const taskVariants = {
+  hidden: { opacity: 0, x: -10 },
+  show: { opacity: 1, x: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 28 } },
+  exit: { opacity: 0, scale: 0.95, transition: { duration: 0.18 } },
+}
 
 interface Props {
   tasks: Task[]
@@ -209,15 +219,26 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                   </button>
 
                   {!isCollapsed && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <motion.div
+                      variants={listVariants}
+                      initial="hidden"
+                      animate="show"
+                      style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+                    >
+                      <AnimatePresence initial={false}>
                       {topicTasks.map(task => {
                         const isOverdue = task.deadline && isPast(parseISO(task.deadline))
                         return (
-                          <div key={task.id} style={{
-                            background: 'var(--bg-card)', borderRadius: 10,
-                            border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
-                            padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: 10,
-                          }}>
+                          <motion.div
+                            key={task.id}
+                            layout
+                            variants={taskVariants}
+                            exit="exit"
+                            style={{
+                              background: 'var(--bg-card)', borderRadius: 10,
+                              border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
+                              padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: 10,
+                            }}>
                             {/* Checkbox */}
                             <button
                               onClick={() => onTaskToggle(task.id, task.status === 'done' ? 'pending' : 'done')}
@@ -288,10 +309,11 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                                 {lang.schedule}
                               </button>
                             )}
-                          </div>
+                          </motion.div>
                         )
                       })}
-                    </div>
+                      </AnimatePresence>
+                    </motion.div>
                   )}
                 </div>
               )

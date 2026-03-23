@@ -12,6 +12,7 @@ import ChatOverlay from './ChatOverlay'
 import ToastContainer from './Toast'
 import { useChatEngine } from '@/hooks/useChatEngine'
 import { CalendarDays, CheckSquare } from 'lucide-react'
+import { AnimatePresence } from 'motion/react'
 import { registerCapacitorPush } from '@/lib/capacitor-push'
 
 interface Props {
@@ -278,21 +279,23 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       />
 
       {/* ── Chat Overlay (double-tap to open) ── */}
-      {chatOverlayOpen && (
-        <ChatOverlay
-          messages={chatEngine.messages}
-          input={chatEngine.input}
-          setInput={chatEngine.setInput}
-          loading={chatEngine.loading}
-          streamingId={chatEngine.streamingId}
-          isOnboarding={chatEngine.isOnboarding}
-          language={language}
-          isMobile={isMobile}
-          onSend={chatEngine.sendMessage}
-          onClose={() => setChatOverlayOpen(false)}
-          onReset={chatEngine.resetChat}
-        />
-      )}
+      <AnimatePresence>
+        {chatOverlayOpen && (
+          <ChatOverlay
+            messages={chatEngine.messages}
+            input={chatEngine.input}
+            setInput={chatEngine.setInput}
+            loading={chatEngine.loading}
+            streamingId={chatEngine.streamingId}
+            isOnboarding={chatEngine.isOnboarding}
+            language={language}
+            isMobile={isMobile}
+            onSend={chatEngine.sendMessage}
+            onClose={() => setChatOverlayOpen(false)}
+            onReset={chatEngine.resetChat}
+          />
+        )}
+      </AnimatePresence>
 
       {showSettings && (
         <SettingsClient

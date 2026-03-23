@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { motion, AnimatePresence, useInView as useMotionInView } from 'motion/react'
 
 /* ─── Translations ─── */
 const COPY = {
@@ -131,18 +132,14 @@ function useScrollY() {
   return y
 }
 
-function useInView(threshold = 0.15) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [inView, setInView] = useState(false)
-  useEffect(() => {
-    const el = ref.current; if (!el) return
-    const obs = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting) { setInView(true); obs.disconnect() }
-    }, { threshold })
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [threshold])
-  return { ref, inView }
+/* ─── Motion variants ─── */
+const fadeUpVariants = {
+  hidden: { opacity: 0, y: 24 },
+  show: { opacity: 1, y: 0, transition: { type: 'spring' as const, stiffness: 280, damping: 28 } },
+}
+const staggerContainer = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.1 } },
 }
 
 /* ─── Main Component ─── */
@@ -153,14 +150,12 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
   const scrollY = useScrollY()
   const [scrolled, setScrolled]     = useState(false)
   const [isMobile, setIsMobile]     = useState(false)
-  const [ghostHover, setGhostHover] = useState(false)
   const [docHeight, setDocHeight]   = useState(0)
   const [viewportH, setViewportH]   = useState(0)
 
   const showcaseRef   = useRef<HTMLDivElement>(null)
   const showcaseTop   = useRef(0)
   const [scene, setScene] = useState(0)
-  const [sceneEntering, setSceneEntering] = useState(true)
 
   useEffect(() => {
     document.documentElement.dir  = isRTL ? 'rtl' : 'ltr'
@@ -191,9 +186,7 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
     const progress = Math.min(1, scrolledIn / Math.max(1, scrollableH))
     const newScene = Math.min(3, Math.floor(progress * 4))
     if (newScene !== scene) {
-      setSceneEntering(false)
-      const t = setTimeout(() => { setScene(newScene); setSceneEntering(true) }, 180)
-      return () => clearTimeout(t)
+      setScene(newScene)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollY, viewportH, isMobile])
@@ -207,13 +200,6 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
     : { textY: 0, textOp: 1, mockY: 0, mockScale: 1, orb1Y: 0, orb2Y: 0 }
 
   const sp = isMobile ? '80px 24px' : '120px 60px'
-  const featureRef0 = useInView(); const featureRef1 = useInView(); const featureRef2 = useInView()
-  const featureRefs = [featureRef0, featureRef1, featureRef2]
-  const stepRef0 = useInView(); const stepRef1 = useInView(); const stepRef2 = useInView()
-  const stepRefs = [stepRef0, stepRef1, stepRef2]
-  const ctaRef      = useInView(0.2)
-  const featTitleRef = useInView(0.3)
-  const stepsTitleRef = useInView(0.3)
 
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'} style={{ minHeight: '100vh', background: 'transparent', fontFamily: 'var(--font-inter, system-ui, sans-serif)', overflowX: 'clip' }}>
@@ -375,23 +361,26 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
             alignItems: 'center', justifyContent: 'center', gap: 12,
             animation: 'landingFadeUp 0.7s 0.34s cubic-bezier(0.22,1,0.36,1) both',
           }}>
-            <a href="/login" className="btn-primary" style={{
-              padding: '17px 36px', borderRadius: 'var(--radius-lg)',
-              fontSize: 18, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
-              width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
-            }}>{c.cta1}</a>
-            <a href="/login" style={{
-              padding: '16px 32px', borderRadius: 'var(--radius-lg)',
-              border: ghostHover ? '1px solid var(--blue)' : '1px solid var(--border-hi)',
-              background: 'transparent',
-              color: ghostHover ? 'var(--text)' : 'var(--text-2)',
-              fontSize: 18, fontWeight: 600, cursor: 'pointer', textDecoration: 'none', display: 'inline-block',
-              width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
-              transition: 'border-color var(--t-base), color var(--t-base)',
-            }}
-              onMouseEnter={() => setGhostHover(true)}
-              onMouseLeave={() => setGhostHover(false)}
-            >{c.cta2}</a>
+            <motion.a href="/login" className="btn-primary"
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+              style={{
+                padding: '17px 36px', borderRadius: 'var(--radius-lg)',
+                fontSize: 18, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
+                width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
+              }}>{c.cta1}</motion.a>
+            <motion.a href="/login"
+              whileHover={{ color: 'var(--text)', borderColor: 'var(--blue)' }}
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 22 }}
+              style={{
+                padding: '16px 32px', borderRadius: 'var(--radius-lg)',
+                border: '1px solid var(--border-hi)', background: 'transparent',
+                color: 'var(--text-2)', fontSize: 18, fontWeight: 600, cursor: 'pointer',
+                textDecoration: 'none', display: 'inline-block',
+                width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
+              }}
+            >{c.cta2}</motion.a>
           </div>
 
           <p style={{
@@ -471,21 +460,26 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
       <section style={{ padding: sp }}>
         <div style={{ maxWidth: 960, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 56 }}>
-            <div
-              ref={featTitleRef.ref}
-              style={{
-                fontSize: isMobile ? 40 : 56, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.05, marginBottom: 16,
-                animation: featTitleRef.inView ? `${isRTL ? 'clipRevealRTL' : 'clipReveal'} 0.8s cubic-bezier(0.22,1,0.36,1) both` : undefined,
-                opacity: featTitleRef.inView ? undefined : 0,
-              }}
+            <motion.div
+              initial={{ opacity: 0, clipPath: isRTL ? 'inset(0 0% 0 100%)' : 'inset(0 100% 0 0)' }}
+              whileInView={{ opacity: 1, clipPath: 'inset(0 0% 0 0%)' }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+              style={{ fontSize: isMobile ? 40 : 56, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.05, marginBottom: 16 }}
             >
               <span className="grad">{c.featTitle}</span>
-            </div>
+            </motion.div>
             <p style={{ fontSize: isMobile ? 17 : 20, color: 'var(--text-2)', letterSpacing: '-0.01em', maxWidth: 440, margin: '0 auto' }}>
               {c.featSub}
             </p>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16 }}>
+          <motion.div
+            variants={staggerContainer}
+            initial="hidden"
+            whileInView="show"
+            viewport={{ once: true, margin: '-60px' }}
+            style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16 }}
+          >
             {c.features.map((f, i) => (
               <FeatureCard
                 key={i}
@@ -494,12 +488,10 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
                 icon={FEATURE_META[i].icon}
                 iconColor={FEATURE_META[i].iconColor}
                 iconBg={FEATURE_META[i].iconBg}
-                inViewData={featureRefs[i]}
-                delay={i * 0.1}
                 isMobile={isMobile}
               />
             ))}
-          </div>
+          </motion.div>
         </div>
       </section>
 
@@ -519,29 +511,28 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
               gap: 80, padding: '0 80px',
             }}>
               {/* Left: text */}
-              <div style={{ flex: 1, maxWidth: 420 }}>
-                <div
-                  key={scene}
-                  style={{
-                    opacity: sceneEntering ? 1 : 0,
-                    transform: sceneEntering ? 'translateY(0)' : 'translateY(-18px)',
-                    transition: sceneEntering
-                      ? 'opacity 0.4s cubic-bezier(0.22,1,0.36,1), transform 0.4s cubic-bezier(0.22,1,0.36,1)'
-                      : 'opacity 0.15s ease-in, transform 0.15s ease-in',
-                  }}
-                >
-                  <div style={{ fontSize: 58, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.04, marginBottom: 24 }}>
-                    <span className="grad">{c.scenes[scene].title}</span>
-                  </div>
-                  <p style={{ fontSize: 20, color: 'var(--text-2)', lineHeight: 1.65, letterSpacing: '-0.01em' }}>
-                    {c.scenes[scene].desc}
-                  </p>
-                </div>
+              <div style={{ flex: 1, maxWidth: 420, overflow: 'hidden' }}>
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={scene}
+                    initial={{ opacity: 0, y: 18 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -18 }}
+                    transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                  >
+                    <div style={{ fontSize: 58, fontWeight: 900, letterSpacing: '-0.04em', lineHeight: 1.04, marginBottom: 24 }}>
+                      <span className="grad">{c.scenes[scene].title}</span>
+                    </div>
+                    <p style={{ fontSize: 20, color: 'var(--text-2)', lineHeight: 1.65, letterSpacing: '-0.01em' }}>
+                      {c.scenes[scene].desc}
+                    </p>
+                  </motion.div>
+                </AnimatePresence>
               </div>
 
               {/* Right: visual */}
               <div style={{ flex: 1, maxWidth: 480 }}>
-                <ShowcaseVisual scene={scene} entering={sceneEntering} isRTL={isRTL} chatLabels={c.mockupChat} />
+                <ShowcaseVisual scene={scene} isRTL={isRTL} chatLabels={c.mockupChat} />
               </div>
             </div>
 
@@ -587,20 +578,25 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
       }}>
         <div style={{ maxWidth: 960, margin: '0 auto' }}>
           <div style={{ textAlign: 'center', marginBottom: 56 }}>
-            <div
-              ref={stepsTitleRef.ref}
-              style={{
-                fontSize: isMobile ? 36 : 52, fontWeight: 900, letterSpacing: '-0.04em', color: 'var(--text)', marginBottom: 14,
-                animation: stepsTitleRef.inView ? `${isRTL ? 'clipRevealRTL' : 'clipReveal'} 0.8s cubic-bezier(0.22,1,0.36,1) both` : undefined,
-                opacity: stepsTitleRef.inView ? undefined : 0,
-              }}
-            >{c.stepsTitle}</div>
+            <motion.div
+              initial={{ opacity: 0, clipPath: isRTL ? 'inset(0 0% 0 100%)' : 'inset(0 100% 0 0)' }}
+              whileInView={{ opacity: 1, clipPath: 'inset(0 0% 0 0%)' }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+              style={{ fontSize: isMobile ? 36 : 52, fontWeight: 900, letterSpacing: '-0.04em', color: 'var(--text)', marginBottom: 14 }}
+            >{c.stepsTitle}</motion.div>
             <p style={{ fontSize: 18, color: 'var(--text-2)', letterSpacing: '-0.01em' }}>{c.stepsSub}</p>
           </div>
-          <div style={{
-            display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
-            gap: isMobile ? 32 : 0, position: 'relative', direction: 'ltr',
-          }}>
+          <motion.div
+            variants={staggerContainer}
+            initial="hidden"
+            whileInView="show"
+            viewport={{ once: true, margin: '-60px' }}
+            style={{
+              display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+              gap: isMobile ? 32 : 0, position: 'relative', direction: 'ltr',
+            }}
+          >
             {!isMobile && (
               <div style={{
                 position: 'absolute', top: 28, left: '16.5%', right: '16.5%', height: 1,
@@ -608,21 +604,21 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
               }} />
             )}
             {c.steps.map((s, i) => (
-              <StepCard key={i} s={s} inViewData={stepRefs[i]} delay={i * 0.12} />
+              <StepCard key={i} s={s} delay={i * 0.12} />
             ))}
-          </div>
+          </motion.div>
         </div>
       </section>
 
       {/* ── FINAL CTA ── */}
-      <section
-        ref={ctaRef.ref}
+      <motion.section
+        initial={{ opacity: 0, y: 30 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: '-80px' }}
+        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
         style={{
           padding: isMobile ? '90px 24px' : '130px 60px',
           textAlign: 'center', position: 'relative', overflow: 'hidden',
-          opacity: ctaRef.inView ? 1 : 0,
-          transform: ctaRef.inView ? 'translateY(0)' : 'translateY(30px)',
-          transition: 'opacity 0.7s cubic-bezier(0.22,1,0.36,1), transform 0.7s cubic-bezier(0.22,1,0.36,1)',
         }}
       >
         <div style={{
@@ -640,25 +636,29 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
             display: 'flex', flexDirection: isMobile ? 'column' : 'row',
             alignItems: 'center', justifyContent: 'center', gap: 12,
           }}>
-            <a href="/login" className="btn-primary" style={{
-              padding: '17px 36px', borderRadius: 'var(--radius-lg)',
-              fontSize: 18, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
-              width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
-            }}>{c.ctaBtn}</a>
-            <a href="/login" style={{
-              padding: '16px 32px', borderRadius: 'var(--radius-lg)',
-              border: '1px solid var(--border-hi)', background: 'transparent',
-              color: 'var(--text-2)', fontSize: 18, fontWeight: 600, cursor: 'pointer',
-              textDecoration: 'none', display: 'inline-block',
-              width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
-              transition: 'color var(--t-base), border-color var(--t-base)',
-            }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--blue)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-2)'; (e.currentTarget as HTMLElement).style.borderColor = 'var(--border-hi)' }}
-            >{c.ctaSignIn}</a>
+            <motion.a href="/login" className="btn-primary"
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+              style={{
+                padding: '17px 36px', borderRadius: 'var(--radius-lg)',
+                fontSize: 18, fontWeight: 700, textDecoration: 'none', display: 'inline-block',
+                width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
+              }}>{c.ctaBtn}</motion.a>
+            <motion.a href="/login"
+              whileHover={{ color: 'var(--text)', borderColor: 'var(--blue)' }}
+              whileTap={{ scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 22 }}
+              style={{
+                padding: '16px 32px', borderRadius: 'var(--radius-lg)',
+                border: '1px solid var(--border-hi)', background: 'transparent',
+                color: 'var(--text-2)', fontSize: 18, fontWeight: 600, cursor: 'pointer',
+                textDecoration: 'none', display: 'inline-block',
+                width: isMobile ? '100%' : 'auto', boxSizing: 'border-box', textAlign: 'center',
+              }}
+            >{c.ctaSignIn}</motion.a>
           </div>
         </div>
-      </section>
+      </motion.section>
 
       {/* ── FOOTER ── */}
       <footer style={{
@@ -685,43 +685,24 @@ export default function LandingClient({ lang = 'en' }: { lang?: 'en' | 'he' }) {
 }
 
 /* ─── FeatureCard ─── */
-function FeatureCard({ title, desc, icon, iconColor, iconBg, inViewData, delay, isMobile }: {
+function FeatureCard({ title, desc, icon, iconColor, iconBg, isMobile }: {
   title: string; desc: string; icon: React.ReactNode
   iconColor: string; iconBg: string
-  inViewData: ReturnType<typeof useInView>
-  delay: number; isMobile: boolean
+  isMobile: boolean
 }) {
-  const [tilt, setTilt] = useState({ x: 0, y: 0 })
-  const [hovered, setHovered] = useState(false)
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (isMobile) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = (e.clientX - rect.left) / rect.width - 0.5
-    const y = (e.clientY - rect.top)  / rect.height - 0.5
-    setTilt({ x, y })
-  }
-
   return (
-    <div
-      ref={inViewData.ref}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setTilt({ x: 0, y: 0 }) }}
-      onMouseMove={handleMouseMove}
-      style={{
-        opacity: inViewData.inView ? 1 : 0,
-        transform: inViewData.inView ? 'translateY(0)' : 'translateY(32px)',
-        transition: `opacity 0.65s ${delay}s cubic-bezier(0.22,1,0.36,1), transform 0.65s ${delay}s cubic-bezier(0.22,1,0.36,1)`,
-      }}
+    <motion.div
+      variants={fadeUpVariants}
+      whileHover={!isMobile ? {
+        y: -8, scale: 1.025,
+        boxShadow: '0 20px 60px rgba(59,126,247,0.22)',
+        transition: { type: 'spring', stiffness: 300, damping: 22 }
+      } : undefined}
     >
       <div className="glass" style={{
         border: '1px solid var(--border-hi)', borderRadius: 'var(--radius-xl)',
         padding: '28px 28px 32px', height: '100%', boxSizing: 'border-box',
-        transform: hovered && !isMobile
-          ? `perspective(800px) rotateY(${tilt.x * 8}deg) rotateX(${-tilt.y * 8}deg) translateZ(4px) translateY(-4px)`
-          : 'perspective(800px) rotateY(0) rotateX(0) translateZ(0) translateY(0)',
-        boxShadow: hovered ? 'var(--shadow-xl), 0 0 40px rgba(59,126,247,0.10)' : 'var(--shadow-lg)',
-        transition: 'transform 0.4s ease-out, box-shadow var(--t-slow)',
+        boxShadow: 'var(--shadow-lg)',
       }}>
         <div style={{
           width: 48, height: 48, borderRadius: 14, background: iconBg,
@@ -732,38 +713,35 @@ function FeatureCard({ title, desc, icon, iconColor, iconBg, inViewData, delay, 
         <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', marginBottom: 14 }}>{title}</div>
         <div style={{ fontSize: 16, color: 'var(--text-2)', lineHeight: 1.72, letterSpacing: '-0.01em' }}>{desc}</div>
       </div>
-    </div>
+    </motion.div>
   )
 }
 
 /* ─── StepCard ─── */
-function StepCard({ s, inViewData, delay }: {
+function StepCard({ s, delay }: {
   s: { num: string; title: string; desc: string }
-  inViewData: ReturnType<typeof useInView>
   delay: number
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const inView = useMotionInView(ref, { once: true })
   const [count, setCount] = useState(0)
   const target = parseInt(s.num)
 
   useEffect(() => {
-    if (!inViewData.inView) return
+    if (!inView) return
     let cur = 0
     const interval = setInterval(() => {
       cur++; setCount(cur)
       if (cur >= target) clearInterval(interval)
     }, Math.floor(600 / target))
     return () => clearInterval(interval)
-  }, [inViewData.inView, target])
+  }, [inView, target])
 
   return (
-    <div
-      ref={inViewData.ref}
-      style={{
-        padding: '0 32px', textAlign: 'center', position: 'relative', zIndex: 1,
-        opacity: inViewData.inView ? 1 : 0,
-        transform: inViewData.inView ? 'translateY(0)' : 'translateY(28px)',
-        transition: `opacity 0.65s ${delay}s cubic-bezier(0.22,1,0.36,1), transform 0.65s ${delay}s cubic-bezier(0.22,1,0.36,1)`,
-      }}
+    <motion.div
+      ref={ref}
+      variants={fadeUpVariants}
+      style={{ padding: '0 32px', textAlign: 'center', position: 'relative', zIndex: 1 }}
     >
       <div style={{
         width: 56, height: 56, borderRadius: '50%',
@@ -776,13 +754,13 @@ function StepCard({ s, inViewData, delay }: {
       </div>
       <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)', marginBottom: 12 }}>{s.title}</div>
       <div style={{ fontSize: 16, color: 'var(--text-2)', lineHeight: 1.72, letterSpacing: '-0.01em', maxWidth: 260, margin: '0 auto' }}>{s.desc}</div>
-    </div>
+    </motion.div>
   )
 }
 
 /* ─── ShowcaseVisual ─── */
-function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
-  scene: number; entering: boolean; isRTL: boolean
+function ShowcaseVisual({ scene, isRTL, chatLabels }: {
+  scene: number; isRTL: boolean
   chatLabels: readonly { user: boolean; text: string }[]
 }) {
   const visuals = [
@@ -865,11 +843,6 @@ function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
     <div className="glass" style={{
       border: '1px solid var(--border-hi)', borderRadius: 'var(--radius-xl)',
       boxShadow: 'var(--shadow-xl)', overflow: 'hidden', minHeight: 260,
-      opacity: entering ? 1 : 0,
-      transform: entering ? 'translateY(0) scale(1)' : 'translateY(22px) scale(0.98)',
-      transition: entering
-        ? 'opacity 0.4s cubic-bezier(0.22,1,0.36,1), transform 0.4s cubic-bezier(0.22,1,0.36,1)'
-        : 'opacity 0.15s ease-in, transform 0.15s ease-in',
     }}>
       <div style={{
         height: 36, background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid var(--border)',
@@ -879,7 +852,17 @@ function ShowcaseVisual({ scene, entering, isRTL, chatLabels }: {
           <div key={col} style={{ width: 9, height: 9, borderRadius: '50%', background: col, opacity: 0.6 }} />
         ))}
       </div>
-      {visuals[scene]}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={scene}
+          initial={{ opacity: 0, y: 16, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -16, scale: 0.98 }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {visuals[scene]}
+        </motion.div>
+      </AnimatePresence>
     </div>
   )
 }

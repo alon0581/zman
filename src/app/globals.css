@@ -546,29 +546,7 @@ input  { touch-action: manipulation; }
   animation: eventSway 3s ease-in-out infinite;
 }
 
-/* ─── Toast slide in ─── */
-@keyframes toastSlideIn {
-  from { opacity: 0; transform: translateY(12px) scale(0.95); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-/* ─── Chat overlay animations ─── */
-@keyframes backdropFadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-@keyframes drawerSlideIn {
-  from { transform: translateX(100%); }
-  to   { transform: translateX(0); }
-}
-@keyframes drawerSlideInLTR {
-  from { transform: translateX(-100%); }
-  to   { transform: translateX(0); }
-}
-@keyframes sheetSlideUp {
-  from { transform: translateY(100%); }
-  to   { transform: translateY(0); }
-}
+/* Toast, overlay, and drawer animations now handled by Motion (motion/react) */
 
 /* ─── Spinner for FAB/transcription ─── */
 @keyframes spin {

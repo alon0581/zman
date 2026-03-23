@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useEffect, useCallback } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
 import { Mic, Square, Check, AlertCircle } from 'lucide-react'
 
 type FabState = 'idle' | 'recording' | 'processing' | 'success' | 'error'
@@ -49,7 +50,6 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
   const lang = language === 'he' ? 'he' : 'en'
 
   const startRecording = useCallback(async () => {
-    // Get mic permission
     if (!cachedStreamRef.current && navigator.mediaDevices?.getUserMedia) {
       try {
         cachedStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -112,10 +112,8 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
 
-    // Double-tap detection
     const now = Date.now()
     if (now - lastTapRef.current < 300) {
-      // Double tap — open chat
       lastTapRef.current = 0
       if (recording) stopRecording()
       onOpenChat()
@@ -124,7 +122,6 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
     lastTapRef.current = now
 
     if (recording) {
-      // 2nd tap = toggle stop
       holdModeRef.current = false
       stopRecording()
       return
@@ -165,14 +162,40 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
 
   const fabClass = recording ? 'fab-recording' : isProcessing ? 'fab-processing' : isSuccess ? 'fab-success' : isError ? 'fab-error' : 'fab-idle'
 
+  const iconNode = isProcessing ? (
+    <span style={{
+      width: 20, height: 20,
+      border: '2.5px solid rgba(255,255,255,0.3)',
+      borderTopColor: '#fff',
+      borderRadius: '50%',
+      display: 'inline-block',
+      animation: 'spin 0.7s linear infinite',
+    }} />
+  ) : isSuccess ? (
+    <Check size={22} strokeWidth={3} />
+  ) : isError ? (
+    <AlertCircle size={22} />
+  ) : recording ? (
+    <Square size={16} fill="white" />
+  ) : (
+    <Mic size={22} />
+  )
+
   return (
-    <button
+    <motion.button
       className={fabClass}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
       onContextMenu={e => e.preventDefault()}
       disabled={isProcessing}
+      whileTap={{ scale: 0.88 }}
+      animate={{
+        background: bg,
+        boxShadow: shadow,
+        scale: isProcessing ? 0.95 : 1,
+      }}
+      transition={{ type: 'spring', stiffness: 300, damping: 22 }}
       style={{
         position: 'fixed',
         bottom: isMobile ? 'calc(70px + env(safe-area-inset-bottom, 0px))' : 32,
@@ -181,39 +204,30 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
         height: 56,
         borderRadius: '50%',
         border: 'none',
-        background: bg,
         color: '#fff',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: isProcessing ? 'default' : 'pointer',
-        boxShadow: shadow,
         zIndex: 9990,
-        transition: 'background 0.3s, box-shadow 0.3s, transform 0.2s',
         opacity: isProcessing ? 0.85 : 1,
         WebkitUserSelect: 'none',
         userSelect: 'none',
         touchAction: 'manipulation',
       } as React.CSSProperties}
     >
-      {isProcessing ? (
-        <span style={{
-          width: 20, height: 20,
-          border: '2.5px solid rgba(255,255,255,0.3)',
-          borderTopColor: '#fff',
-          borderRadius: '50%',
-          display: 'inline-block',
-          animation: 'spin 0.7s linear infinite',
-        }} />
-      ) : isSuccess ? (
-        <Check size={22} strokeWidth={3} />
-      ) : isError ? (
-        <AlertCircle size={22} />
-      ) : recording ? (
-        <Square size={16} fill="white" />
-      ) : (
-        <Mic size={22} />
-      )}
-    </button>
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={state}
+          initial={{ opacity: 0, scale: 0.6 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.6 }}
+          transition={{ duration: 0.15 }}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          {iconNode}
+        </motion.span>
+      </AnimatePresence>
+    </motion.button>
   )
 }

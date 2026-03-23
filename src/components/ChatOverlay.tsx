@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect } from 'react'
+import { motion } from 'motion/react'
 import { Send, X, RotateCcw } from 'lucide-react'
 import type { Message } from '@/types'
 
@@ -36,19 +37,26 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
   return (
     <>
       {/* Backdrop */}
-      <div
+      <motion.div
         onClick={onClose}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
         style={{
           position: 'fixed', inset: 0, zIndex: 9991,
           background: 'rgba(0,0,0,0.5)',
-          animation: 'backdropFadeIn 0.2s ease-out',
         }}
       />
 
       {/* Panel */}
-      <div
+      <motion.div
         dir={isRTL ? 'rtl' : 'ltr'}
         className="chat-panel-glass"
+        initial={isMobile ? { y: '100%' } : { x: isRTL ? -420 : 420 }}
+        animate={isMobile ? { y: 0 } : { x: 0 }}
+        exit={isMobile ? { y: '100%' } : { x: isRTL ? -420 : 420 }}
+        transition={{ type: 'spring', stiffness: 280, damping: 30 }}
         style={{
           position: 'fixed',
           zIndex: 9992,
@@ -58,11 +66,10 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
             bottom: 0, left: 0, right: 0,
             height: '85vh',
             borderRadius: '24px 24px 0 0',
-            animation: 'sheetSlideUp 0.3s ease-out',
+            boxShadow: '0 -12px 40px rgba(0,0,0,0.4)',
           } : {
             top: 60, [isRTL ? 'left' : 'right']: 0,
             width: 420, bottom: 0,
-            animation: isRTL ? 'drawerSlideInLTR 0.3s ease-out' : 'drawerSlideIn 0.3s ease-out',
             boxShadow: '-12px 0 40px rgba(0,0,0,0.4)',
           }),
         }}
@@ -138,7 +145,7 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
             )}
           </div>
         </div>
-      </div>
+      </motion.div>
     </>
   )
 }
