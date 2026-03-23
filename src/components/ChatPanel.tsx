@@ -413,8 +413,8 @@ export default function ChatPanel({ user, profile: initProfile, events, tasks = 
           fd.append('audio', blob, `recording.${mimeType.includes('mp4') ? 'm4a' : 'webm'}`)
           fd.append('lang', lang)
           const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
-          if (!res.ok) throw new Error(`transcribe ${res.status}`)
           const data = await res.json()
+          if (!res.ok) throw new Error(data.error || `transcribe ${res.status}`)
           if (data.text) {
             if (holdModeRef.current) { sendMsgRef.current(data.text) }
             else { setInput(data.text); setTimeout(() => inputRef.current?.focus(), 50) }

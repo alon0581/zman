@@ -28,22 +28,27 @@ export async function POST(req: NextRequest) {
 
   const whisperLang = (!lang || lang === 'auto') ? undefined : lang
 
-  const transcription = await getOpenAI().audio.transcriptions.create({
-    file: audio,
-    model: 'whisper-1',
-    language: whisperLang ?? undefined,
-    // Prompt steers Whisper away from hallucinated filler phrases
-    prompt: 'Calendar scheduling. Appointments, meetings, events, tasks, reminders.',
-  })
+  try {
+    const transcription = await getOpenAI().audio.transcriptions.create({
+      file: audio,
+      model: 'whisper-1',
+      language: whisperLang ?? undefined,
+      prompt: 'Calendar scheduling. Appointments, meetings, events, tasks, reminders.',
+    })
 
-  // Reject common Whisper hallucinations on silence
-  const hallucinationPhrases = [
-    'thank you', 'thanks for watching', 'תודה רבה', 'תודה',
-    'שלום', 'bye', 'goodbye', 'see you', 'subscribe',
-  ]
-  const lower = transcription.text.trim().toLowerCase()
-  const isHallucination = hallucinationPhrases.some(p => lower === p || lower === p + '.' || lower === p + '!')
-  if (isHallucination) return NextResponse.json({ text: '' })
+    // Reject common Whisper hallucinations on silence
+    const hallucinationPhrases = [
+      'thank you', 'thanks for watching', 'תודה רבה', 'תודה',
+      'שלום', 'bye', 'goodbye', 'see you', 'subscribe',
+    ]
+    const lower = transcription.text.trim().toLowerCase()
+    const isHallucination = hallucinationPhrases.some(p => lower === p || lower === p + '.' || lower === p + '!')
+    if (isHallucination) return NextResponse.json({ text: '' })
 
-  return NextResponse.json({ text: transcription.text })
+    return NextResponse.json({ text: transcription.text })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('Transcribe error:', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }
