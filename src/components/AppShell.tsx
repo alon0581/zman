@@ -1,14 +1,17 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { User } from '@supabase/supabase-js'
 import { UserProfile, CalendarEvent, Task } from '@/types'
 import CalendarPanel from './CalendarPanel'
-import ChatPanel from './ChatPanel'
 import TasksPanel from './TasksPanel'
 import Header from './Header'
 import SettingsClient from '@/app/settings/SettingsClient'
-import { CalendarDays, MessageCircle, CheckSquare } from 'lucide-react'
+import VoiceFAB from './VoiceFAB'
+import ChatOverlay from './ChatOverlay'
+import ToastContainer from './Toast'
+import { useChatEngine } from '@/hooks/useChatEngine'
+import { CalendarDays, CheckSquare } from 'lucide-react'
 import { registerCapacitorPush } from '@/lib/capacitor-push'
 
 interface Props {
@@ -24,11 +27,10 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set())
   const [theme, setTheme] = useState<'dark' | 'light'>(initialProfile?.theme ?? 'dark')
   const [isMobile, setIsMobile] = useState(false)
-  const [mobileTab, setMobileTab] = useState<'calendar' | 'tasks' | 'chat'>('calendar')
-  const [leftTab, setLeftTab] = useState<'calendar' | 'tasks'>('calendar')
+  const [mobileTab, setMobileTab] = useState<'calendar' | 'tasks'>('calendar')
   const [showSettings, setShowSettings] = useState(false)
-  // chatInput is used to pre-fill the chat input (e.g. from TasksPanel schedule button)
-  const [chatInput, setChatInput] = useState<string | undefined>(undefined)
+  const [chatOverlayOpen, setChatOverlayOpen] = useState(false)
+  const [aliveActive, setAliveActive] = useState(false)
 
   const language = profile?.language ?? 'en'
   const isRTL = language === 'he' || language === 'ar'
@@ -42,7 +44,6 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     document.documentElement.setAttribute('dir', isRTL ? 'rtl' : 'ltr')
   }, [language, isRTL])
 
-  // Responsive: detect mobile viewport
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768)
     check()
@@ -50,7 +51,6 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  // Register native push notifications when running inside Capacitor (Android/iOS)
   useEffect(() => {
     registerCapacitorPush(async (fcmToken) => {
       await fetch('/api/push/subscribe', {
@@ -61,7 +61,6 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     })
   }, [])
 
-  // Fetch + poll tasks — same cross-device sync pattern as events
   const fetchTasks = () => fetch('/api/tasks')
     .then(r => r.ok ? r.json() : null)
     .then(data => { if (data?.tasks) setTasks(data.tasks) })
@@ -71,7 +70,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     fetchTasks()
     const id = setInterval(fetchTasks, 30_000)
     return () => clearInterval(id)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleEventsUpdate = (updatedEvents: CalendarEvent[], addedIds?: string[]) => {
     setEvents(updatedEvents)
@@ -82,7 +81,6 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     }
   }
 
-  // Real-time sync: poll events every 30 s so changes on one device appear on others
   useEffect(() => {
     const poll = () => {
       fetch('/api/events')
@@ -112,23 +110,11 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     }).catch(() => {})
   }
 
-  const handleScheduleTask = (task: Task) => {
-    // Pre-fill the chat input with a scheduling request
-    const msg = language === 'he'
-      ? `קבע זמן לעשות: "${task.title}"${task.estimated_hours ? `, ${task.estimated_hours} שעות` : ''}${task.deadline ? `, עד ${task.deadline}` : ''}`
-      : `Schedule time for: "${task.title}"${task.estimated_hours ? `, ${task.estimated_hours}h` : ''}${task.deadline ? `, due ${task.deadline}` : ''}`
-    setChatInput(msg)
-    // Switch to chat
-    if (isMobile) setMobileTab('chat')
-  }
-
-  const handleAddTask = (text: string) => {
-    // Pre-fill chat with the task creation request and switch to chat
-    const msg = language === 'he'
-      ? `הוסף משימה: ${text}`
-      : `Add task: ${text}`
-    setChatInput(msg)
-    if (isMobile) setMobileTab('chat')
+  const handleProfileUpdate = (updated: UserProfile) => {
+    setProfile(updated)
+    const t = updated.theme ?? theme
+    setTheme(t)
+    document.documentElement.setAttribute('data-theme', t)
   }
 
   const toggleTheme = () => {
@@ -137,16 +123,46 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     setProfile(prev => prev ? { ...prev, theme: next } : prev)
   }
 
-  const handleProfileUpdate = (updated: UserProfile) => {
-    setProfile(updated)
-    const t = updated.theme ?? theme
-    setTheme(t)
-    document.documentElement.setAttribute('data-theme', t)
-  }
+  // ─── Chat Engine (shared between VoiceFAB and ChatOverlay) ────────────────
+  const chatEngine = useChatEngine({
+    user,
+    profile,
+    events,
+    tasks,
+    language,
+    onEventsUpdate: handleEventsUpdate,
+    onProfileUpdate: handleProfileUpdate,
+    onTasksUpdate: fetchTasks,
+    isOnboarding: needsOnboarding,
+    chatOverlayOpen,
+  })
 
-  const calLabel   = language === 'he' ? 'לוח שנה' : 'Calendar'
-  const tasksLabel = language === 'he' ? 'משימות'  : 'Tasks'
-  const chatLabel  = language === 'he' ? 'עוזר AI'  : 'Assistant'
+  // Task scheduling: auto-send via chat engine
+  const handleScheduleTask = useCallback((task: Task) => {
+    const msg = language === 'he'
+      ? `קבע זמן לעשות: "${task.title}"${task.estimated_hours ? `, ${task.estimated_hours} שעות` : ''}${task.deadline ? `, עד ${task.deadline}` : ''}`
+      : `Schedule time for: "${task.title}"${task.estimated_hours ? `, ${task.estimated_hours}h` : ''}${task.deadline ? `, due ${task.deadline}` : ''}`
+    chatEngine.sendMessage(msg)
+  }, [language, chatEngine])
+
+  const handleAddTask = useCallback((text: string) => {
+    const msg = language === 'he' ? `הוסף משימה: ${text}` : `Add task: ${text}`
+    chatEngine.sendMessage(msg)
+  }, [language, chatEngine])
+
+  // Auto-open chat overlay for onboarding
+  useEffect(() => {
+    if (needsOnboarding && chatEngine.isOnboarding) {
+      setChatOverlayOpen(true)
+    }
+  }, [needsOnboarding, chatEngine.isOnboarding])
+
+  const handleAliveChange = useCallback((alive: boolean) => {
+    setAliveActive(alive)
+  }, [])
+
+  const calLabel = language === 'he' ? 'לוח שנה' : 'Calendar'
+  const tasksLabel = language === 'he' ? 'משימות' : 'Tasks'
 
   const calendarPanel = (
     <CalendarPanel
@@ -170,24 +186,9 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     />
   )
 
-  const chatPanel = (
-    <ChatPanel
-      user={user}
-      profile={profile}
-      events={events}
-      tasks={tasks}
-      language={language}
-      onEventsUpdate={handleEventsUpdate}
-      onProfileUpdate={handleProfileUpdate}
-      onTasksUpdate={fetchTasks}
-      isOnboarding={needsOnboarding}
-      prefillInput={chatInput}
-      onPrefillConsumed={() => setChatInput(undefined)}
-    />
-  )
-
   return (
     <div
+      className={aliveActive ? 'alive-active' : ''}
       style={{
         display: 'flex', flexDirection: 'column', height: '100vh',
         background: 'transparent',
@@ -196,46 +197,26 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     >
       <Header user={user} profile={profile} language={language} onToggleTheme={toggleTheme} onOpenSettings={() => setShowSettings(true)} />
 
-      {/* Main content — always LTR so chat is always on the right */}
+      {/* Main content — always LTR so calendar is always on the left */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', direction: 'ltr' }}>
 
-        {/* ── Desktop layout ── */}
+        {/* ── Desktop layout: Calendar + Tasks side by side ── */}
         {!isMobile && (
           <>
-            {/* Left panel (Calendar or Tasks) */}
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              {/* Left tab bar */}
-              <div style={{
-                display: 'flex', gap: 2, padding: '10px 16px 0', flexShrink: 0,
-                borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)',
-              }}>
-                <LeftTabBtn
-                  active={leftTab === 'calendar'}
-                  label={calLabel}
-                  icon={<CalendarDays size={14} />}
-                  onClick={() => setLeftTab('calendar')}
-                />
-                <LeftTabBtn
-                  active={leftTab === 'tasks'}
-                  label={tasksLabel}
-                  icon={<CheckSquare size={14} />}
-                  onClick={() => setLeftTab('tasks')}
-                  badge={tasks.filter(t => t.status !== 'done').length}
-                />
-              </div>
-              <div style={{ flex: 1, overflow: 'hidden' }}>
-                {leftTab === 'calendar' ? calendarPanel : tasksPanel}
-              </div>
+            <div style={{ flex: 2, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              {calendarPanel}
             </div>
-
-            {/* Chat */}
-            <div style={{ width: 420, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '-1px 0 0 var(--border), -12px 0 32px rgba(0,0,0,0.35)' }}>
-              {chatPanel}
+            <div style={{
+              width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              borderLeft: '1px solid var(--border)',
+              boxShadow: '-4px 0 20px rgba(0,0,0,0.15)',
+            }}>
+              {tasksPanel}
             </div>
           </>
         )}
 
-        {/* ── Mobile layout ── */}
+        {/* ── Mobile layout: Calendar or Tasks ── */}
         {isMobile && (
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: mobileTab === 'calendar' ? 'block' : 'none', flex: 1, overflow: 'hidden', height: '100%' }}>
@@ -244,14 +225,11 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             <div style={{ display: mobileTab === 'tasks' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
               {tasksPanel}
             </div>
-            <div style={{ display: mobileTab === 'chat' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
-              {chatPanel}
-            </div>
           </div>
         )}
       </div>
 
-      {/* ── Mobile bottom tab bar ── */}
+      {/* ── Mobile bottom tab bar (2 tabs: Calendar + Tasks) ── */}
       {isMobile && (
         <div style={{
           display: 'flex', flexShrink: 0,
@@ -268,12 +246,6 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             onClick={() => setMobileTab('calendar')}
           />
           <MobileTab
-            active={mobileTab === 'chat'}
-            label={chatLabel}
-            icon={<MessageCircle size={22} />}
-            onClick={() => setMobileTab('chat')}
-          />
-          <MobileTab
             active={mobileTab === 'tasks'}
             label={tasksLabel}
             icon={<CheckSquare size={22} />}
@@ -281,6 +253,45 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             badge={tasks.filter(t => t.status !== 'done').length}
           />
         </div>
+      )}
+
+      {/* ── Alive overlay (screen glow during recording) ── */}
+      {aliveActive && <div className="alive-overlay" />}
+
+      {/* ── Voice FAB ── */}
+      <VoiceFAB
+        onSendMessage={chatEngine.sendMessage}
+        onOpenChat={() => setChatOverlayOpen(true)}
+        language={language}
+        isRTL={isRTL}
+        isMobile={isMobile}
+        onAliveChange={handleAliveChange}
+      />
+
+      {/* ── Toast notifications ── */}
+      <ToastContainer
+        toasts={chatEngine.toasts}
+        onDismiss={chatEngine.dismissToast}
+        onTap={() => setChatOverlayOpen(true)}
+        isRTL={isRTL}
+        isMobile={isMobile}
+      />
+
+      {/* ── Chat Overlay (double-tap to open) ── */}
+      {chatOverlayOpen && (
+        <ChatOverlay
+          messages={chatEngine.messages}
+          input={chatEngine.input}
+          setInput={chatEngine.setInput}
+          loading={chatEngine.loading}
+          streamingId={chatEngine.streamingId}
+          isOnboarding={chatEngine.isOnboarding}
+          language={language}
+          isMobile={isMobile}
+          onSend={chatEngine.sendMessage}
+          onClose={() => setChatOverlayOpen(false)}
+          onReset={chatEngine.resetChat}
+        />
       )}
 
       {showSettings && (
@@ -292,40 +303,6 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         />
       )}
     </div>
-  )
-}
-
-function LeftTabBtn({ active, label, icon, onClick, badge }: {
-  active: boolean
-  label: string
-  icon: React.ReactNode
-  onClick: () => void
-  badge?: number
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px 9px',
-        border: 'none', cursor: 'pointer', borderRadius: '8px 8px 0 0',
-        background: active ? 'var(--bg-card)' : 'transparent',
-        borderBottom: active ? '2px solid var(--blue)' : '2px solid transparent',
-        color: active ? 'var(--text)' : 'var(--text-2)',
-        fontSize: 12, fontWeight: active ? 700 : 500,
-        transition: 'all 0.15s', position: 'relative',
-      }}
-    >
-      {icon}
-      {label}
-      {badge !== undefined && badge > 0 && (
-        <span style={{
-          background: 'var(--blue)', color: '#fff', borderRadius: 10,
-          fontSize: 10, fontWeight: 700, padding: '1px 5px', lineHeight: '14px',
-        }}>
-          {badge}
-        </span>
-      )}
-    </button>
   )
 }
 
