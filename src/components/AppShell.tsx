@@ -11,7 +11,7 @@ import VoiceFAB from './VoiceFAB'
 import ChatOverlay from './ChatOverlay'
 import ToastContainer from './Toast'
 import { useChatEngine } from '@/hooks/useChatEngine'
-import { CalendarDays, CheckSquare, MessageCircle, Sun, Moon, Settings as SettingsIcon } from 'lucide-react'
+import { CalendarDays, CheckSquare, Sun, Moon, Settings as SettingsIcon } from 'lucide-react'
 import { AnimatePresence } from 'motion/react'
 import { registerCapacitorPush } from '@/lib/capacitor-push'
 
@@ -276,22 +276,16 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}>
           <MobileTab
-            active={mobileTab === 'calendar' && !chatOverlayOpen}
+            active={mobileTab === 'calendar'}
             label={calLabel}
             icon={<CalendarDays size={22} />}
-            onClick={() => { setMobileTab('calendar'); setChatOverlayOpen(false) }}
+            onClick={() => setMobileTab('calendar')}
           />
           <MobileTab
-            active={chatOverlayOpen}
-            label={language === 'he' ? 'עוזר AI' : 'Assistant'}
-            icon={<MessageCircle size={22} />}
-            onClick={() => setChatOverlayOpen(v => !v)}
-          />
-          <MobileTab
-            active={mobileTab === 'tasks' && !chatOverlayOpen}
+            active={mobileTab === 'tasks'}
             label={tasksLabel}
             icon={<CheckSquare size={22} />}
-            onClick={() => { setMobileTab('tasks'); setChatOverlayOpen(false) }}
+            onClick={() => setMobileTab('tasks')}
             badge={tasks.filter(t => t.status !== 'done').length}
           />
         </div>

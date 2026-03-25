@@ -192,8 +192,8 @@ Shared hook used by both `AppShell` and `ChatOverlay`. Handles:
 - Minimal top bar (Z logo + theme toggle + settings icon) — replaces full Header
 - One panel visible at a time: Calendar **or** Tasks
 - `mobileTab: 'calendar' | 'tasks'` controls which panel shows
-- **Bottom tab bar: 3 tabs** — 📅 Calendar | 💬 Assistant | ☑️ Tasks
-  - "Assistant" tab toggles `ChatOverlay` (bottom sheet, spring animation)
+- **Bottom tab bar: 2 tabs** — 📅 Calendar | ☑️ Tasks
+  - `ChatOverlay` opens via **double-tap on the VoiceFAB mic button** (no separate tab)
 - `isMobile = window.innerWidth < 768` + resize listener
 - Safe-area padding for iPhone home bar (`env(safe-area-inset-bottom)`)
 
@@ -205,8 +205,8 @@ Shared hook used by both `AppShell` and `ChatOverlay`. Handles:
 | Key | Desktop | Mobile |
 |---|---|---|
 | `timeGridDay` | ✅ | ✅ |
-| `timeGrid3Day` | ✅ | ❌ (removed — unreadable) |
-| `timeGridWeek` | ✅ | ❌ (removed — unreadable) |
+| `timeGrid3Day` | ✅ | ✅ |
+| `timeGridWeek` | ✅ | ❌ (removed — unreadable on small screen) |
 | `dayGridMonth` | ✅ | ✅ |
 
 - **Mobile default**: `timeGridDay`; **Desktop default**: `timeGridWeek`
@@ -290,11 +290,10 @@ The mobile layout is designed to look like a native iOS app, not a website.
 
 ### Mobile-specific layout
 - **Header**: Full `<Header>` is hidden on mobile. A minimal top bar replaces it (Z logo + theme toggle + settings icon).
-- **Bottom tab bar**: 3 tabs — Calendar | Assistant (AI Chat) | Tasks
-  - "Assistant" tab toggles the `ChatOverlay` (springs up from bottom)
+- **Bottom tab bar**: 2 tabs — Calendar | Tasks
   - Settings accessible via ⚙️ in the top bar
-- **VoiceFAB**: Floating mic button, positioned above the tab bar
-- **Calendar views on mobile**: Only `timeGridDay` (Day) and `dayGridMonth` (Month) — no 3-day or week view
+- **VoiceFAB**: Floating mic button, positioned above the tab bar; **double-tap opens ChatOverlay**
+- **Calendar views on mobile**: `timeGridDay` (Day), `timeGrid3Day` (3 Days), `dayGridMonth` (Month) — no week view
 - **View switcher**: iOS segmented control style (gray pill, white selected, subtle shadow)
 
 ### Mobile breakpoint

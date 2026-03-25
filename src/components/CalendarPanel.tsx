@@ -21,7 +21,7 @@ type ViewType = 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'timeGrid3Day'
 type FCType = React.ComponentType<any>
 
 const VIEW_ORDER_DESKTOP: ViewType[] = ['timeGridDay', 'timeGrid3Day', 'timeGridWeek', 'dayGridMonth']
-const VIEW_ORDER_MOBILE: ViewType[]  = ['timeGridDay', 'dayGridMonth']
+const VIEW_ORDER_MOBILE: ViewType[]  = ['timeGridDay', 'timeGrid3Day', 'dayGridMonth']
 
 const LABELS: Record<string, Record<ViewType, string>> = {
   en: { timeGridDay: 'Day', timeGrid3Day: '3 Days', timeGridWeek: 'Week', dayGridMonth: 'Month' },
