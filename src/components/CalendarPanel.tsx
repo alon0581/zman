@@ -120,24 +120,28 @@ export default function CalendarPanel({
         const scaleRatio = Math.hypot(dx, dy) / pinch.startDist
         const newH = Math.max(28, Math.min(110, Math.round(pinch.startHeight * scaleRatio)))
         if (newH !== slotHeightRef.current) {
-          // Capture scroll ratio NOW (before DOM changes) in a closure.
-          // Do NOT store in a mutable ref — a ref gets overwritten by the next move
-          // event before the rAF fires, causing the wrong time to be restored.
-          const scroller = el.querySelector('.fc-scroller') as HTMLElement | null
-          const scrollRatio = (scroller && scroller.scrollHeight > 0)
-            ? scroller.scrollTop / scroller.scrollHeight
-            : null
+          // Find the BODY scroller (the one with actual scrollable content).
+          // .fc-scroller matches multiple elements (axis + body); we want the
+          // one whose scrollHeight > clientHeight (i.e. has overflow content).
+          const bodyScroller = (Array.from(el.querySelectorAll('.fc-scroller')) as HTMLElement[])
+            .find(s => s.scrollHeight > s.clientHeight) ?? null
+
+          // Mathematical anchor: since all slots are equal height, total scrollHeight
+          // scales exactly with slotHeight.  newScrollTop = oldScrollTop × (newH/oldH).
+          // This avoids reading scrollHeight (which may not have updated yet in the DOM).
+          const oldScrollTop = bodyScroller?.scrollTop ?? 0
+          const oldH = slotHeightRef.current
+          const expectedScrollTop = Math.round(oldScrollTop * (newH / oldH))
 
           updateSlotHeight(newH)
 
-          // Cancel any pending scroll-restore from a previous move event,
-          // then queue a fresh double-rAF so FC has time to finish its layout.
-          if (scrollRatio !== null) {
+          // Cancel stale rAF, queue fresh double-rAF so FC finishes its layout first.
+          if (bodyScroller) {
+            const target = bodyScroller // close over the element
             cancelAnimationFrame(scrollAnchorRafRef.current)
             scrollAnchorRafRef.current = requestAnimationFrame(() => {
               scrollAnchorRafRef.current = requestAnimationFrame(() => {
-                const s = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
-                if (s && s.scrollHeight > 0) s.scrollTop = scrollRatio * s.scrollHeight
+                target.scrollTop = expectedScrollTop
               })
             })
           }
@@ -204,21 +208,22 @@ export default function CalendarPanel({
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return
       e.preventDefault()
-      const scroller = el.querySelector('.fc-scroller') as HTMLElement | null
-      const scrollRatio = (scroller && scroller.scrollHeight > 0)
-        ? scroller.scrollTop / scroller.scrollHeight
-        : null
+      const bodyScroller = (Array.from(el.querySelectorAll('.fc-scroller')) as HTMLElement[])
+        .find(s => s.scrollHeight > s.clientHeight) ?? null
+      const oldScrollTop = bodyScroller?.scrollTop ?? 0
+      const oldH = slotHeightRef.current
       // Scroll up (negative delta) = zoom in, scroll down = zoom out
       const delta = e.deltaY < 0 ? 4 : -4
-      const newH = Math.max(28, Math.min(110, slotHeightRef.current + delta))
-      if (newH !== slotHeightRef.current) {
+      const newH = Math.max(28, Math.min(110, oldH + delta))
+      if (newH !== oldH) {
+        const expectedScrollTop = Math.round(oldScrollTop * (newH / oldH))
         updateSlotHeight(newH)
-        if (scrollRatio !== null) {
+        if (bodyScroller) {
+          const target = bodyScroller
           cancelAnimationFrame(scrollAnchorRafRef.current)
           scrollAnchorRafRef.current = requestAnimationFrame(() => {
             scrollAnchorRafRef.current = requestAnimationFrame(() => {
-              const s = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
-              if (s && s.scrollHeight > 0) s.scrollTop = scrollRatio * s.scrollHeight
+              target.scrollTop = expectedScrollTop
             })
           })
         }

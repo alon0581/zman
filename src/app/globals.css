@@ -114,16 +114,16 @@ input  { touch-action: manipulation; }
   /* Slot height controlled by pinch-zoom CSS variable (mobile only) */
   .fc .fc-timegrid-slot { height: var(--fc-slot-height, 44px) !important; }
 
-  /* Day / 3-day view: full title wrap — enough column width */
-  .fc-timeGridDay-view .fc-event-title,
-  .fc-timeGrid3Day-view .fc-event-title {
+  /* Day / 3-day view: multi-line title (needs same 3-class specificity as the nowrap rule) */
+  .fc-timeGridDay-view .fc-timegrid-event .fc-event-title,
+  .fc-timeGrid3Day-view .fc-timegrid-event .fc-event-title {
     white-space: normal !important;
     word-break: break-word !important;
-    overflow: visible !important;
-  }
-  .fc-timeGridDay-view .fc-timegrid-event,
-  .fc-timeGrid3Day-view .fc-timegrid-event {
-    overflow: visible !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 3 !important;
+    -webkit-box-orient: vertical !important;
   }
 
   /* Week view: 7 narrow columns — hide time, ellipsis on title */
