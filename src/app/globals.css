@@ -197,6 +197,9 @@ input  { touch-action: manipulation; }
 /* Slot height: duplicate outside media query for wide-viewport WebView (Capacitor) */
 .fc .fc-timegrid-slot { height: var(--fc-slot-height, 44px); }
 
+/* Re-enable vertical scroll on FC's inner scroller when container has touch-action:none */
+.fc-scroller { touch-action: pan-y !important; -webkit-overflow-scrolling: touch !important; }
+
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar          { width: 3px; }
 ::-webkit-scrollbar-track    { background: transparent; }

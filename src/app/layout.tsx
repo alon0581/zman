@@ -21,6 +21,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,   // prevents iOS/Android from intercepting pinch for page-zoom
   themeColor: '#07070F',
   viewportFit: 'cover',
 }

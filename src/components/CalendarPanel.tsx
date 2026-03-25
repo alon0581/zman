@@ -81,7 +81,7 @@ export default function CalendarPanel({
     if (!el || !isMobile) return
 
     const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H }
-    const swipe = { startX: 0, startY: 0 }
+    const swipe = { startX: 0, startY: 0, triggered: false }
 
     const onStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
@@ -91,33 +91,44 @@ export default function CalendarPanel({
         pinch.startDist = Math.hypot(dx, dy)
         pinch.startHeight = slotHeightRef.current
         pinch.active = true
+        swipe.triggered = true // suppress swipe while pinching
       } else if (e.touches.length === 1) {
         swipe.startX = e.touches[0].clientX
         swipe.startY = e.touches[0].clientY
+        swipe.triggered = false
+        pinch.active = false
       }
     }
 
     const onMove = (e: TouchEvent) => {
-      if (!pinch.active || e.touches.length !== 2) return
-      e.preventDefault()
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
-      const ratio = Math.hypot(dx, dy) / pinch.startDist
-      const newH = Math.max(20, Math.min(120, Math.round(pinch.startHeight * ratio)))
-      updateSlotHeight(newH)
-    }
+      // ── Pinch: 2 fingers ──────────────────────────────────────────────────
+      if (e.touches.length === 2 && pinch.active) {
+        e.preventDefault()
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        const ratio = Math.hypot(dx, dy) / pinch.startDist
+        const newH = Math.max(20, Math.min(120, Math.round(pinch.startHeight * ratio)))
+        updateSlotHeight(newH)
+        return
+      }
 
-    const onEnd = (e: TouchEvent) => {
-      if (pinch.active) { pinch.active = false; return }
-      if (e.changedTouches.length === 1) {
-        const dx = e.changedTouches[0].clientX - swipe.startX
-        const dy = e.changedTouches[0].clientY - swipe.startY
-        // Horizontal swipe: must dominate vertical movement
+      // ── Swipe: 1 finger, detect early in move (not end) ──────────────────
+      // Detecting in onMove + calling preventDefault stops the browser from
+      // firing touchcancel (which would lose position data on horizontal swipe)
+      if (e.touches.length === 1 && !swipe.triggered) {
+        const dx = e.touches[0].clientX - swipe.startX
+        const dy = e.touches[0].clientY - swipe.startY
         if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          e.preventDefault()
+          swipe.triggered = true
           if (language === 'he') { dx > 0 ? goNext() : goPrev() }
           else                   { dx > 0 ? goPrev() : goNext() }
         }
       }
+    }
+
+    const onEnd = (e: TouchEvent) => {
+      if (pinch.active && e.touches.length < 2) { pinch.active = false }
     }
 
     // capture:true — we intercept BEFORE FullCalendar's internal handlers
@@ -351,7 +362,9 @@ export default function CalendarPanel({
         style={{
           flex: 1, overflow: 'hidden', padding: isMobile ? '6px 8px 8px' : '8px 16px 12px',
           '--fc-slot-height': `${slotHeight}px`,
-          touchAction: isMobile ? 'pan-y' : undefined,
+          // 'none' = browser handles NO gestures on this container → our JS handlers
+          // fire reliably. FC's inner .fc-scroller gets touch-action:pan-y via CSS.
+          touchAction: isMobile ? 'none' : undefined,
         } as React.CSSProperties}
       >
         <FC
