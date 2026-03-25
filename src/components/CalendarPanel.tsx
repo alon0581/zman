@@ -88,22 +88,28 @@ export default function CalendarPanel({
     const ratio = scrollRatioRef.current
     if (ratio === null) return
     scrollRatioRef.current = null
-    // After React re-renders with new slotHeight, restore proportional scroll position
-    const scroller = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
-    if (scroller) {
-      void scroller.scrollHeight // force layout recalculation
-      scroller.scrollTop = ratio * scroller.scrollHeight
-    }
+    // FullCalendar re-lays out its slots asynchronously after slotMinHeight changes.
+    // We must wait for the browser to paint the new DOM heights before scrolling.
+    // One rAF is enough for React → DOM; a second rAF ensures FC's own layout pass.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const scroller = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
+        if (scroller && scroller.scrollHeight > 0) {
+          scroller.scrollTop = ratio * scroller.scrollHeight
+        }
+      })
+    })
   }, [slotHeight])
 
   useEffect(() => {
     const el = containerRef.current
-    if (!el || !isMobile) return
+    if (!el) return
 
     const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H }
     const swipe = { startX: 0, startY: 0, triggered: false }
 
-    const onStart = (e: TouchEvent) => {
+    // ── Touch handlers (mobile) ──────────────────────────────────────────────
+    const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
         e.preventDefault()
         const dx = e.touches[0].clientX - e.touches[1].clientX
@@ -120,14 +126,14 @@ export default function CalendarPanel({
       }
     }
 
-    const onMove = (e: TouchEvent) => {
+    const onTouchMove = (e: TouchEvent) => {
       // ── Pinch: 2 fingers ──────────────────────────────────────────────────
       if (e.touches.length === 2 && pinch.active) {
         e.preventDefault()
         const dx = e.touches[0].clientX - e.touches[1].clientX
         const dy = e.touches[0].clientY - e.touches[1].clientY
         const ratio = Math.hypot(dx, dy) / pinch.startDist
-        const newH = Math.max(30, Math.min(120, Math.round(pinch.startHeight * ratio)))
+        const newH = Math.max(36, Math.min(92, Math.round(pinch.startHeight * ratio)))
         if (newH !== slotHeightRef.current) {
           // Save scroll ratio so useEffect can restore same visible time after re-render
           const scroller = el.querySelector('.fc-scroller') as HTMLElement | null
@@ -158,22 +164,83 @@ export default function CalendarPanel({
       }
     }
 
-    const onEnd = (e: TouchEvent) => {
+    const onTouchEnd = (e: TouchEvent) => {
       if (pinch.active && e.touches.length < 2) { pinch.active = false }
     }
 
-    // capture:true — we intercept BEFORE FullCalendar's internal handlers
-    // which may call stopPropagation() in bubble phase
-    el.addEventListener('touchstart', onStart, { passive: false, capture: true })
-    el.addEventListener('touchmove', onMove, { passive: false, capture: true })
-    el.addEventListener('touchend', onEnd, { passive: true, capture: true })
-    el.addEventListener('touchcancel', onEnd, { passive: true, capture: true })
+    // ── Mouse handlers (desktop swipe via drag) ──────────────────────────────
+    const mouse = { down: false, startX: 0, startY: 0, triggered: false }
+
+    const onMouseDown = (e: MouseEvent) => {
+      // Skip clicks on events — let FC handle those
+      if ((e.target as Element).closest('.fc-event')) return
+      mouse.down = true
+      mouse.startX = e.clientX
+      mouse.startY = e.clientY
+      mouse.triggered = false
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!mouse.down || mouse.triggered) return
+      const dx = e.clientX - mouse.startX
+      const dy = e.clientY - mouse.startY
+      // Higher threshold on desktop (mouse is more precise than touch)
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        mouse.triggered = true
+        const nudge = dx > 0 ? 28 : -28
+        setSwipeOffsetRef.current(nudge)
+        setTimeout(() => setSwipeOffsetRef.current(0), 60)
+        if (language === 'he') { dx > 0 ? goNext() : goPrev() }
+        else                   { dx > 0 ? goPrev() : goNext() }
+      }
+    }
+
+    const onMouseUp = () => {
+      mouse.down = false
+      mouse.triggered = false
+    }
+
+    // ── Wheel handler (desktop Ctrl+wheel = zoom, same as browser pinch) ─────
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      // Save scroll anchor before height change
+      const scroller = el.querySelector('.fc-scroller') as HTMLElement | null
+      if (scroller && scroller.scrollHeight > 0) {
+        scrollRatioRef.current = scroller.scrollTop / scroller.scrollHeight
+      }
+      // Scroll up (negative delta) = zoom in, scroll down = zoom out
+      const delta = e.deltaY < 0 ? 4 : -4
+      const newH = Math.max(36, Math.min(92, slotHeightRef.current + delta))
+      if (newH !== slotHeightRef.current) updateSlotHeight(newH)
+    }
+
+    if (isMobile) {
+      // capture:true — intercept BEFORE FullCalendar's internal handlers
+      // which may call stopPropagation() in bubble phase
+      el.addEventListener('touchstart', onTouchStart, { passive: false, capture: true })
+      el.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
+      el.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
+      el.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true })
+    } else {
+      el.addEventListener('mousedown', onMouseDown)
+      window.addEventListener('mousemove', onMouseMove)
+      window.addEventListener('mouseup', onMouseUp)
+      el.addEventListener('wheel', onWheel, { passive: false })
+    }
 
     return () => {
-      el.removeEventListener('touchstart', onStart, { capture: true })
-      el.removeEventListener('touchmove', onMove, { capture: true })
-      el.removeEventListener('touchend', onEnd, { capture: true })
-      el.removeEventListener('touchcancel', onEnd, { capture: true })
+      if (isMobile) {
+        el.removeEventListener('touchstart', onTouchStart, { capture: true })
+        el.removeEventListener('touchmove', onTouchMove, { capture: true })
+        el.removeEventListener('touchend', onTouchEnd, { capture: true })
+        el.removeEventListener('touchcancel', onTouchEnd, { capture: true })
+      } else {
+        el.removeEventListener('mousedown', onMouseDown)
+        window.removeEventListener('mousemove', onMouseMove)
+        window.removeEventListener('mouseup', onMouseUp)
+        el.removeEventListener('wheel', onWheel)
+      }
     }
   // plugins.length added: effect must re-run after FC loads dynamically.
   // On first render FC=null → containerRef is null (loading div shown) → effect exits early.

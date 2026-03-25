@@ -32,7 +32,6 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
   const t = T[lang]
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
-  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 300) }, [])
 
   return (
     <>

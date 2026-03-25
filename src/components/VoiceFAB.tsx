@@ -116,15 +116,17 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
 
     const now = Date.now()
 
-    // ── Double-tap detected ──────────────────────────────────────────────────
-    if (now - lastTapRef.current < 300) {
+    // ── Double-tap detected (450ms window) ──────────────────────────────────
+    if (now - lastTapRef.current < 450) {
       lastTapRef.current = 0
       // Cancel any pending single-tap recording that hasn't started yet
       if (singleTapTimerRef.current) {
         clearTimeout(singleTapTimerRef.current)
         singleTapTimerRef.current = null
       }
-      if (recording) stopRecording()
+      // Use ref (sync) not state (async) — avoids race where recording started
+      // but React hasn't re-rendered yet, making `recording` still false
+      if (activeRef.current) stopRecording()
       e.stopPropagation()
       setTimeout(() => onOpenChat(), 50)
       return
@@ -132,30 +134,30 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
 
     lastTapRef.current = now
 
-    // ── Stop recording if already active ────────────────────────────────────
-    if (recording) {
+    // ── Stop recording if already active (use ref for sync accuracy) ─────────
+    if (activeRef.current) {
       holdModeRef.current = false
       stopRecording()
       return
     }
 
-    // ── Delay recording start by 250ms — allows double-tap to cancel cleanly ─
-    pressStartRef.current = Date.now() + 250 // offset so hold timer is measured from actual start
+    // ── Delay recording start by 400ms — matches the 450ms double-tap window ─
+    pressStartRef.current = Date.now() + 400 // offset so hold timer is measured from actual start
     holdModeRef.current = false
     singleTapTimerRef.current = setTimeout(() => {
       singleTapTimerRef.current = null
       pressStartRef.current = Date.now()
       startRecording()
-    }, 250)
-  }, [recording, stopRecording, startRecording, onOpenChat])
+    }, 400)
+  }, [stopRecording, startRecording, onOpenChat])
 
   const handlePointerUp = useCallback(() => {
     const elapsed = Date.now() - pressStartRef.current
-    if (recording && elapsed >= 400) {
+    if (activeRef.current && elapsed >= 400) {
       holdModeRef.current = true
       stopRecording()
     }
-  }, [recording, stopRecording])
+  }, [stopRecording])
 
   const handlePointerLeave = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === 'mouse') handlePointerUp()
