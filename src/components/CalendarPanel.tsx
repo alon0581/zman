@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
 import { CalendarEvent } from '@/types'
 import { format, isSameDay, endOfDay } from 'date-fns'
 import { he as heLocale } from 'date-fns/locale'
@@ -76,6 +77,11 @@ export default function CalendarPanel({
   const goPrev = useCallback(() => calRef.current?.getApi().prev(), [])
   const goNext = useCallback(() => calRef.current?.getApi().next(), [])
 
+  // Swipe spring animation — brief nudge feedback on the inner FC wrapper
+  const [swipeOffset, setSwipeOffset] = useState(0)
+  // Stable ref so the touch useEffect closure can call setState without going stale
+  const setSwipeOffsetRef = useRef(setSwipeOffset)
+
   useEffect(() => {
     const el = containerRef.current
     if (!el || !isMobile) return
@@ -121,6 +127,10 @@ export default function CalendarPanel({
         if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
           e.preventDefault()
           swipe.triggered = true
+          // Spring nudge feedback: briefly push in swipe direction then snap to 0
+          const nudge = dx > 0 ? 28 : -28
+          setSwipeOffsetRef.current(nudge)
+          setTimeout(() => setSwipeOffsetRef.current(0), 60)
           if (language === 'he') { dx > 0 ? goNext() : goPrev() }
           else                   { dx > 0 ? goPrev() : goNext() }
         }
@@ -277,18 +287,28 @@ export default function CalendarPanel({
               </button>
             )}
 
-            <div style={{ minWidth: 0 }}>
-              <div style={{
-                fontSize: isMobile ? 20 : 26, fontWeight: 800,
-                letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1,
-                whiteSpace: 'nowrap',
-                direction: language === 'he' ? 'rtl' : 'ltr',
-              }}>
-                {monthTitle}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3, fontWeight: 400, letterSpacing: '-0.01em' }}>
-                {subs[view] ?? subs.timeGridWeek}
-              </div>
+            <div style={{ minWidth: 0, overflow: 'hidden' }}>
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={format(currentDate, 'yyyy-MM-dd')}
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  <div style={{
+                    fontSize: isMobile ? 20 : 26, fontWeight: 800,
+                    letterSpacing: '-0.03em', color: 'var(--text)', lineHeight: 1,
+                    whiteSpace: 'nowrap',
+                    direction: language === 'he' ? 'rtl' : 'ltr',
+                  }}>
+                    {monthTitle}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 3, fontWeight: 400, letterSpacing: '-0.01em' }}>
+                    {subs[view] ?? subs.timeGridWeek}
+                  </div>
+                </motion.div>
+              </AnimatePresence>
             </div>
 
             {/* Next: only on desktop — mobile uses swipe */}
@@ -323,9 +343,10 @@ export default function CalendarPanel({
             )}
           </div>
 
-          {/* View switcher — iOS segmented control style on mobile, web style on desktop */}
+          {/* View switcher — iOS segmented control on mobile, gradient buttons on desktop */}
           <div style={{
             display: 'flex',
+            position: 'relative',
             background: isMobile ? 'rgba(118,118,128,0.18)' : 'var(--bg-card)',
             borderRadius: isMobile ? 9 : 10,
             padding: isMobile ? 2 : 3,
@@ -334,26 +355,48 @@ export default function CalendarPanel({
             flexShrink: 0,
           }}>
             {(isMobile ? VIEW_ORDER_MOBILE : VIEW_ORDER_DESKTOP).map(v => (
-              <button key={v} onClick={() => setView(v)}
+              <motion.button
+                key={v}
+                onClick={() => setView(v)}
+                whileTap={{ scale: 0.92 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                 style={{
+                  position: 'relative',
                   padding: isMobile ? '5px 14px' : '5px 12px',
                   borderRadius: isMobile ? 7 : 8,
                   border: 'none', cursor: 'pointer',
                   fontSize: isMobile ? 13 : 12, fontWeight: 600,
-                  background: view === v
-                    ? (isMobile ? 'var(--bg-panel)' : 'linear-gradient(135deg,#3B7EF7,#6366F1)')
-                    : 'transparent',
+                  background: 'transparent',
                   color: view === v
                     ? (isMobile ? 'var(--text)' : '#fff')
                     : 'var(--text-2)',
-                  boxShadow: view === v
-                    ? (isMobile ? '0 1px 4px rgba(0,0,0,0.28)' : 'var(--blue-glow)')
-                    : 'none',
-                  transition: 'all 0.15s',
                   whiteSpace: 'nowrap',
-                }}>
+                  zIndex: 1,
+                  WebkitUserSelect: 'none',
+                  userSelect: 'none',
+                }}
+              >
+                {/* Sliding active pill — shared layoutId animates between buttons */}
+                {view === v && (
+                  <motion.span
+                    layoutId="view-pill"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      borderRadius: isMobile ? 7 : 8,
+                      background: isMobile
+                        ? 'var(--bg-panel)'
+                        : 'linear-gradient(135deg,#3B7EF7,#6366F1)',
+                      boxShadow: isMobile
+                        ? '0 1px 4px rgba(0,0,0,0.28)'
+                        : 'var(--blue-glow)',
+                      zIndex: -1,
+                    }}
+                    transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                  />
+                )}
                 {labels[v] ?? v}
-              </button>
+              </motion.button>
             ))}
           </div>
         </div>
@@ -365,11 +408,15 @@ export default function CalendarPanel({
         style={{
           flex: 1, overflow: 'hidden', padding: isMobile ? '6px 8px 8px' : '8px 16px 12px',
           '--fc-slot-height': `${slotHeight}px`,
-          // 'none' = browser handles NO gestures on this container → our JS handlers
-          // fire reliably. FC's inner .fc-scroller gets touch-action:pan-y via CSS.
           touchAction: isMobile ? 'none' : undefined,
         } as React.CSSProperties}
       >
+        {/* Inner motion wrapper: spring nudge on swipe, smooth height on pinch */}
+        <motion.div
+          animate={{ x: swipeOffset }}
+          transition={{ type: 'spring', stiffness: 500, damping: 35, mass: 0.6 }}
+          style={{ height: '100%', willChange: 'transform' }}
+        >
         <FC
           ref={calRef}
           plugins={plugins}
@@ -436,6 +483,7 @@ export default function CalendarPanel({
             },
           }}
         />
+        </motion.div>
       </div>
 
       {/* Event popup */}
