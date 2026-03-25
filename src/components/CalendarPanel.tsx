@@ -21,7 +21,7 @@ type ViewType = 'dayGridMonth' | 'timeGridWeek' | 'timeGridDay' | 'timeGrid3Day'
 type FCType = React.ComponentType<any>
 
 const VIEW_ORDER_DESKTOP: ViewType[] = ['timeGridDay', 'timeGrid3Day', 'timeGridWeek', 'dayGridMonth']
-const VIEW_ORDER_MOBILE: ViewType[]  = ['timeGridDay', 'timeGrid3Day', 'dayGridMonth']
+const VIEW_ORDER_MOBILE: ViewType[]  = ['timeGridDay', 'dayGridMonth']
 
 const LABELS: Record<string, Record<ViewType, string>> = {
   en: { timeGridDay: 'Day', timeGrid3Day: '3 Days', timeGridWeek: 'Week', dayGridMonth: 'Month' },
@@ -307,21 +307,33 @@ export default function CalendarPanel({
             )}
           </div>
 
-          {/* View switcher — week tab only on desktop */}
+          {/* View switcher — iOS segmented control style on mobile, web style on desktop */}
           <div style={{
-            display: 'flex', background: 'var(--bg-card)',
-            borderRadius: 10, padding: 3, border: '1px solid var(--border)', gap: 2, flexShrink: 0,
+            display: 'flex',
+            background: isMobile ? 'rgba(118,118,128,0.18)' : 'var(--bg-card)',
+            borderRadius: isMobile ? 9 : 10,
+            padding: isMobile ? 2 : 3,
+            border: isMobile ? 'none' : '1px solid var(--border)',
+            gap: isMobile ? 1 : 2,
+            flexShrink: 0,
           }}>
             {(isMobile ? VIEW_ORDER_MOBILE : VIEW_ORDER_DESKTOP).map(v => (
               <button key={v} onClick={() => setView(v)}
                 style={{
-                  padding: isMobile ? '5px 8px' : '5px 12px',
-                  borderRadius: 8, border: 'none', cursor: 'pointer',
-                  fontSize: isMobile ? 11 : 12, fontWeight: 600,
-                  background: view === v ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'transparent',
-                  color: view === v ? '#fff' : 'var(--text-2)',
-                  boxShadow: view === v ? 'var(--blue-glow)' : 'none',
-                  transition: 'all var(--t-base)',
+                  padding: isMobile ? '5px 14px' : '5px 12px',
+                  borderRadius: isMobile ? 7 : 8,
+                  border: 'none', cursor: 'pointer',
+                  fontSize: isMobile ? 13 : 12, fontWeight: 600,
+                  background: view === v
+                    ? (isMobile ? 'var(--bg-panel)' : 'linear-gradient(135deg,#3B7EF7,#6366F1)')
+                    : 'transparent',
+                  color: view === v
+                    ? (isMobile ? 'var(--text)' : '#fff')
+                    : 'var(--text-2)',
+                  boxShadow: view === v
+                    ? (isMobile ? '0 1px 4px rgba(0,0,0,0.28)' : 'var(--blue-glow)')
+                    : 'none',
+                  transition: 'all 0.15s',
                   whiteSpace: 'nowrap',
                 }}>
                 {labels[v] ?? v}

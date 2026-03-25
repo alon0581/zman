@@ -11,7 +11,7 @@ import VoiceFAB from './VoiceFAB'
 import ChatOverlay from './ChatOverlay'
 import ToastContainer from './Toast'
 import { useChatEngine } from '@/hooks/useChatEngine'
-import { CalendarDays, CheckSquare } from 'lucide-react'
+import { CalendarDays, CheckSquare, MessageCircle, Sun, Moon, Settings as SettingsIcon } from 'lucide-react'
 import { AnimatePresence } from 'motion/react'
 import { registerCapacitorPush } from '@/lib/capacitor-push'
 
@@ -196,7 +196,42 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         fontFamily: 'var(--font-inter, system-ui, sans-serif)',
       }}
     >
-      <Header user={user} profile={profile} language={language} onToggleTheme={toggleTheme} onOpenSettings={() => setShowSettings(true)} />
+      {/* Desktop header — hidden on mobile (too website-y on small screens) */}
+      {!isMobile && (
+        <Header user={user} profile={profile} language={language} onToggleTheme={toggleTheme} onOpenSettings={() => setShowSettings(true)} />
+      )}
+
+      {/* Mobile top bar — minimal native-style, replaces full Header */}
+      {isMobile && (
+        <div style={{
+          height: 'calc(52px + env(safe-area-inset-top, 0px))',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: 'env(safe-area-inset-top, 0px) 16px 0',
+          background: 'var(--bg-panel)',
+          backdropFilter: 'blur(28px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+          borderBottom: '1px solid var(--border)',
+          flexShrink: 0, direction: 'ltr', zIndex: 20,
+        } as React.CSSProperties}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: 9, background: 'linear-gradient(135deg,#3B7EF7,#6366F1)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 13, fontWeight: 900, color: '#fff',
+              boxShadow: '0 3px 10px rgba(59,126,247,0.45)',
+            }}>Z</div>
+            <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: '-0.03em', color: 'var(--text)' }}>Zman</span>
+          </div>
+          <div style={{ display: 'flex', gap: 2 }}>
+            <MobileIconBtn onClick={toggleTheme}>
+              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            </MobileIconBtn>
+            <MobileIconBtn onClick={() => setShowSettings(true)}>
+              <SettingsIcon size={18} />
+            </MobileIconBtn>
+          </div>
+        </div>
+      )}
 
       {/* Main content — always LTR so calendar is always on the left */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', direction: 'ltr' }}>
@@ -230,27 +265,33 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         )}
       </div>
 
-      {/* ── Mobile bottom tab bar (2 tabs: Calendar + Tasks) ── */}
+      {/* ── Mobile bottom tab bar (3 tabs: Calendar | Chat | Tasks) ── */}
       {isMobile && (
         <div style={{
           display: 'flex', flexShrink: 0,
-          background: 'rgba(10,10,15,0.95)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
+          background: 'var(--bg-panel)',
+          backdropFilter: 'blur(28px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(28px) saturate(180%)',
           borderTop: '1px solid var(--border)',
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}>
           <MobileTab
-            active={mobileTab === 'calendar'}
+            active={mobileTab === 'calendar' && !chatOverlayOpen}
             label={calLabel}
             icon={<CalendarDays size={22} />}
-            onClick={() => setMobileTab('calendar')}
+            onClick={() => { setMobileTab('calendar'); setChatOverlayOpen(false) }}
           />
           <MobileTab
-            active={mobileTab === 'tasks'}
+            active={chatOverlayOpen}
+            label={language === 'he' ? 'עוזר AI' : 'Assistant'}
+            icon={<MessageCircle size={22} />}
+            onClick={() => setChatOverlayOpen(v => !v)}
+          />
+          <MobileTab
+            active={mobileTab === 'tasks' && !chatOverlayOpen}
             label={tasksLabel}
             icon={<CheckSquare size={22} />}
-            onClick={() => setMobileTab('tasks')}
+            onClick={() => { setMobileTab('tasks'); setChatOverlayOpen(false) }}
             badge={tasks.filter(t => t.status !== 'done').length}
           />
         </div>
@@ -306,6 +347,18 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         />
       )}
     </div>
+  )
+}
+
+function MobileIconBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      width: 38, height: 38, borderRadius: 10, border: 'none',
+      background: 'transparent', color: 'var(--text-2)', cursor: 'pointer',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      {children}
+    </button>
   )
 }
 

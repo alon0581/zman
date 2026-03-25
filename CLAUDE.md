@@ -20,7 +20,8 @@ The AI assistant (GPT-4o-mini) can create/move/delete calendar events via tool c
 | UI | React 19, Tailwind CSS v4, Lucide icons |
 | Calendar | FullCalendar 6 (`daygrid`, `timegrid`, `interaction`, `list`) |
 | AI | OpenAI SDK (`openai` v6) — GPT-4o-mini |
-| Auth / DB | Supabase (`@supabase/supabase-js` v2) |
+| Auth | File-based (`crypto.scryptSync` + HMAC, no external service) |
+| DB | File system (`data/users/{id}/`) — Supabase optional/legacy |
 | Date utils | `date-fns` v4 |
 | Run | `npm run dev` (port 3000) |
 | Lint / Check | `npx tsc --noEmit` |
@@ -62,11 +63,15 @@ src/
       demo-profile/route.ts     — GET/POST: demo profile read/write
       onboarding/route.ts       — POST: save onboarding data
   components/
-    AppShell.tsx                — Layout shell: Header + CalendarPanel + ChatPanel
-    CalendarPanel.tsx           — FullCalendar wrapper with EventPopup integration
-    ChatPanel.tsx               — AI chat with mic (hold/toggle dual-mode)
-    EventPopup.tsx              — Apple Calendar-style event editor popup
-    Header.tsx                  — Top nav (theme toggle, language, user)
+    AppShell.tsx                — Layout shell (desktop: Header+Calendar+Tasks; mobile: minimal top bar + 3-tab bar)
+    CalendarPanel.tsx           — FullCalendar wrapper with EventPopup + pinch-to-zoom + swipe
+    ChatOverlay.tsx             — Floating chat panel (desktop: side drawer; mobile: bottom sheet)
+    ChatPanel.tsx               — ⚠️ UNUSED — was replaced by ChatOverlay + VoiceFAB
+    EventPopup.tsx              — Apple Calendar-style inline event editor popup
+    Header.tsx                  — Top nav (desktop only; hidden on mobile)
+    TasksPanel.tsx              — Task list with AI scheduling
+    Toast.tsx                   — Notification toasts (Motion spring animations)
+    VoiceFAB.tsx                — Floating mic button (hold=auto-send, tap=edit mode)
     OnboardingModal.tsx         — First-run onboarding form
   lib/
     ai/
@@ -143,59 +148,53 @@ The core AI logic lives here. Flow:
 
 ---
 
-## Mic Dual-Mode (`src/components/ChatPanel.tsx`)
+## Mic (`src/components/VoiceFAB.tsx`)
 
-The mic button supports two modes:
-- **Hold** (press & hold → speak → release) → transcription **auto-sends** to chat
-- **Toggle** (tap once → speak → tap again) → transcription appears **in input** for editing
+Floating action button — handles all voice input.
 
-### Refs used
-```ts
-isHoldingRef  // true while pointer is pressed
-holdModeRef   // true = hold mode (set at rec.start() time)
-sendMsgRef    // ref to latest sendMessage (avoids stale closure in onstop)
-```
+- **Hold** (press & hold ≥400ms → speak → release) → transcription **auto-sends** to chat
+- **Tap** (quick press → speak → tap again) → transcription appears **in input** for editing
+- **Double-tap** → opens ChatOverlay
 
-### Guards in `onstop`
-- Ignores recordings shorter than **600ms**
-- Ignores blobs smaller than **3 KB** (near-silence)
-
-### Button events
-```tsx
-onPointerDown={handlePointerDown}
-onPointerUp={handlePointerUp}
-onPointerLeave={handlePointerUp}   // drag off = same as release
-disabled={micPending}
-```
+### Guards
+- Ignores blobs smaller than **1 KB** (near-silence)
+- `cachedStreamRef` — reuses the same `MediaStream` to avoid repeated permission prompts
 
 ---
 
-## ChatPanel SSE Reader
+## Chat Engine (`src/hooks/useChatEngine.ts`)
 
-Parses `text/event-stream` line by line:
-```
-{ type: 'events', createdEvents, updatedEvents, deletedEventIds }  → store for later
-{ type: 'text', content: '...' }  → append to streaming message
-{ type: 'done' }  → apply event updates to calendar
-{ type: 'error' }  → show error message
-```
+Shared hook used by both `AppShell` and `ChatOverlay`. Handles:
+- Message state + streaming SSE reader
+- Tool call results → calendar/task updates
+- Toast notifications
+- Onboarding flow
 
-**Important**: Lines 138-141 in ChatPanel.tsx show a `'Done!'` fallback if streaming never started — this is intentional for edge cases but should rarely trigger.
+### SSE stream format
+```
+{ type: 'events', createdEvents, updatedEvents, deletedEventIds }
+{ type: 'text', content: '...' }   → streamed AI text
+{ type: 'done' }
+{ type: 'error' }
+```
 
 ---
 
 ## Responsive Layout (`src/components/AppShell.tsx`)
 
 ### Desktop (≥ 768px)
-- Side-by-side: **Calendar** (flex:1) on the left · **Chat** (420px) on the right
-- Layout wrapper always uses `direction: 'ltr'` so chat is always on the right regardless of RTL language
-- Header also uses `direction: 'ltr'` so logo is always left, actions always right
+- Full `<Header>` at top
+- Side-by-side: **Calendar** (flex:2) on the left · **Tasks** (340px) on the right
+- `ChatOverlay` opens as a side drawer (spring animation from right/left)
+- Layout wrapper always uses `direction: 'ltr'`
 
 ### Mobile (< 768px)
-- One panel visible at a time (Calendar or Chat)
-- Bottom tab bar with two tabs: 📅 Calendar / 💬 Assistant
-- `isMobile` state set via `window.innerWidth < 768` + resize listener
-- `mobileTab: 'calendar' | 'chat'` state controls which panel is shown
+- Minimal top bar (Z logo + theme toggle + settings icon) — replaces full Header
+- One panel visible at a time: Calendar **or** Tasks
+- `mobileTab: 'calendar' | 'tasks'` controls which panel shows
+- **Bottom tab bar: 3 tabs** — 📅 Calendar | 💬 Assistant | ☑️ Tasks
+  - "Assistant" tab toggles `ChatOverlay` (bottom sheet, spring animation)
+- `isMobile = window.innerWidth < 768` + resize listener
 - Safe-area padding for iPhone home bar (`env(safe-area-inset-bottom)`)
 
 ---
@@ -203,15 +202,15 @@ Parses `text/event-stream` line by line:
 ## CalendarPanel (`src/components/CalendarPanel.tsx`)
 
 ### Views
-| Key | Label (HE) | Label (EN) |
+| Key | Desktop | Mobile |
 |---|---|---|
-| `timeGridDay` | יום | Day |
-| `timeGrid3Day` | 3 ימים | 3 Days |
-| `timeGridWeek` | שבוע | Week |
-| `dayGridMonth` | חודש | Month |
+| `timeGridDay` | ✅ | ✅ |
+| `timeGrid3Day` | ✅ | ❌ (removed — unreadable) |
+| `timeGridWeek` | ✅ | ❌ (removed — unreadable) |
+| `dayGridMonth` | ✅ | ✅ |
 
-- Custom `timeGrid3Day` view defined via FC `views` prop (`type: 'timeGrid', duration: { days: 3 }`)
-- **Mobile default**: `timeGrid3Day`; **Desktop default**: `timeGridWeek`
+- **Mobile default**: `timeGridDay`; **Desktop default**: `timeGridWeek`
+- Custom `timeGrid3Day` view: `type: 'timeGrid', duration: { days: 3 }`
 - Accepts `isMobile?: boolean` prop from AppShell
 
 ### Navigation
@@ -268,12 +267,47 @@ CSS variables are toggled via `data-theme="dark"` / `data-theme="light"` on `<ht
 
 ---
 
-## Pending / Known Issues (as of 2026-03-16)
+## Motion Animations (`motion/react` v12)
+
+All animations use spring physics via the `motion/react` package (Framer Motion v12).
+
+| Component | Animation |
+|---|---|
+| `Toast.tsx` | `AnimatePresence` + spring slide-in/out (replaces CSS `toastSlideIn`) |
+| `ChatOverlay.tsx` | Desktop: spring drawer from side; Mobile: spring sheet from bottom |
+| `VoiceFAB.tsx` | `motion.button` with `whileTap`, animated bg/shadow, icon crossfade |
+| `LandingClient.tsx` | `whileInView` stagger for features/steps, clip-path title reveal |
+| `TasksPanel.tsx` | `layout` + stagger + exit animations for task list |
+| `AppShell.tsx` | `AnimatePresence` wrapping `ChatOverlay` |
+
+CSS keyframes removed: `toastSlideIn`, `backdropFadeIn`, `drawerSlideIn`, `sheetSlideUp`.
+
+---
+
+## Mobile UI (Native App Feel)
+
+The mobile layout is designed to look like a native iOS app, not a website.
+
+### Mobile-specific layout
+- **Header**: Full `<Header>` is hidden on mobile. A minimal top bar replaces it (Z logo + theme toggle + settings icon).
+- **Bottom tab bar**: 3 tabs — Calendar | Assistant (AI Chat) | Tasks
+  - "Assistant" tab toggles the `ChatOverlay` (springs up from bottom)
+  - Settings accessible via ⚙️ in the top bar
+- **VoiceFAB**: Floating mic button, positioned above the tab bar
+- **Calendar views on mobile**: Only `timeGridDay` (Day) and `dayGridMonth` (Month) — no 3-day or week view
+- **View switcher**: iOS segmented control style (gray pill, white selected, subtle shadow)
+
+### Mobile breakpoint
+`isMobile = window.innerWidth < 768`
+
+---
+
+## Pending / Known Issues (as of 2026-03-25)
 
 | # | Issue | File | Status |
 |---|---|---|---|
 | 1 | AI sometimes returns "Done!" with no content | `ChatPanel.tsx` L138-141 | Fallback — rare edge case |
-| 2 | EventPopup: investigate if `PUT /api/events/[id]` exists | `src/app/api/events/[id]/route.ts` | Check if implemented |
+| 2 | Push notifications require real Firebase project | `android/app/google-services.json` | Placeholder in place; real setup needed |
 | 3 | Work hours from profile not always respected | `get_free_slots` in route.ts | Implemented via `preferred_hours`/`wake_time`/`sleep_time` |
 
 ---
@@ -312,7 +346,7 @@ Both Header and SettingsClient call `POST /api/auth/logout` then redirect to `/l
 ### Login page (`src/app/login/page.tsx`)
 - Tab switcher: **כניסה** (login) / **הרשמה** (register)
 - Email + password form → POST to `/api/auth/login` or `/api/auth/register`
-- On success → `router.push('/')` + `router.refresh()`
+- On success → `window.location.href = '/app'`
 - Error displayed inline in Hebrew
 
 ---
@@ -328,44 +362,110 @@ npm run lint       # eslint
 
 ---
 
-## Capacitor (Android/iOS Native App)
+## Platforms
 
-**Approach:** `server.url` in `capacitor.config.ts` points to Railway. The native app loads Railway in a native WebView. No static export needed.
+Zman runs on **three platforms**. All share the same Railway backend. Capacitor wraps Railway in a native WebView — no static export needed.
 
-**Key benefit:** Mic permission is remembered permanently (per-app, not per-session like Safari).
+---
 
-### Setup Status
-- ✅ Capacitor 8 installed (`@capacitor/core`, `@capacitor/android`)
-- ✅ Android project generated (`/android/`)
-- ✅ `@capacitor/push-notifications`, `@capacitor/splash-screen`, `@capacitor/status-bar` installed
-- ✅ `firebase-admin` installed for server-side FCM push
-- ⏳ Firebase project needed (see below)
-- ⏳ Update `server.url` in `capacitor.config.ts` to actual Railway URL
-- ⏳ iOS: requires macOS + Xcode
+### Platform 1: Browser / PWA
 
-### To Build Android APK
+| Item | Value |
+|---|---|
+| URL | `https://zman-production.up.railway.app` |
+| Push | VAPID web-push via `web-push` npm package |
+| Auth | `zman_session` HttpOnly cookie |
+| Mic | Requires permission per browser session (Safari resets each time) |
+| Status | ✅ Live on Railway |
 
-1. **Set Railway URL** in `capacitor.config.ts`:
-   ```ts
-   server: { url: 'https://YOUR-APP.up.railway.app' }
-   ```
+**Push flow:** `Header.tsx` → `Notification.requestPermission()` → `reg.pushManager.subscribe()` → `POST /api/push/subscribe`
 
-2. **Firebase setup** (for native push notifications):
-   - Go to https://console.firebase.google.com → create project "Zman"
-   - Add Android app with package `com.zman.app`
-   - Download `google-services.json` → put in `android/app/`
-   - Go to Project Settings → Service Accounts → Generate new private key
-   - Add to Railway env: `FIREBASE_SERVICE_ACCOUNT=<JSON string>`
+---
 
-3. **Sync and open Android Studio:**
-   ```bash
-   npx cap sync android
-   npx cap open android
-   ```
+### Platform 2: Android APK (Capacitor 8)
 
-4. **In Android Studio:** Build → Generate Signed APK (or Run on connected device)
+| Item | Value |
+|---|---|
+| Package | `com.zman.app` |
+| Loads | Railway URL in native WebView |
+| Mic | Permission remembered permanently (key advantage over browser) |
+| Push | FCM via `@capacitor/push-notifications` |
+| Status | ✅ Debug APK built — `Desktop/zman-debug.apk` (5.9MB) |
 
-### Push Notification Flow
-- **Native (Capacitor):** `registerCapacitorPush()` in AppShell → FCM token → `POST /api/push/subscribe` with `type:'fcm'` → stored as `fcm_token` in profile → `sendFcmPush()` via Firebase Admin
-- **Browser (PWA):** VAPID web-push via `web-push` npm package (unchanged)
-- Both are supported simultaneously; FCM takes priority in `send_notification` tool
+**Build prerequisites (installed on this machine):**
+| Tool | Location |
+|---|---|
+| JDK 21 (Amazon Corretto) | `C:\Program Files\Amazon Corretto\jdk21.0.10_7` |
+| Android SDK | `C:\android-sdk` |
+| Platform | `android-36` |
+| Build Tools | `36.0.0` |
+
+**To build debug APK:**
+```bash
+npx cap sync android
+
+powershell -Command "
+  \$env:JAVA_HOME = 'C:\Program Files\Amazon Corretto\jdk21.0.10_7'
+  \$env:ANDROID_SDK_ROOT = 'C:\android-sdk'
+  \$env:PATH = \$env:JAVA_HOME + '\bin;' + \$env:PATH
+  Set-Location 'C:\Users\6946~1\Desktop\test\zman\android'
+  & .\gradlew.bat assembleDebug
+"
+# Output: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Known issues / gotchas:**
+- `android/gradle.properties` must contain `android.overridePathCheck=true` (Hebrew path in project dir)
+- `android/app/google-services.json` — placeholder exists; replace with real file for actual FCM push
+- Without `google-services.json`, the app crashes after login (Firebase init failure at runtime)
+
+**To set up real Firebase push:**
+1. https://console.firebase.google.com → create project "Zman"
+2. Add Android app with package `com.zman.app`
+3. Download `google-services.json` → replace `android/app/google-services.json`
+4. Project Settings → Service Accounts → Generate private key → Railway env: `FIREBASE_SERVICE_ACCOUNT=<JSON>`
+
+**Push flow:** `registerCapacitorPush()` in AppShell → FCM token → `POST /api/push/subscribe` `{type:'fcm'}` → stored in profile → `sendFcmPush()` via Firebase Admin
+
+---
+
+### Platform 3: iOS (AltStore Sideload)
+
+| Item | Value |
+|---|---|
+| Package | `com.zman.app` (same as Android) |
+| Loads | Railway URL in WKWebView |
+| Mic | Permission remembered permanently |
+| Push | APNs via `@capacitor/push-notifications` |
+| Status | ✅ Sideloaded via AltStore (no paid Apple Developer account) |
+
+**Approach:** GitHub Actions builds the IPA (free macOS runners) → AltStore installs it via AltServer on Windows.
+
+**Requirements:**
+- Regular Apple ID (free) — no $99/year Developer Account needed
+- AltServer installed on Windows (from altstore.io)
+- iPhone connected via USB when refreshing
+- IPA expires every **7 days** → AltStore auto-refreshes when AltServer is running on the PC
+
+**Build flow:**
+1. GitHub Actions CI (macOS runner) builds IPA via `xcodebuild`
+2. IPA downloaded from GitHub Actions artifacts
+3. AltServer on Windows → "Sideload .ipa" → selects IPA → installs to iPhone
+
+**Refresh flow:**
+- AltServer runs in Windows system tray
+- iPhone on same WiFi or connected via USB
+- AltStore auto-refreshes before 7-day expiry
+
+**Push flow (iOS):** Same Capacitor plugin — `PushNotifications.register()` → APNs token → `POST /api/push/subscribe` `{type:'fcm'}` → Firebase handles APNs delivery
+
+---
+
+### Push Notification Summary
+| Platform | Method | Status |
+|---|---|---|
+| Browser | VAPID web-push | ✅ Working |
+| Android | FCM (Firebase Cloud Messaging) | ⏳ Needs real `google-services.json` |
+| iOS | APNs via Firebase | ⏳ Needs Xcode + `GoogleService-Info.plist` |
+
+Both native platforms use the same `registerCapacitorPush()` function in `AppShell.tsx`. FCM takes priority over VAPID in the `send_notification` AI tool.
