@@ -192,7 +192,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       className={aliveActive ? 'alive-active' : ''}
       style={{
         display: 'flex', flexDirection: 'column',
-        height: '100dvh',  /* dvh = dynamic viewport height — fixes Android cut-off */
+        height: '100vh',
         background: 'transparent',
         fontFamily: 'var(--font-inter, system-ui, sans-serif)',
       }}
