@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { motion, AnimatePresence } from 'motion/react'
 import { CalendarEvent } from '@/types'
 import { format, isSameDay, endOfDay } from 'date-fns'
@@ -178,9 +179,16 @@ export default function CalendarPanel({
     const onTouchEnd = (e: TouchEvent) => {
       if (pinch.active && e.touches.length < 2) {
         pinch.active = false
-        // Sync React state once — triggers FC re-render with correct slotMinHeight.
-        // The CSS variable is already correct so there's no visual jump here.
-        updateSlotHeight(slotHeightRef.current)
+        const target = getBodyScroller()
+        const savedScrollTop = target?.scrollTop ?? 0
+
+        // flushSync forces React to render synchronously right now, in this
+        // call stack, before the browser paints the next frame.
+        // After it returns the DOM is fully up-to-date → we restore scrollTop
+        // immediately with no rAF gap and no visible jump.
+        flushSync(() => updateSlotHeight(slotHeightRef.current))
+
+        if (target) target.scrollTop = savedScrollTop
       }
     }
 
