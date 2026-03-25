@@ -144,7 +144,10 @@ export default function CalendarPanel({
       el.removeEventListener('touchend', onEnd, { capture: true })
       el.removeEventListener('touchcancel', onEnd, { capture: true })
     }
-  }, [isMobile, updateSlotHeight, DEFAULT_SLOT_H, language, goPrev, goNext])
+  // plugins.length added: effect must re-run after FC loads dynamically.
+  // On first render FC=null → containerRef is null (loading div shown) → effect exits early.
+  // When FC loads, plugins changes [] → [3 items], triggering re-run with real containerRef.
+  }, [isMobile, updateSlotHeight, DEFAULT_SLOT_H, language, goPrev, goNext, plugins.length])
 
   useEffect(() => {
     const imports: Promise<unknown>[] = [
