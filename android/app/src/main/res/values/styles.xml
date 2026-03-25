@@ -10,8 +10,8 @@
 
     <!--
         App theme: no action bar, dark status/nav bars matching the app background color.
-        Using solid #07070F (same as --bg CSS variable) so bars look seamless — no
-        transparent/edge-to-edge needed, no WebView inset issues.
+        Using solid #07070F (same as the bg CSS variable) so bars look seamless.
+        No transparent/edge-to-edge needed, no WebView inset issues.
     -->
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
