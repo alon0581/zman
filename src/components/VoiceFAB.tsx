@@ -13,9 +13,10 @@ interface Props {
   isRTL: boolean
   isMobile: boolean
   onAliveChange: (alive: boolean) => void
+  micSide?: 'left' | 'right'
 }
 
-export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, isMobile, onAliveChange }: Props) {
+export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, isMobile, onAliveChange, micSide = 'right' }: Props) {
   const [state, setState] = useState<FabState>('idle')
   const [recording, setRecording] = useState(false)
 
@@ -116,7 +117,8 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
     if (now - lastTapRef.current < 300) {
       lastTapRef.current = 0
       if (recording) stopRecording()
-      onOpenChat()
+      e.stopPropagation()
+      setTimeout(() => onOpenChat(), 50)
       return
     }
     lastTapRef.current = now
@@ -152,13 +154,13 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
     ? 'linear-gradient(135deg,#EF4444,#DC2626)'
     : isSuccess ? 'linear-gradient(135deg,#34D399,#10B981)'
     : isError ? 'linear-gradient(135deg,#F87171,#EF4444)'
-    : 'linear-gradient(135deg,#3B7EF7,#6366F1)'
+    : 'linear-gradient(135deg,#7C3AED,#EC4899)'
 
   const shadow = recording
     ? '0 6px 30px rgba(239,68,68,0.6)'
     : isSuccess ? '0 6px 30px rgba(52,211,153,0.5)'
     : isError ? '0 6px 30px rgba(248,113,113,0.5)'
-    : '0 6px 30px rgba(59,126,247,0.5)'
+    : '0 6px 30px rgba(124,58,237,0.55)'
 
   const fabClass = recording ? 'fab-recording' : isProcessing ? 'fab-processing' : isSuccess ? 'fab-success' : isError ? 'fab-error' : 'fab-idle'
 
@@ -199,7 +201,7 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
       style={{
         position: 'fixed',
         bottom: isMobile ? 'calc(70px + env(safe-area-inset-bottom, 0px))' : 32,
-        [isRTL ? 'left' : 'right']: isMobile ? 20 : 32,
+        [micSide === 'left' ? 'left' : 'right']: isMobile ? 20 : 32,
         width: 56,
         height: 56,
         borderRadius: '50%',

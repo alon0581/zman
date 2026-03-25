@@ -43,8 +43,8 @@ export default function CalendarPanel({
   events, newEventIds, language = 'en', isMobile = false,
   onEventUpdate, onEventDelete,
 }: Props) {
-  // Mobile defaults to day view (better event readability), desktop to week
-  const [view, setView] = useState<ViewType>(isMobile ? 'timeGridDay' : 'timeGridWeek')
+  // Mobile defaults to 3-day view, desktop to week
+  const [view, setView] = useState<ViewType>(isMobile ? 'timeGrid3Day' : 'timeGridWeek')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [plugins, setPlugins] = useState<any[]>([])
   const [FC, setFC] = useState<FCType | null>(null)
@@ -59,7 +59,7 @@ export default function CalendarPanel({
 
   // Auto-switch away from week view when on mobile (week is desktop-only)
   useEffect(() => {
-    if (isMobile && view === 'timeGridWeek') setView('timeGridDay')
+    if (isMobile && view === 'timeGridWeek') setView('timeGrid3Day')
   }, [isMobile, view])
 
   // Pinch-to-zoom: adjust slot height like Apple Calendar
@@ -113,7 +113,7 @@ export default function CalendarPanel({
         const dx = e.changedTouches[0].clientX - swipe.startX
         const dy = e.changedTouches[0].clientY - swipe.startY
         // Horizontal swipe: must dominate vertical movement
-        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.8) {
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
           if (language === 'he') { dx > 0 ? goNext() : goPrev() }
           else                   { dx > 0 ? goPrev() : goNext() }
         }
@@ -349,7 +349,7 @@ export default function CalendarPanel({
         style={{
           flex: 1, overflow: 'hidden', padding: isMobile ? '6px 8px 8px' : '8px 16px 12px',
           '--fc-slot-height': `${slotHeight}px`,
-          touchAction: isMobile ? 'pan-y' : undefined, // allow scroll; block browser pinch-zoom so our handler runs
+          touchAction: isMobile ? 'pan-y' : undefined,
         } as React.CSSProperties}
       >
         <FC
@@ -369,7 +369,10 @@ export default function CalendarPanel({
           slotMaxTime="24:00:00"
           slotDuration="00:30:00"
           slotLabelInterval="01:00:00"
+          slotMinHeight={slotHeight}
           eventMinHeight={isMobile ? Math.max(24, Math.round(slotHeight * 0.55)) : 20}
+          editable={!isMobile}
+          selectable={!isMobile}
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: false }}
           dayHeaderFormat={{ weekday: 'short', day: 'numeric' }}
           datesSet={(info: { view: { currentStart: Date } }) => setCurrentDate(info.view.currentStart)}

@@ -194,6 +194,9 @@ Shared hook used by both `AppShell` and `ChatOverlay`. Handles:
 - `mobileTab: 'calendar' | 'tasks'` controls which panel shows
 - **Bottom tab bar: 2 tabs** — 📅 Calendar | ☑️ Tasks
   - `ChatOverlay` opens via **double-tap on the VoiceFAB mic button** (no separate tab)
+  - VoiceFAB **hidden** when `mobileTab === 'tasks'` (avoids overlap with Add Task button)
+- VoiceFAB position: default **right** side, user can flip in Settings (`mic_position: 'left' | 'right'`)
+- VoiceFAB color: violet-pink gradient (idle), red (recording), green (success)
 - `isMobile = window.innerWidth < 768` + resize listener
 - Safe-area padding for iPhone home bar (`env(safe-area-inset-bottom)`)
 

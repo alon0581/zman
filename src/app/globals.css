@@ -101,7 +101,7 @@ input  { touch-action: manipulation; }
   /* Wider time column on mobile so events get more width */
   .fc .fc-timegrid-axis { width: 34px !important; }
 
-  /* Slot height controlled by pinch-zoom CSS variable (default 44px) */
+  /* Slot height controlled by pinch-zoom CSS variable (mobile only) */
   .fc .fc-timegrid-slot { height: var(--fc-slot-height, 44px) !important; }
 
   /* Day / 3-day view: full title wrap — enough column width */
@@ -193,6 +193,9 @@ input  { touch-action: manipulation; }
   /* "+N more" link — larger tap target */
   .fc .fc-daygrid-more-link { font-size: 11px !important; font-weight: 700 !important; color: var(--blue) !important; padding: 2px 4px !important; }
 }
+
+/* Slot height: duplicate outside media query for wide-viewport WebView (Capacitor) */
+.fc .fc-timegrid-slot { height: var(--fc-slot-height, 44px); }
 
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar          { width: 3px; }
@@ -465,6 +468,12 @@ input  { touch-action: manipulation; }
   border-right: 1px solid rgba(37,99,235,0.15) !important;
   border-left:  1px solid rgba(37,99,235,0.15) !important;
 }
+/* Remove blue tint from column header row — keep it only in time-grid cells */
+.fc .fc-col-header-cell.fc-day-today {
+  background: transparent !important;
+  border-right: none !important;
+  border-left:  none !important;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    Voice-First FAB & Alive Animations
@@ -472,8 +481,8 @@ input  { touch-action: manipulation; }
 
 /* ─── FAB idle breathing ─── */
 @keyframes fabBreathe {
-  0%,100% { transform: scale(1);    box-shadow: 0 6px 30px rgba(59,126,247,0.4); }
-  50%     { transform: scale(1.05); box-shadow: 0 8px 36px rgba(59,126,247,0.55); }
+  0%,100% { transform: scale(1);    box-shadow: 0 6px 30px rgba(124,58,237,0.4); }
+  50%     { transform: scale(1.05); box-shadow: 0 8px 36px rgba(124,58,237,0.55); }
 }
 .fab-idle { animation: fabBreathe 3.5s ease-in-out infinite; }
 

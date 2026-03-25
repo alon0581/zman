@@ -294,15 +294,18 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       {/* ── Alive overlay (screen glow during recording) ── */}
       {aliveActive && <div className="alive-overlay" />}
 
-      {/* ── Voice FAB ── */}
-      <VoiceFAB
-        onSendMessage={chatEngine.sendMessage}
-        onOpenChat={() => setChatOverlayOpen(true)}
-        language={language}
-        isRTL={isRTL}
-        isMobile={isMobile}
-        onAliveChange={handleAliveChange}
-      />
+      {/* ── Voice FAB — hidden on Tasks tab (overlaps Add Task button) ── */}
+      {(!isMobile || mobileTab !== 'tasks') && (
+        <VoiceFAB
+          onSendMessage={chatEngine.sendMessage}
+          onOpenChat={() => setChatOverlayOpen(true)}
+          language={language}
+          isRTL={isRTL}
+          isMobile={isMobile}
+          onAliveChange={handleAliveChange}
+          micSide={profile?.mic_position ?? 'right'}
+        />
+      )}
 
       {/* ── Toast notifications ── */}
       <ToastContainer

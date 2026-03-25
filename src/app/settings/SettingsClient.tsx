@@ -37,6 +37,7 @@ const LANGS: Record<string, Record<string, string>> = {
     voiceLabel: 'Voice Responses', voiceDesc: 'Read AI replies aloud',
     langLabel: 'Language', langDesc: 'AI response language',
     appearSection: 'Appearance', themeLabel: 'Theme',
+    micSideLabel: 'Mic Button Side', micSideLeft: '← Left', micSideRight: 'Right →',
     schedSection: 'Schedule', peakLabel: 'Peak Productivity',
     peakDesc: 'When do you work best?',
     wakeLabel: 'Wake Time', sleepLabel: 'Sleep Time',
@@ -66,6 +67,7 @@ const LANGS: Record<string, Record<string, string>> = {
     voiceLabel: 'תגובות קוליות', voiceDesc: 'קרא תגובות AI בקול רם',
     langLabel: 'שפה', langDesc: 'שפת תגובות ה-AI',
     appearSection: 'מראה', themeLabel: 'ערכת נושא',
+    micSideLabel: 'צד כפתור מיק', micSideLeft: '← שמאל', micSideRight: 'ימין →',
     schedSection: 'לוח זמנים', peakLabel: 'שעות שיא',
     peakDesc: 'מתי אתה עובד הכי טוב?',
     wakeLabel: 'שעת קימה', sleepLabel: 'שעת שינה',
@@ -199,6 +201,16 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
               ]}
               value={p.theme}
               onChange={v => set('theme', v)}
+            />
+          </Row>
+          <Row label={t(lang, 'micSideLabel')} desc="">
+            <SegmentedControl
+              options={[
+                { value: 'right', label: t(lang, 'micSideRight') },
+                { value: 'left',  label: t(lang, 'micSideLeft') },
+              ]}
+              value={p.mic_position ?? 'right'}
+              onChange={v => set('mic_position', v)}
             />
           </Row>
         </Card>
