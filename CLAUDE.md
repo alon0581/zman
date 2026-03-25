@@ -156,6 +156,14 @@ Floating action button — handles all voice input.
 - **Tap** (quick press → speak → tap again) → transcription appears **in input** for editing
 - **Double-tap** → opens ChatOverlay
 
+### Timing
+- **Double-tap window**: 450ms (was 300ms — expanded for comfort)
+- **Single-tap recording delay**: 400ms (matches window so double-tap always cancels cleanly)
+- If second tap arrives within 450ms: timer is cancelled before recording starts → mic never briefly activates
+
+### Ref vs State for recording detection
+- `activeRef.current` (sync ref) is used — NOT `recording` state (async React) — in `handlePointerDown` and `handlePointerUp` stop checks. This prevents the race condition where a second tap arrives before React re-renders with `recording=true`.
+
 ### Guards
 - Ignores blobs smaller than **1 KB** (near-silence)
 - `cachedStreamRef` — reuses the same `MediaStream` to avoid repeated permission prompts
@@ -212,7 +220,7 @@ Shared hook used by both `AppShell` and `ChatOverlay`. Handles:
 | `timeGridWeek` | ✅ | ❌ (removed — unreadable on small screen) |
 | `dayGridMonth` | ✅ | ✅ |
 
-- **Mobile default**: `timeGridDay`; **Desktop default**: `timeGridWeek`
+- **Mobile default**: `timeGrid3Day`; **Desktop default**: `timeGridWeek`
 - Custom `timeGrid3Day` view: `type: 'timeGrid', duration: { days: 3 }`
 - Accepts `isMobile?: boolean` prop from AppShell
 
@@ -223,6 +231,24 @@ Shared hook used by both `AppShell` and `ChatOverlay`. Handles:
 - `direction="ltr"` is explicitly set on FC — this ensures `prev()`/`next()` are always temporal regardless of Hebrew locale (Hebrew locale by default sets RTL which flips their meaning)
 - View changes use `calApi.changeView(view)` via `useEffect` (no full remount)
 - FC `key={language}` — remounts only on language change
+- **Mobile swipe**: touch listeners with `{ capture: true, passive: false }` — detected in `onTouchMove` (not `onEnd`) to prevent `touchcancel`. Threshold: 40px horizontal, 1.5× dominant.
+- **Desktop swipe**: `mousedown/mousemove/mouseup` on container. Threshold: 60px. Skips `.fc-event` targets.
+- Both trigger same spring nudge animation (`setSwipeOffsetRef`)
+
+### Pinch-to-zoom (mobile) / Ctrl+wheel (desktop)
+**Architecture — zero-flicker approach:**
+- Slot height range: **28px – 110px** (default 44px)
+- Zoom range is stored in `slotHeightRef` (sync) and `slotHeight` state (async for FC prop)
+- **During gesture**: only CSS variable `--fc-slot-height` is updated directly on the DOM element (`el.style.setProperty`) — no React re-renders, no frame gap
+- **Event positioning during gesture**: `.fc-pinch-active .fc-timegrid-col-events` gets `transform: scaleY(--pinch-scale)`. Math: `top = T × 2 × startH`; after `scaleY(newH/startH)` → `T × 2 × newH` = exact correct position.
+- **Scroll anchor**: `pinch.startScrollTop` + `pinch.startHeight` captured ONCE at `onTouchStart`. Every move: `expectedScrollTop = startScrollTop × (newH / startH)`. Uses a single `cancelAnimationFrame` + `rAF` to restore.
+- **On touch end**: remove `.fc-pinch-active` class + `--pinch-scale`, then `flushSync(() => updateSlotHeight(final))` for synchronous React+FC re-render, then immediately `target.scrollTop = savedScrollTop` — no frame gap.
+- **Key import**: `import { flushSync } from 'react-dom'`
+- Body scroller identified by: `Array.from(el.querySelectorAll('.fc-scroller')).find(s => s.scrollHeight > s.clientHeight)` (NOT `querySelector` which returns the axis scroller with no overflow)
+
+### Event title display
+- Day/3-day views: `webkit-line-clamp: 3` (up to 3 lines) — CSS specificity fix required: selector needs 3 classes to beat the general nowrap rule (`0,3,0` vs `0,2,0`)
+- Week view: `white-space: nowrap` + `text-overflow: ellipsis` (columns too narrow)
 
 ### Month view
 - Desktop: `dayMaxEvents: 4` — shows up to 4 events per day, then "+N more" popover
@@ -301,6 +327,13 @@ The mobile layout is designed to look like a native iOS app, not a website.
 
 ### Mobile breakpoint
 `isMobile = window.innerWidth < 768`
+
+---
+
+## ChatOverlay (`src/components/ChatOverlay.tsx`)
+
+- **No auto-focus**: the `useEffect(() => inputRef.current?.focus(), 300)` was removed — keyboard no longer opens automatically when the overlay opens on mobile.
+- Messages scroll to bottom via `bottomRef.current?.scrollIntoView({ behavior: 'smooth' })` on every new message.
 
 ---
 
