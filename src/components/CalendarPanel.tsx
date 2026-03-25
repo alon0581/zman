@@ -90,8 +90,19 @@ export default function CalendarPanel({
     const el = containerRef.current
     if (!el) return
 
-    const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H }
+    // startScrollTop saved once at pinch-start — never updated during the gesture.
+    // This prevents the "chained ratio" bug: when multiple onTouchMove events fire
+    // in the same JS frame the DOM hasn't updated yet, so reading scrollTop gives the
+    // same stale value each time.  Using slotHeightRef.current as oldH compounds the
+    // error because it WAS updated synchronously by the previous move.
+    // Anchoring to pinch-start values makes every step's expectedScrollTop correct
+    // regardless of how many moves fired in the same frame.
+    const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H, startScrollTop: 0 }
     const swipe = { startX: 0, startY: 0, triggered: false }
+
+    const getBodyScroller = () =>
+      (Array.from(el.querySelectorAll('.fc-scroller')) as HTMLElement[])
+        .find(s => s.scrollHeight > s.clientHeight) ?? null
 
     // ── Touch handlers (mobile) ──────────────────────────────────────────────
     const onTouchStart = (e: TouchEvent) => {
@@ -101,6 +112,8 @@ export default function CalendarPanel({
         const dy = e.touches[0].clientY - e.touches[1].clientY
         pinch.startDist = Math.hypot(dx, dy)
         pinch.startHeight = slotHeightRef.current
+        // Capture scroll anchor once — used for ALL subsequent moves in this gesture
+        pinch.startScrollTop = getBodyScroller()?.scrollTop ?? 0
         pinch.active = true
         swipe.triggered = true // suppress swipe while pinching
       } else if (e.touches.length === 1) {
@@ -120,24 +133,14 @@ export default function CalendarPanel({
         const scaleRatio = Math.hypot(dx, dy) / pinch.startDist
         const newH = Math.max(28, Math.min(110, Math.round(pinch.startHeight * scaleRatio)))
         if (newH !== slotHeightRef.current) {
-          // Find the BODY scroller (the one with actual scrollable content).
-          // .fc-scroller matches multiple elements (axis + body); we want the
-          // one whose scrollHeight > clientHeight (i.e. has overflow content).
-          const bodyScroller = (Array.from(el.querySelectorAll('.fc-scroller')) as HTMLElement[])
-            .find(s => s.scrollHeight > s.clientHeight) ?? null
-
-          // Mathematical anchor: since all slots are equal height, total scrollHeight
-          // scales exactly with slotHeight.  newScrollTop = oldScrollTop × (newH/oldH).
-          // This avoids reading scrollHeight (which may not have updated yet in the DOM).
-          const oldScrollTop = bodyScroller?.scrollTop ?? 0
-          const oldH = slotHeightRef.current
-          const expectedScrollTop = Math.round(oldScrollTop * (newH / oldH))
+          // Always relative to pinch-start — correct even for rapid gesture bursts
+          const expectedScrollTop = Math.round(pinch.startScrollTop * (newH / pinch.startHeight))
 
           updateSlotHeight(newH)
 
-          // Cancel stale rAF, queue fresh double-rAF so FC finishes its layout first.
-          if (bodyScroller) {
-            const target = bodyScroller // close over the element
+          // Cancel stale rAF; only the latest zoom level restores scroll position
+          const target = getBodyScroller()
+          if (target) {
             cancelAnimationFrame(scrollAnchorRafRef.current)
             scrollAnchorRafRef.current = requestAnimationFrame(() => {
               scrollAnchorRafRef.current = requestAnimationFrame(() => {
