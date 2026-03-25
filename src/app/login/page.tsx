@@ -51,7 +51,7 @@ export default function LoginPage() {
 
   return (
     <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center',
+      minHeight: '100dvh', display: 'flex', alignItems: 'center',
       justifyContent: 'center',
       background: 'radial-gradient(ellipse at 50% -10%, rgba(59,126,247,0.14) 0%, transparent 55%), var(--bg)',
       padding: '24px',

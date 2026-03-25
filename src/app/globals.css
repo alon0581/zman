@@ -63,7 +63,10 @@
 
 /* ─── Reset ─── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; }
+html { height: 100%; }
+/* dvh = dynamic viewport height: shrinks when Android browser chrome is visible,
+   expands when it hides. Prevents content being cut off by nav bar on Samsung/Android. */
+body { min-height: 100dvh; height: 100%; }
 
 body {
   background:
