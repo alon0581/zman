@@ -63,7 +63,7 @@ src/
       demo-profile/route.ts     — GET/POST: demo profile read/write
       onboarding/route.ts       — POST: save onboarding data
   components/
-    AppShell.tsx                — Layout shell (desktop: Header+Calendar+Tasks; mobile: minimal top bar + 3-tab bar)
+    AppShell.tsx                — Layout shell (desktop: Header+Calendar+Tasks; mobile: minimal top bar + 2-tab bar)
     CalendarPanel.tsx           — FullCalendar wrapper with EventPopup + pinch-to-zoom + swipe
     ChatOverlay.tsx             — Floating chat panel (desktop: side drawer; mobile: bottom sheet)
     ChatPanel.tsx               — ⚠️ UNUSED — was replaced by ChatOverlay + VoiceFAB
