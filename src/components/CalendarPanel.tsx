@@ -120,16 +120,18 @@ export default function CalendarPanel({
       }
     }
 
-    el.addEventListener('touchstart', onStart, { passive: false })
-    el.addEventListener('touchmove', onMove, { passive: false })
-    el.addEventListener('touchend', onEnd, { passive: true })
-    el.addEventListener('touchcancel', onEnd, { passive: true })
+    // capture:true — we intercept BEFORE FullCalendar's internal handlers
+    // which may call stopPropagation() in bubble phase
+    el.addEventListener('touchstart', onStart, { passive: false, capture: true })
+    el.addEventListener('touchmove', onMove, { passive: false, capture: true })
+    el.addEventListener('touchend', onEnd, { passive: true, capture: true })
+    el.addEventListener('touchcancel', onEnd, { passive: true, capture: true })
 
     return () => {
-      el.removeEventListener('touchstart', onStart)
-      el.removeEventListener('touchmove', onMove)
-      el.removeEventListener('touchend', onEnd)
-      el.removeEventListener('touchcancel', onEnd)
+      el.removeEventListener('touchstart', onStart, { capture: true })
+      el.removeEventListener('touchmove', onMove, { capture: true })
+      el.removeEventListener('touchend', onEnd, { capture: true })
+      el.removeEventListener('touchcancel', onEnd, { capture: true })
     }
   }, [isMobile, updateSlotHeight, DEFAULT_SLOT_H, language, goPrev, goNext])
 

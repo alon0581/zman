@@ -27,6 +27,7 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
   const holdModeRef = useRef(false)
   const activeRef = useRef(false)
   const lastTapRef = useRef(0)
+  const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sendMsgRef = useRef(onSendMessage)
 
   useEffect(() => { sendMsgRef.current = onSendMessage }, [onSendMessage])
@@ -114,24 +115,38 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
     e.preventDefault()
 
     const now = Date.now()
+
+    // ── Double-tap detected ──────────────────────────────────────────────────
     if (now - lastTapRef.current < 300) {
       lastTapRef.current = 0
+      // Cancel any pending single-tap recording that hasn't started yet
+      if (singleTapTimerRef.current) {
+        clearTimeout(singleTapTimerRef.current)
+        singleTapTimerRef.current = null
+      }
       if (recording) stopRecording()
       e.stopPropagation()
       setTimeout(() => onOpenChat(), 50)
       return
     }
+
     lastTapRef.current = now
 
+    // ── Stop recording if already active ────────────────────────────────────
     if (recording) {
       holdModeRef.current = false
       stopRecording()
       return
     }
 
-    pressStartRef.current = Date.now()
+    // ── Delay recording start by 250ms — allows double-tap to cancel cleanly ─
+    pressStartRef.current = Date.now() + 250 // offset so hold timer is measured from actual start
     holdModeRef.current = false
-    startRecording()
+    singleTapTimerRef.current = setTimeout(() => {
+      singleTapTimerRef.current = null
+      pressStartRef.current = Date.now()
+      startRecording()
+    }, 250)
   }, [recording, stopRecording, startRecording, onOpenChat])
 
   const handlePointerUp = useCallback(() => {
