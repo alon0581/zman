@@ -98,6 +98,16 @@ input  { touch-action: manipulation; }
   .fc .fc-event-title { font-size: 12px !important; font-weight: 700 !important; line-height: 1.35 !important; }
   .fc .fc-event-time { font-size: 10px !important; opacity: 0.85 !important; line-height: 1.2 !important; }
 
+  /* Prevent text overflow when pinch-zooming to small slot sizes */
+  .fc .fc-timegrid-event { overflow: hidden !important; }
+  .fc .fc-timegrid-event .fc-event-main { overflow: hidden !important; padding: 1px 4px !important; }
+  .fc .fc-timegrid-event .fc-event-title {
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+  .fc .fc-timegrid-event .fc-event-time { white-space: nowrap !important; }
+
   /* Wider time column on mobile so events get more width */
   .fc .fc-timegrid-axis { width: 34px !important; }
 

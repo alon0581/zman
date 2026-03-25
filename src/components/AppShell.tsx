@@ -294,8 +294,8 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       {/* ── Alive overlay (screen glow during recording) ── */}
       {aliveActive && <div className="alive-overlay" />}
 
-      {/* ── Voice FAB — hidden on Tasks tab (overlaps Add Task button) ── */}
-      {(!isMobile || mobileTab !== 'tasks') && (
+      {/* ── Voice FAB — hidden on Tasks tab, and when Settings is open ── */}
+      {(!isMobile || mobileTab !== 'tasks') && !showSettings && (
         <VoiceFAB
           onSendMessage={chatEngine.sendMessage}
           onOpenChat={() => setChatOverlayOpen(true)}

@@ -82,6 +82,20 @@ export default function CalendarPanel({
   // Stable ref so the touch useEffect closure can call setState without going stale
   const setSwipeOffsetRef = useRef(setSwipeOffset)
 
+  // Pinch scroll-anchor: save scroll ratio before height change, restore after
+  const scrollRatioRef = useRef<number | null>(null)
+  useEffect(() => {
+    const ratio = scrollRatioRef.current
+    if (ratio === null) return
+    scrollRatioRef.current = null
+    // After React re-renders with new slotHeight, restore proportional scroll position
+    const scroller = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
+    if (scroller) {
+      void scroller.scrollHeight // force layout recalculation
+      scroller.scrollTop = ratio * scroller.scrollHeight
+    }
+  }, [slotHeight])
+
   useEffect(() => {
     const el = containerRef.current
     if (!el || !isMobile) return
@@ -113,8 +127,15 @@ export default function CalendarPanel({
         const dx = e.touches[0].clientX - e.touches[1].clientX
         const dy = e.touches[0].clientY - e.touches[1].clientY
         const ratio = Math.hypot(dx, dy) / pinch.startDist
-        const newH = Math.max(20, Math.min(120, Math.round(pinch.startHeight * ratio)))
-        updateSlotHeight(newH)
+        const newH = Math.max(30, Math.min(120, Math.round(pinch.startHeight * ratio)))
+        if (newH !== slotHeightRef.current) {
+          // Save scroll ratio so useEffect can restore same visible time after re-render
+          const scroller = el.querySelector('.fc-scroller') as HTMLElement | null
+          if (scroller && scroller.scrollHeight > 0) {
+            scrollRatioRef.current = scroller.scrollTop / scroller.scrollHeight
+          }
+          updateSlotHeight(newH)
+        }
         return
       }
 

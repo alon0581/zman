@@ -216,7 +216,10 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
       style={{
         position: 'fixed',
         bottom: isMobile ? 'calc(70px + env(safe-area-inset-bottom, 0px))' : 32,
-        [micSide === 'left' ? 'left' : 'right']: isMobile ? 20 : 32,
+        // Desktop: tasks panel is 340px wide on the right — FAB must be left of it
+        ...(micSide === 'left'
+          ? { left: isMobile ? 20 : 32 }
+          : { right: isMobile ? 20 : 'calc(340px + 20px)' }),
         width: 56,
         height: 56,
         borderRadius: '50%',
