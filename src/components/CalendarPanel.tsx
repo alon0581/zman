@@ -82,24 +82,9 @@ export default function CalendarPanel({
   // Stable ref so the touch useEffect closure can call setState without going stale
   const setSwipeOffsetRef = useRef(setSwipeOffset)
 
-  // Pinch scroll-anchor: save scroll ratio before height change, restore after
-  const scrollRatioRef = useRef<number | null>(null)
-  useEffect(() => {
-    const ratio = scrollRatioRef.current
-    if (ratio === null) return
-    scrollRatioRef.current = null
-    // FullCalendar re-lays out its slots asynchronously after slotMinHeight changes.
-    // We must wait for the browser to paint the new DOM heights before scrolling.
-    // One rAF is enough for React → DOM; a second rAF ensures FC's own layout pass.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const scroller = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
-        if (scroller && scroller.scrollHeight > 0) {
-          scroller.scrollTop = ratio * scroller.scrollHeight
-        }
-      })
-    })
-  }, [slotHeight])
+  // Pinch scroll-anchor: cancel-able rAF so only the last zoom level restores scroll.
+  // We capture the ratio in a closure (not a mutable ref) so overwrites can't corrupt it.
+  const scrollAnchorRafRef = useRef(0)
 
   useEffect(() => {
     const el = containerRef.current
@@ -132,15 +117,30 @@ export default function CalendarPanel({
         e.preventDefault()
         const dx = e.touches[0].clientX - e.touches[1].clientX
         const dy = e.touches[0].clientY - e.touches[1].clientY
-        const ratio = Math.hypot(dx, dy) / pinch.startDist
-        const newH = Math.max(36, Math.min(92, Math.round(pinch.startHeight * ratio)))
+        const scaleRatio = Math.hypot(dx, dy) / pinch.startDist
+        const newH = Math.max(28, Math.min(110, Math.round(pinch.startHeight * scaleRatio)))
         if (newH !== slotHeightRef.current) {
-          // Save scroll ratio so useEffect can restore same visible time after re-render
+          // Capture scroll ratio NOW (before DOM changes) in a closure.
+          // Do NOT store in a mutable ref — a ref gets overwritten by the next move
+          // event before the rAF fires, causing the wrong time to be restored.
           const scroller = el.querySelector('.fc-scroller') as HTMLElement | null
-          if (scroller && scroller.scrollHeight > 0) {
-            scrollRatioRef.current = scroller.scrollTop / scroller.scrollHeight
-          }
+          const scrollRatio = (scroller && scroller.scrollHeight > 0)
+            ? scroller.scrollTop / scroller.scrollHeight
+            : null
+
           updateSlotHeight(newH)
+
+          // Cancel any pending scroll-restore from a previous move event,
+          // then queue a fresh double-rAF so FC has time to finish its layout.
+          if (scrollRatio !== null) {
+            cancelAnimationFrame(scrollAnchorRafRef.current)
+            scrollAnchorRafRef.current = requestAnimationFrame(() => {
+              scrollAnchorRafRef.current = requestAnimationFrame(() => {
+                const s = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
+                if (s && s.scrollHeight > 0) s.scrollTop = scrollRatio * s.scrollHeight
+              })
+            })
+          }
         }
         return
       }
@@ -204,15 +204,25 @@ export default function CalendarPanel({
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return
       e.preventDefault()
-      // Save scroll anchor before height change
       const scroller = el.querySelector('.fc-scroller') as HTMLElement | null
-      if (scroller && scroller.scrollHeight > 0) {
-        scrollRatioRef.current = scroller.scrollTop / scroller.scrollHeight
-      }
+      const scrollRatio = (scroller && scroller.scrollHeight > 0)
+        ? scroller.scrollTop / scroller.scrollHeight
+        : null
       // Scroll up (negative delta) = zoom in, scroll down = zoom out
       const delta = e.deltaY < 0 ? 4 : -4
-      const newH = Math.max(36, Math.min(92, slotHeightRef.current + delta))
-      if (newH !== slotHeightRef.current) updateSlotHeight(newH)
+      const newH = Math.max(28, Math.min(110, slotHeightRef.current + delta))
+      if (newH !== slotHeightRef.current) {
+        updateSlotHeight(newH)
+        if (scrollRatio !== null) {
+          cancelAnimationFrame(scrollAnchorRafRef.current)
+          scrollAnchorRafRef.current = requestAnimationFrame(() => {
+            scrollAnchorRafRef.current = requestAnimationFrame(() => {
+              const s = containerRef.current?.querySelector('.fc-scroller') as HTMLElement | null
+              if (s && s.scrollHeight > 0) s.scrollTop = scrollRatio * s.scrollHeight
+            })
+          })
+        }
+      }
     }
 
     if (isMobile) {
