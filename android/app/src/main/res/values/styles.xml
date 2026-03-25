@@ -9,20 +9,19 @@
     </style>
 
     <!--
-        Edge-to-edge theme: the WebView extends under the status bar and
-        navigation bar.  CSS env(safe-area-inset-*) then pushes content
-        away from system bars — works exactly like iOS safe areas.
+        App theme: no action bar, dark status/nav bars matching the app background color.
+        Using solid #07070F (same as --bg CSS variable) so bars look seamless — no
+        transparent/edge-to-edge needed, no WebView inset issues.
     -->
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
-        <item name="android:background">@null</item>
 
-        <!-- Transparent system bars — WebView fills the entire screen -->
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- Match app background — looks seamless, no edge-to-edge needed -->
+        <item name="android:statusBarColor">#07070F</item>
+        <item name="android:navigationBarColor">#07070F</item>
 
-        <!-- White icons in status/nav bar (app has dark background) -->
+        <!-- White icons in status bar (app has dark background) -->
         <item name="android:windowLightStatusBar">false</item>
     </style>
 

@@ -23,7 +23,7 @@ const config: CapacitorConfig = {
       // 'light' = white icons — correct for our dark (#07070F) background.
       // 'dark' would show black icons which are invisible on dark background.
       style: 'light',
-      backgroundColor: '#00000000', // transparent — blends with app background
+      backgroundColor: '#07070F', // solid dark — matches app background, no edge-to-edge needed
     },
   },
 }
