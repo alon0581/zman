@@ -117,6 +117,9 @@ export default function CalendarPanel({
         pinch.startScrollTop = getBodyScroller()?.scrollTop ?? 0
         pinch.active = true
         swipe.triggered = true // suppress swipe while pinching
+        // Activate CSS scale transform on event blocks so they move with slots
+        el.classList.add('fc-pinch-active')
+        el.style.setProperty('--pinch-scale', '1')
       } else if (e.touches.length === 1) {
         swipe.startX = e.touches[0].clientX
         swipe.startY = e.touches[0].clientY
@@ -134,14 +137,13 @@ export default function CalendarPanel({
         const scaleRatio = Math.hypot(dx, dy) / pinch.startDist
         const newH = Math.max(28, Math.min(110, Math.round(pinch.startHeight * scaleRatio)))
         if (newH !== slotHeightRef.current) {
-          // ── Key insight: DON'T call updateSlotHeight (no React re-render). ──
-          // React re-renders cause a frame where FC has new scrollHeight but the
-          // browser hasn't restored scrollTop yet — that flicker is the "escape".
-          // Instead, mutate the CSS variable directly on the DOM element.
-          // React set it as an inline style; direct setProperty overrides it.
-          // We sync React state once in onTouchEnd when the gesture completes.
+          // DON'T call updateSlotHeight (no React re-render during gesture).
+          // Mutate CSS variables directly — slots resize, events scale via transform.
           slotHeightRef.current = newH
           el.style.setProperty('--fc-slot-height', `${newH}px`)
+          // Keep event scale in sync: scaleY(newH/startH) makes inline top/height
+          // values (computed for startH) land at exactly the correct pixel positions.
+          el.style.setProperty('--pinch-scale', String(newH / pinch.startHeight))
 
           // Restore scroll anchor — one rAF is enough here (CSS mutation is sync,
           // browser reflows before the next paint, not after a React render cycle)
@@ -179,15 +181,21 @@ export default function CalendarPanel({
     const onTouchEnd = (e: TouchEvent) => {
       if (pinch.active && e.touches.length < 2) {
         pinch.active = false
+
+        // Remove scale transform BEFORE flushSync so FC's re-render paints
+        // events at their real (recalculated) positions without the transform
+        // still active — avoids a double-transform flash.
+        el.classList.remove('fc-pinch-active')
+        el.style.removeProperty('--pinch-scale')
+
         const target = getBodyScroller()
         const savedScrollTop = target?.scrollTop ?? 0
 
-        // flushSync forces React to render synchronously right now, in this
-        // call stack, before the browser paints the next frame.
-        // After it returns the DOM is fully up-to-date → we restore scrollTop
-        // immediately with no rAF gap and no visible jump.
+        // flushSync: synchronous React+FC re-render → DOM fully updated
+        // before the browser paints the next frame.
         flushSync(() => updateSlotHeight(slotHeightRef.current))
 
+        // Restore scroll anchor immediately — no rAF gap.
         if (target) target.scrollTop = savedScrollTop
       }
     }

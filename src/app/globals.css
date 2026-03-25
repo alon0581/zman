@@ -207,6 +207,15 @@ input  { touch-action: manipulation; }
 /* Slot height: duplicate outside media query for wide-viewport WebView (Capacitor) */
 .fc .fc-timegrid-slot { height: var(--fc-slot-height, 44px); }
 
+/* During pinch gesture: scale event blocks to match slot resize.
+   transform-origin: top keeps events anchored to their start time.
+   Math: event top = T × 2 × startH; after scaleY(newH/startH) → T × 2 × newH = correct. */
+.fc-pinch-active .fc-timegrid-col-events {
+  transform: scaleY(var(--pinch-scale, 1));
+  transform-origin: top left;
+  will-change: transform;
+}
+
 /* Re-enable vertical scroll on FC's inner scroller when container has touch-action:none */
 .fc-scroller { touch-action: pan-y !important; -webkit-overflow-scrolling: touch !important; }
 
