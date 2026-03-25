@@ -133,19 +133,23 @@ export default function CalendarPanel({
         const scaleRatio = Math.hypot(dx, dy) / pinch.startDist
         const newH = Math.max(28, Math.min(110, Math.round(pinch.startHeight * scaleRatio)))
         if (newH !== slotHeightRef.current) {
-          // Always relative to pinch-start — correct even for rapid gesture bursts
+          // ── Key insight: DON'T call updateSlotHeight (no React re-render). ──
+          // React re-renders cause a frame where FC has new scrollHeight but the
+          // browser hasn't restored scrollTop yet — that flicker is the "escape".
+          // Instead, mutate the CSS variable directly on the DOM element.
+          // React set it as an inline style; direct setProperty overrides it.
+          // We sync React state once in onTouchEnd when the gesture completes.
+          slotHeightRef.current = newH
+          el.style.setProperty('--fc-slot-height', `${newH}px`)
+
+          // Restore scroll anchor — one rAF is enough here (CSS mutation is sync,
+          // browser reflows before the next paint, not after a React render cycle)
           const expectedScrollTop = Math.round(pinch.startScrollTop * (newH / pinch.startHeight))
-
-          updateSlotHeight(newH)
-
-          // Cancel stale rAF; only the latest zoom level restores scroll position
           const target = getBodyScroller()
           if (target) {
             cancelAnimationFrame(scrollAnchorRafRef.current)
             scrollAnchorRafRef.current = requestAnimationFrame(() => {
-              scrollAnchorRafRef.current = requestAnimationFrame(() => {
-                target.scrollTop = expectedScrollTop
-              })
+              target.scrollTop = expectedScrollTop
             })
           }
         }
@@ -172,7 +176,12 @@ export default function CalendarPanel({
     }
 
     const onTouchEnd = (e: TouchEvent) => {
-      if (pinch.active && e.touches.length < 2) { pinch.active = false }
+      if (pinch.active && e.touches.length < 2) {
+        pinch.active = false
+        // Sync React state once — triggers FC re-render with correct slotMinHeight.
+        // The CSS variable is already correct so there's no visual jump here.
+        updateSlotHeight(slotHeightRef.current)
+      }
     }
 
     // ── Mouse handlers (desktop swipe via drag) ──────────────────────────────
