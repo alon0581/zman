@@ -65,6 +65,10 @@ const T = {
 
 // ─── Swipeable task wrapper ─────────────────────────────────────────────────
 // Swipe left → reveals red Delete button. Tap Delete → slides out + removes.
+// Layout: overflow:hidden outer div clips a wider inner motion.div.
+// The inner div is (containerWidth + 80px) wide: task content fills 100%, delete
+// button fills the extra 80px on the right. No z-index tricks needed — the delete
+// button is physically outside the visible area until the user swipes.
 function SwipeableTask({
   isOverdue,
   deleteLabel,
@@ -96,46 +100,44 @@ function SwipeableTask({
   }
 
   return (
-    // Outer div: tapping anywhere when revealed → close (delete button stops propagation)
-    <div
-      style={{ position: 'relative', borderRadius: 10, overflow: 'hidden',
-               border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}` }}
-      onClick={revealed ? snapClose : undefined}
-    >
-      {/* ── Red delete button ── always z-index:2, only receives events when revealed */}
-      <div
-        onClick={handleDeleteTap}
-        style={{
-          position: 'absolute', right: 0, top: 0, bottom: 0, width: 80,
-          background: '#EF4444', zIndex: 2, cursor: 'pointer',
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          justifyContent: 'center', gap: 3,
-          pointerEvents: revealed ? 'auto' : 'none',
-        }}
-      >
-        <Trash2 size={15} color="#fff" />
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{deleteLabel}</span>
-      </div>
-
-      {/* ── Draggable task surface ──
-          z-index:1 ensures it sits above the red button at rest (x=0).
-          When revealed we keep drag active (so user can drag back to close),
-          but disable tap so the outer div's onClick fires for close. */}
+    // overflow:hidden clips the 80px delete button until the surface slides left
+    <div style={{
+      overflow: 'hidden', borderRadius: 10,
+      border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
+    }}>
+      {/* Draggable strip — wider than the container by 80px */}
       <motion.div
         drag="x"
         dragConstraints={{ left: -80, right: 0 }}
         dragElastic={0.05}
         dragMomentum={false}
         onDragEnd={handleDragEnd}
-        style={{
-          x,
-          position: 'relative', zIndex: 1,
-          background: 'var(--bg-card)',
-          padding: '10px 12px',
-          display: 'flex', alignItems: 'flex-start', gap: 10,
-        }}
+        style={{ x, display: 'flex', width: 'calc(100% + 80px)' }}
       >
-        {children}
+        {/* ── Task content — fills 100% of the visible container ── */}
+        <div
+          style={{
+            flex: '0 0 100%', background: 'var(--bg-card)',
+            padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: 10,
+            boxSizing: 'border-box',
+          }}
+          onClick={revealed ? (e => { e.stopPropagation(); snapClose() }) : undefined}
+        >
+          {children}
+        </div>
+
+        {/* ── Red delete button — the extra 80px, clipped at rest ── */}
+        <div
+          onClick={handleDeleteTap}
+          style={{
+            flex: '0 0 80px', background: '#EF4444', cursor: 'pointer',
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            justifyContent: 'center', gap: 3,
+          }}
+        >
+          <Trash2 size={15} color="#fff" />
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{deleteLabel}</span>
+        </div>
       </motion.div>
     </div>
   )
