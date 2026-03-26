@@ -98,7 +98,7 @@ export default function CalendarPanel({
     // error because it WAS updated synchronously by the previous move.
     // Anchoring to pinch-start values makes every step's expectedScrollTop correct
     // regardless of how many moves fired in the same frame.
-    const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H, startScrollTop: 0 }
+    const pinch = { active: false, startDist: 0, startHeight: DEFAULT_SLOT_H, startScrollTop: 0, indicatorStartTops: [] as number[] }
     const swipe = { startX: 0, startY: 0, triggered: false }
 
     const getBodyScroller = () =>
@@ -115,6 +115,10 @@ export default function CalendarPanel({
         pinch.startHeight = slotHeightRef.current
         // Capture scroll anchor once — used for ALL subsequent moves in this gesture
         pinch.startScrollTop = getBodyScroller()?.scrollTop ?? 0
+        // Capture now-indicator top positions — scaled during gesture just like events
+        pinch.indicatorStartTops = (Array.from(
+          el.querySelectorAll('.fc-timegrid-now-indicator-container')
+        ) as HTMLElement[]).map(ind => parseFloat(ind.style.top) || 0)
         pinch.active = true
         swipe.triggered = true // suppress swipe while pinching
         // Activate CSS scale transform on event blocks so they move with slots
@@ -155,6 +159,15 @@ export default function CalendarPanel({
               target.scrollTop = expectedScrollTop
             })
           }
+
+          // Scale now-indicator (red current-time line) to match the slot scale.
+          // Its inline `top` was set by FC at startHeight; multiply by the same ratio
+          // as events so the line stays anchored to the correct time during pinch.
+          const indRatio = newH / pinch.startHeight;
+          (Array.from(el.querySelectorAll('.fc-timegrid-now-indicator-container')) as HTMLElement[])
+            .forEach((ind, i) => {
+              ind.style.top = `${Math.round((pinch.indicatorStartTops[i] ?? 0) * indRatio)}px`
+            })
         }
         return
       }
