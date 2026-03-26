@@ -49,6 +49,15 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
     }
   }, [state])
 
+  // Release mic on unmount (belt-and-suspenders — stopRecording already does this,
+  // but guards against edge cases where the component unmounts mid-recording)
+  useEffect(() => {
+    return () => {
+      cachedStreamRef.current?.getTracks().forEach(t => t.stop())
+      cachedStreamRef.current = null
+    }
+  }, [])
+
   const lang = language === 'he' ? 'he' : 'en'
 
   const startRecording = useCallback(async () => {
@@ -109,6 +118,11 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
     mediaRecorderRef.current?.stop()
     mediaRecorderRef.current = null
     setRecording(false)
+    // Stop all audio tracks so the OS mic indicator (e.g. Apple orange dot) turns off.
+    // cachedStreamRef is cleared so the next recording gets a fresh stream via getUserMedia —
+    // safe because permission is already granted and re-init takes <50ms.
+    cachedStreamRef.current?.getTracks().forEach(t => t.stop())
+    cachedStreamRef.current = null
   }, [])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
