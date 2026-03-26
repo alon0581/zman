@@ -160,13 +160,16 @@ export default function CalendarPanel({
             })
           }
 
-          // Scale now-indicator (red current-time line) to match the slot scale.
-          // Its inline `top` was set by FC at startHeight; multiply by the same ratio
-          // as events so the line stays anchored to the correct time during pinch.
+          // Shift now-indicator via translateY rather than overriding style.top.
+          // FC may re-render mid-gesture (ResizeObserver) and reset style.top back
+          // to the stale value — but it never touches style.transform, so the
+          // visual offset survives.  Math: FC keeps top=startTop; we add
+          // translateY(startTop*(ratio-1)) so the rendered position = startTop*ratio.
           const indRatio = newH / pinch.startHeight;
           (Array.from(el.querySelectorAll('.fc-timegrid-now-indicator-container')) as HTMLElement[])
             .forEach((ind, i) => {
-              ind.style.top = `${Math.round((pinch.indicatorStartTops[i] ?? 0) * indRatio)}px`
+              const delta = (pinch.indicatorStartTops[i] ?? 0) * (indRatio - 1)
+              ind.style.transform = `translateY(${Math.round(delta)}px)`
             })
         }
         return
@@ -200,6 +203,10 @@ export default function CalendarPanel({
         // still active — avoids a double-transform flash.
         el.classList.remove('fc-pinch-active')
         el.style.removeProperty('--pinch-scale')
+
+        // Clear translateY offsets so FC's flushSync re-render sets the final top cleanly
+        ;(Array.from(el.querySelectorAll('.fc-timegrid-now-indicator-container')) as HTMLElement[])
+          .forEach(ind => { ind.style.transform = '' })
 
         const target = getBodyScroller()
         const savedScrollTop = target?.scrollTop ?? 0
