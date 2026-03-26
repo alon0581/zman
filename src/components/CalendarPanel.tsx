@@ -279,32 +279,36 @@ export default function CalendarPanel({
       }
     }
 
-    if (isMobile) {
+    // Use touch events on any touch-capable device (iPhone, iPad, Android),
+    // regardless of screen width. isMobile is width-based so iPads (≥768px)
+    // would otherwise fall into the mouse branch and lose swipe + pinch.
+    const hasTouch = navigator.maxTouchPoints > 0
+
+    if (hasTouch) {
       // capture:true — intercept BEFORE FullCalendar's internal handlers
       // which may call stopPropagation() in bubble phase
       el.addEventListener('touchstart', onTouchStart, { passive: false, capture: true })
       el.addEventListener('touchmove', onTouchMove, { passive: false, capture: true })
       el.addEventListener('touchend', onTouchEnd, { passive: true, capture: true })
       el.addEventListener('touchcancel', onTouchEnd, { passive: true, capture: true })
-    } else {
-      el.addEventListener('mousedown', onMouseDown)
-      window.addEventListener('mousemove', onMouseMove)
-      window.addEventListener('mouseup', onMouseUp)
-      el.addEventListener('wheel', onWheel, { passive: false })
     }
+    // Always register mouse + wheel for desktop (and iPad with mouse/trackpad)
+    el.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    el.addEventListener('wheel', onWheel, { passive: false })
 
     return () => {
-      if (isMobile) {
+      if (hasTouch) {
         el.removeEventListener('touchstart', onTouchStart, { capture: true })
         el.removeEventListener('touchmove', onTouchMove, { capture: true })
         el.removeEventListener('touchend', onTouchEnd, { capture: true })
         el.removeEventListener('touchcancel', onTouchEnd, { capture: true })
-      } else {
-        el.removeEventListener('mousedown', onMouseDown)
-        window.removeEventListener('mousemove', onMouseMove)
-        window.removeEventListener('mouseup', onMouseUp)
-        el.removeEventListener('wheel', onWheel)
       }
+      el.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      el.removeEventListener('wheel', onWheel)
     }
   // plugins.length added: effect must re-run after FC loads dynamically.
   // On first render FC=null → containerRef is null (loading div shown) → effect exits early.
