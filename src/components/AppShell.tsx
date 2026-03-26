@@ -111,6 +111,11 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     }).catch(() => {})
   }
 
+  const handleDeleteTask = (id: string) => {
+    setTasks(prev => prev.filter(t => t.id !== id))
+    fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => {})
+  }
+
   const handleProfileUpdate = (updated: UserProfile) => {
     setProfile(updated)
     const t = updated.theme ?? theme
@@ -184,6 +189,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       onTaskToggle={handleTaskToggle}
       onScheduleTask={handleScheduleTask}
       onAddTask={handleAddTask}
+      onDeleteTask={handleDeleteTask}
     />
   )
 

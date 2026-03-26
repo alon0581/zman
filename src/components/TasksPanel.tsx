@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
+import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react'
 import { CalendarEvent, Task } from '@/types'
 import { format, isPast, parseISO } from 'date-fns'
-import { CheckCircle2, Circle, Calendar, ChevronDown, ChevronRight, Plus, CheckCheck } from 'lucide-react'
+import { CheckCircle2, Circle, Calendar, ChevronDown, ChevronRight, Plus, CheckCheck, Trash2 } from 'lucide-react'
 
 const listVariants = {
   show: { transition: { staggerChildren: 0.04 } },
@@ -22,6 +22,7 @@ interface Props {
   onTaskToggle: (id: string, newStatus: Task['status']) => void
   onScheduleTask: (task: Task) => void
   onAddTask: (text: string) => void
+  onDeleteTask?: (id: string) => void
 }
 
 const PRIORITY_DOT: Record<Task['priority'], string> = {
@@ -46,6 +47,7 @@ const T = {
     due: 'Due',
     add: 'Add a task...',
     send: 'Send',
+    delete: 'Delete',
   },
   he: {
     tasks: 'משימות',
@@ -57,13 +59,95 @@ const T = {
     due: 'עד',
     add: 'הוסף משימה...',
     send: 'שלח',
+    delete: 'מחק',
   },
 }
 
-export default function TasksPanel({ tasks, events = [], language = 'en', onTaskToggle, onScheduleTask, onAddTask }: Props) {
+// ─── Swipeable task wrapper ─────────────────────────────────────────────────
+// Swipe left → reveals red Delete button. Tap Delete → slides out + removes.
+function SwipeableTask({
+  isOverdue,
+  deleteLabel,
+  onDeleteStart,
+  onDelete,
+  children,
+}: {
+  isOverdue: boolean
+  deleteLabel: string
+  onDeleteStart: () => void
+  onDelete: () => void
+  children: React.ReactNode
+}) {
+  const x = useMotionValue(0)
+
+  const handleDragEnd = (_: unknown, info: { offset: { x: number } }) => {
+    if (info.offset.x < -45) {
+      // Snap to reveal delete button
+      animate(x, -80, { type: 'spring', stiffness: 500, damping: 35 })
+    } else {
+      // Snap back to closed
+      animate(x, 0, { type: 'spring', stiffness: 500, damping: 35 })
+    }
+  }
+
+  const handleDeleteTap = () => {
+    // Signal parent to use slide-out exit animation
+    onDeleteStart()
+    // Slide task off screen to the left
+    animate(x, -500, { duration: 0.22, ease: [0.4, 0, 1, 1] as [number, number, number, number] })
+    // Then remove from state (AnimatePresence will collapse height)
+    setTimeout(onDelete, 180)
+  }
+
+  return (
+    <div style={{ position: 'relative', borderRadius: 10, overflow: 'hidden' }}>
+      {/* Red delete button — revealed on left swipe */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', alignItems: 'stretch', justifyContent: 'flex-end',
+      }}>
+        <button
+          onClick={handleDeleteTap}
+          style={{
+            width: 80, background: '#EF4444', border: 'none', cursor: 'pointer',
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            justifyContent: 'center', gap: 3, color: '#fff',
+            borderRadius: '0 10px 10px 0', flexShrink: 0,
+          }}
+        >
+          <Trash2 size={15} />
+          <span style={{ fontSize: 11, fontWeight: 700 }}>{deleteLabel}</span>
+        </button>
+      </div>
+
+      {/* Draggable task surface */}
+      <motion.div
+        drag="x"
+        dragConstraints={{ left: -80, right: 0 }}
+        dragElastic={0.05}
+        dragMomentum={false}
+        onDragEnd={handleDragEnd}
+        style={{
+          x,
+          background: 'var(--bg-card)',
+          borderRadius: 10,
+          border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
+          padding: '10px 12px',
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}
+      >
+        {children}
+      </motion.div>
+    </div>
+  )
+}
+
+export default function TasksPanel({ tasks, events = [], language = 'en', onTaskToggle, onScheduleTask, onAddTask, onDeleteTask }: Props) {
   const [collapsedTopics, setCollapsedTopics] = useState<Set<string>>(new Set())
   const [showDone, setShowDone] = useState(false)
   const [addText, setAddText] = useState('')
+  // Track which tasks are mid-swipe-delete (to use a different exit animation)
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
   const lang = T[language as keyof typeof T] ?? T.en
   const pLabels = PRIORITY_LABEL[language] ?? PRIORITY_LABEL.en
   const isRTL = language === 'he'
@@ -227,88 +311,95 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                     >
                       <AnimatePresence initial={false}>
                       {topicTasks.map(task => {
-                        const isOverdue = task.deadline && isPast(parseISO(task.deadline))
+                        const isOverdue = !!(task.deadline && isPast(parseISO(task.deadline)))
+                        const isBeingDeleted = deletingIds.has(task.id)
                         return (
                           <motion.div
                             key={task.id}
                             layout
                             variants={taskVariants}
-                            exit="exit"
-                            style={{
-                              background: 'var(--bg-card)', borderRadius: 10,
-                              border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
-                              padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: 10,
-                            }}>
-                            {/* Checkbox */}
-                            <button
-                              onClick={() => onTaskToggle(task.id, task.status === 'done' ? 'pending' : 'done')}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0, marginTop: 1, color: task.status === 'done' ? '#34D399' : 'var(--text-2)' }}
+                            exit={isBeingDeleted
+                              ? { x: -400, opacity: 0, height: 0, marginBottom: 0, transition: { duration: 0.28 } }
+                              : 'exit'
+                            }
+                          >
+                            <SwipeableTask
+                              isOverdue={isOverdue}
+                              deleteLabel={lang.delete}
+                              onDeleteStart={() => setDeletingIds(prev => new Set([...prev, task.id]))}
+                              onDelete={() => onDeleteTask?.(task.id)}
                             >
-                              {task.status === 'done'
-                                ? <CheckCircle2 size={18} />
-                                : <Circle size={18} />}
-                            </button>
-
-                            {/* Content */}
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{
-                                fontSize: 14, fontWeight: 500, color: 'var(--text)',
-                                textDecoration: task.status === 'done' ? 'line-through' : 'none',
-                                opacity: task.status === 'done' ? 0.5 : 1,
-                                lineHeight: 1.3,
-                              }}>
-                                {/* Priority dot */}
-                                <span style={{
-                                  display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
-                                  background: PRIORITY_DOT[task.priority], marginRight: 6, marginBottom: 1, verticalAlign: 'middle',
-                                }} />
-                                {task.title}
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                                <span style={{
-                                  fontSize: 10, fontWeight: 600, color: PRIORITY_DOT[task.priority],
-                                  opacity: 0.85,
-                                }}>
-                                  {pLabels[task.priority]}
-                                </span>
-                                {scheduledByTaskId[task.id] && (
-                                  <span style={{
-                                    fontSize: 11, color: '#3B7EF7', fontWeight: 500,
-                                    display: 'flex', alignItems: 'center', gap: 3,
-                                  }}>
-                                    <Calendar size={10} />
-                                    {format(scheduledByTaskId[task.id], language === 'he' ? 'd MMM, HH:mm' : 'MMM d, h:mma')}
-                                  </span>
-                                )}
-                                {task.deadline && (
-                                  <span style={{
-                                    fontSize: 11, color: isOverdue ? '#EF4444' : 'var(--text-2)',
-                                    fontWeight: isOverdue ? 600 : 400,
-                                  }}>
-                                    {isOverdue ? `⚠ ${lang.overdue}` : lang.due}{' '}
-                                    {format(parseISO(task.deadline), 'MMM d')}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Schedule button */}
-                            {task.status !== 'done' && (
+                              {/* Checkbox */}
                               <button
-                                onClick={() => onScheduleTask(task)}
-                                title="Schedule on calendar"
-                                style={{
-                                  background: 'var(--bg-input)', border: '1px solid var(--border)',
-                                  borderRadius: 6, cursor: 'pointer', padding: '4px 8px',
-                                  display: 'flex', alignItems: 'center', gap: 4,
-                                  fontSize: 11, color: 'var(--text-2)', flexShrink: 0,
-                                  whiteSpace: 'nowrap',
-                                }}
+                                onClick={() => onTaskToggle(task.id, task.status === 'done' ? 'pending' : 'done')}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0, marginTop: 1, color: task.status === 'done' ? '#34D399' : 'var(--text-2)' }}
                               >
-                                <Calendar size={12} />
-                                {lang.schedule}
+                                {task.status === 'done'
+                                  ? <CheckCircle2 size={18} />
+                                  : <Circle size={18} />}
                               </button>
-                            )}
+
+                              {/* Content */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                  fontSize: 14, fontWeight: 500, color: 'var(--text)',
+                                  textDecoration: task.status === 'done' ? 'line-through' : 'none',
+                                  opacity: task.status === 'done' ? 0.5 : 1,
+                                  lineHeight: 1.3,
+                                }}>
+                                  {/* Priority dot */}
+                                  <span style={{
+                                    display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                                    background: PRIORITY_DOT[task.priority], marginRight: 6, marginBottom: 1, verticalAlign: 'middle',
+                                  }} />
+                                  {task.title}
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                                  <span style={{
+                                    fontSize: 10, fontWeight: 600, color: PRIORITY_DOT[task.priority],
+                                    opacity: 0.85,
+                                  }}>
+                                    {pLabels[task.priority]}
+                                  </span>
+                                  {scheduledByTaskId[task.id] && (
+                                    <span style={{
+                                      fontSize: 11, color: '#3B7EF7', fontWeight: 500,
+                                      display: 'flex', alignItems: 'center', gap: 3,
+                                    }}>
+                                      <Calendar size={10} />
+                                      {format(scheduledByTaskId[task.id], language === 'he' ? 'd MMM, HH:mm' : 'MMM d, h:mma')}
+                                    </span>
+                                  )}
+                                  {task.deadline && (
+                                    <span style={{
+                                      fontSize: 11, color: isOverdue ? '#EF4444' : 'var(--text-2)',
+                                      fontWeight: isOverdue ? 600 : 400,
+                                    }}>
+                                      {isOverdue ? `⚠ ${lang.overdue}` : lang.due}{' '}
+                                      {format(parseISO(task.deadline), 'MMM d')}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Schedule button */}
+                              {task.status !== 'done' && (
+                                <button
+                                  onClick={() => onScheduleTask(task)}
+                                  title="Schedule on calendar"
+                                  style={{
+                                    background: 'var(--bg-input)', border: '1px solid var(--border)',
+                                    borderRadius: 6, cursor: 'pointer', padding: '4px 8px',
+                                    display: 'flex', alignItems: 'center', gap: 4,
+                                    fontSize: 11, color: 'var(--text-2)', flexShrink: 0,
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <Calendar size={12} />
+                                  {lang.schedule}
+                                </button>
+                              )}
+                            </SwipeableTask>
                           </motion.div>
                         )
                       })}
