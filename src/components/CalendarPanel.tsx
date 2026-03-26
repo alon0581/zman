@@ -115,9 +115,10 @@ export default function CalendarPanel({
         pinch.startHeight = slotHeightRef.current
         // Capture scroll anchor once — used for ALL subsequent moves in this gesture
         pinch.startScrollTop = getBodyScroller()?.scrollTop ?? 0
-        // Capture now-indicator top positions — scaled during gesture just like events
+        // Capture now-indicator top positions — FC sets top on the line/arrow children,
+        // NOT on the container (container always has top:"" / offsetTop:0).
         pinch.indicatorStartTops = (Array.from(
-          el.querySelectorAll('.fc-timegrid-now-indicator-container')
+          el.querySelectorAll('.fc-timegrid-now-indicator-line, .fc-timegrid-now-indicator-arrow')
         ) as HTMLElement[]).map(ind => ind.offsetTop)
         pinch.active = true
         swipe.triggered = true // suppress swipe while pinching
@@ -166,7 +167,7 @@ export default function CalendarPanel({
           // visual offset survives.  Math: FC keeps top=startTop; we add
           // translateY(startTop*(ratio-1)) so the rendered position = startTop*ratio.
           const indRatio = newH / pinch.startHeight;
-          (Array.from(el.querySelectorAll('.fc-timegrid-now-indicator-container')) as HTMLElement[])
+          (Array.from(el.querySelectorAll('.fc-timegrid-now-indicator-line, .fc-timegrid-now-indicator-arrow')) as HTMLElement[])
             .forEach((ind, i) => {
               const delta = (pinch.indicatorStartTops[i] ?? 0) * (indRatio - 1)
               ind.style.transform = `translateY(${Math.round(delta)}px)`
@@ -205,7 +206,7 @@ export default function CalendarPanel({
         el.style.removeProperty('--pinch-scale')
 
         // Clear translateY offsets so FC's flushSync re-render sets the final top cleanly
-        ;(Array.from(el.querySelectorAll('.fc-timegrid-now-indicator-container')) as HTMLElement[])
+        ;(Array.from(el.querySelectorAll('.fc-timegrid-now-indicator-line, .fc-timegrid-now-indicator-arrow')) as HTMLElement[])
           .forEach(ind => { ind.style.transform = '' })
 
         const target = getBodyScroller()
