@@ -65,10 +65,14 @@ const T = {
 
 // ─── Swipeable task wrapper ─────────────────────────────────────────────────
 // Swipe left → reveals red Delete button. Tap Delete → slides out + removes.
-// Layout: overflow:hidden outer div clips a wider inner motion.div.
-// The inner div is (containerWidth + 80px) wide: task content fills 100%, delete
-// button fills the extra 80px on the right. No z-index tricks needed — the delete
-// button is physically outside the visible area until the user swipes.
+//
+// Layout trick: the outer div has overflow:hidden. The draggable motion.div is
+// position:relative and fills the outer div's width. The delete button is
+// position:absolute with left:'100%' — placed just outside the right edge of the
+// motion.div, so it's always clipped by the outer overflow:hidden at rest.
+// When motion.div transforms left (x=-80), the absolute button moves with it
+// (absolute children transform with their parent) and becomes visible.
+// No z-index tricks needed.
 function SwipeableTask({
   isOverdue,
   deleteLabel,
@@ -95,42 +99,40 @@ function SwipeableTask({
   const handleDeleteTap = (e: React.MouseEvent) => {
     e.stopPropagation()
     onDeleteStart()
-    animate(x, -500, { duration: 0.22, ease: [0.4, 0, 1, 1] as [number, number, number, number] })
-    setTimeout(onDelete, 180)
+    // Slide task off to the left; call onDelete slightly after animation ends (0.25s)
+    animate(x, -600, { duration: 0.25, ease: [0.4, 0, 1, 1] as [number, number, number, number] })
+    setTimeout(onDelete, 260)
   }
 
   return (
-    // overflow:hidden clips the 80px delete button until the surface slides left
+    // overflow:hidden clips the delete button (at left:100%) until swipe reveals it
     <div style={{
       overflow: 'hidden', borderRadius: 10,
       border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
     }}>
-      {/* Draggable strip — wider than the container by 80px */}
       <motion.div
         drag="x"
         dragConstraints={{ left: -80, right: 0 }}
         dragElastic={0.05}
         dragMomentum={false}
         onDragEnd={handleDragEnd}
-        style={{ x, display: 'flex', width: 'calc(100% + 80px)' }}
+        style={{
+          x,
+          position: 'relative',    // makes this the containing block for the absolute delete btn
+          background: 'var(--bg-card)',
+          padding: '10px 12px',
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}
+        onClick={revealed ? snapClose : undefined}
       >
-        {/* ── Task content — fills 100% of the visible container ── */}
-        <div
-          style={{
-            flex: '0 0 100%', background: 'var(--bg-card)',
-            padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: 10,
-            boxSizing: 'border-box',
-          }}
-          onClick={revealed ? (e => { e.stopPropagation(); snapClose() }) : undefined}
-        >
-          {children}
-        </div>
+        {children}
 
-        {/* ── Red delete button — the extra 80px, clipped at rest ── */}
+        {/* ── Delete button — absolutely outside the right edge, clipped at rest ── */}
         <div
           onClick={handleDeleteTap}
           style={{
-            flex: '0 0 80px', background: '#EF4444', cursor: 'pointer',
+            position: 'absolute', top: 0, bottom: 0, left: '100%', width: 80,
+            background: '#EF4444', cursor: 'pointer',
             display: 'flex', flexDirection: 'column', alignItems: 'center',
             justifyContent: 'center', gap: 3,
           }}
@@ -147,8 +149,6 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
   const [collapsedTopics, setCollapsedTopics] = useState<Set<string>>(new Set())
   const [showDone, setShowDone] = useState(false)
   const [addText, setAddText] = useState('')
-  // Track which tasks are mid-swipe-delete (to use a different exit animation)
-  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
   const lang = T[language as keyof typeof T] ?? T.en
   const pLabels = PRIORITY_LABEL[language] ?? PRIORITY_LABEL.en
   const isRTL = language === 'he'
@@ -269,6 +269,7 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
               </div>
             )}
 
+            <AnimatePresence initial={false}>
             {topicEntries.map(([topic, topicTasks]) => {
               const isCollapsed = collapsedTopics.has(topic)
               const doneCount = doneCountByTopic[topic] ?? 0
@@ -276,7 +277,12 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
               const progress = totalCount > 0 ? Math.round(doneCount / totalCount * 100) : 0
 
               return (
-                <div key={topic} style={{ marginBottom: 20 }}>
+                <motion.div
+                  key={topic}
+                  exit={{ opacity: 0, height: 0, overflow: 'hidden', marginBottom: 0 }}
+                  transition={{ duration: 0.22 }}
+                  style={{ marginBottom: 20 }}
+                >
                   {/* Topic header */}
                   <button
                     onClick={() => toggleTopic(topic)}
@@ -313,21 +319,17 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                       <AnimatePresence initial={false}>
                       {topicTasks.map(task => {
                         const isOverdue = !!(task.deadline && isPast(parseISO(task.deadline)))
-                        const isBeingDeleted = deletingIds.has(task.id)
                         return (
                           <motion.div
                             key={task.id}
                             layout
                             variants={taskVariants}
-                            exit={isBeingDeleted
-                              ? { x: -400, opacity: 0, height: 0, marginBottom: 0, transition: { duration: 0.28 } }
-                              : 'exit'
-                            }
+                            exit={{ opacity: 0, height: 0, marginBottom: 0, transition: { duration: 0.18 } }}
                           >
                             <SwipeableTask
                               isOverdue={isOverdue}
                               deleteLabel={lang.delete}
-                              onDeleteStart={() => setDeletingIds(prev => new Set([...prev, task.id]))}
+                              onDeleteStart={() => {}}
                               onDelete={() => onDeleteTask?.(task.id)}
                             >
                               {/* Checkbox */}
@@ -407,9 +409,10 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                       </AnimatePresence>
                     </motion.div>
                   )}
-                </div>
+                </motion.div>
               )
             })}
+            </AnimatePresence>
 
             {/* Done section */}
             {done.length > 0 && (
