@@ -116,8 +116,8 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
 
     const now = Date.now()
 
-    // ── Double-tap detected (450ms window) ──────────────────────────────────
-    if (now - lastTapRef.current < 450) {
+    // ── Double-tap detected (600ms window) ──────────────────────────────────
+    if (now - lastTapRef.current < 600) {
       lastTapRef.current = 0
       // Cancel any pending single-tap recording that hasn't started yet
       if (singleTapTimerRef.current) {

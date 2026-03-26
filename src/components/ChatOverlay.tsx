@@ -30,14 +30,18 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
   const lang = (language === 'he' ? 'he' : 'en') as keyof typeof T
   const isRTL = language === 'he' || language === 'ar'
   const t = T[lang]
+  // Guard: ignore backdrop clicks for the first 250ms after mount.
+  // Prevents residual click events from a double-tap on the FAB from
+  // immediately closing the overlay that was just opened by that same tap.
+  const mountTimeRef = useRef(Date.now())
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — closes overlay, but ignores stray events in the first 250ms */}
       <motion.div
-        onClick={onClose}
+        onClick={() => { if (Date.now() - mountTimeRef.current > 250) onClose() }}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
