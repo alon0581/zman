@@ -118,7 +118,7 @@ export default function CalendarPanel({
         // Capture now-indicator top positions — scaled during gesture just like events
         pinch.indicatorStartTops = (Array.from(
           el.querySelectorAll('.fc-timegrid-now-indicator-container')
-        ) as HTMLElement[]).map(ind => parseFloat(ind.style.top) || 0)
+        ) as HTMLElement[]).map(ind => ind.offsetTop)
         pinch.active = true
         swipe.triggered = true // suppress swipe while pinching
         // Activate CSS scale transform on event blocks so they move with slots
