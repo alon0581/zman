@@ -79,57 +79,48 @@ function SwipeableTask({
   children: React.ReactNode
 }) {
   const x = useMotionValue(0)
+  const [revealed, setRevealed] = useState(false)
+
+  const snapReveal = () => { animate(x, -80, { type: 'spring', stiffness: 500, damping: 35 }); setRevealed(true) }
+  const snapClose  = () => { animate(x, 0,   { type: 'spring', stiffness: 500, damping: 35 }); setRevealed(false) }
 
   const handleDragEnd = (_: unknown, info: { offset: { x: number } }) => {
-    if (info.offset.x < -45) {
-      // Snap to reveal delete button
-      animate(x, -80, { type: 'spring', stiffness: 500, damping: 35 })
-    } else {
-      // Snap back to closed
-      animate(x, 0, { type: 'spring', stiffness: 500, damping: 35 })
-    }
+    info.offset.x < -45 ? snapReveal() : snapClose()
   }
 
-  const handleDeleteTap = () => {
-    // Signal parent to use slide-out exit animation
+  const handleDeleteTap = (e: React.MouseEvent) => {
+    e.stopPropagation()
     onDeleteStart()
-    // Slide task off screen to the left
     animate(x, -500, { duration: 0.22, ease: [0.4, 0, 1, 1] as [number, number, number, number] })
-    // Then remove from state (AnimatePresence will collapse height)
     setTimeout(onDelete, 180)
   }
 
   return (
-    // Outer container: overflow:hidden + borderRadius handle the visual clipping.
-    // The inner draggable surface must have NO borderRadius — transparent corners
-    // would expose the red button behind even when x=0.
-    <div style={{
-      position: 'relative',
-      borderRadius: 10,
-      overflow: 'hidden',
-      border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
-    }}>
-      {/* Red delete button — absolutely behind the task surface, right-aligned */}
-      <div style={{
-        position: 'absolute', right: 0, top: 0, bottom: 0, width: 80,
-        background: '#EF4444',
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', gap: 3,
-      }}>
-        <button
-          onClick={handleDeleteTap}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: 3, color: '#fff', padding: '8px 0', width: '100%',
-          }}
-        >
-          <Trash2 size={15} />
-          <span style={{ fontSize: 11, fontWeight: 700 }}>{deleteLabel}</span>
-        </button>
+    // Outer div: tapping anywhere when revealed → close (delete button stops propagation)
+    <div
+      style={{ position: 'relative', borderRadius: 10, overflow: 'hidden',
+               border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}` }}
+      onClick={revealed ? snapClose : undefined}
+    >
+      {/* ── Red delete button ── always z-index:2, only receives events when revealed */}
+      <div
+        onClick={handleDeleteTap}
+        style={{
+          position: 'absolute', right: 0, top: 0, bottom: 0, width: 80,
+          background: '#EF4444', zIndex: 2, cursor: 'pointer',
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', gap: 3,
+          pointerEvents: revealed ? 'auto' : 'none',
+        }}
+      >
+        <Trash2 size={15} color="#fff" />
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{deleteLabel}</span>
       </div>
 
-      {/* Draggable task surface — NO borderRadius so no transparent corners expose the red behind */}
+      {/* ── Draggable task surface ──
+          z-index:1 ensures it sits above the red button at rest (x=0).
+          When revealed we keep drag active (so user can drag back to close),
+          but disable tap so the outer div's onClick fires for close. */}
       <motion.div
         drag="x"
         dragConstraints={{ left: -80, right: 0 }}
@@ -138,8 +129,8 @@ function SwipeableTask({
         onDragEnd={handleDragEnd}
         style={{
           x,
+          position: 'relative', zIndex: 1,
           background: 'var(--bg-card)',
-          // borderRadius intentionally omitted — outer overflow:hidden handles rounding
           padding: '10px 12px',
           display: 'flex', alignItems: 'flex-start', gap: 10,
         }}
