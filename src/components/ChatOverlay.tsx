@@ -26,7 +26,7 @@ const T = {
 
 export default function ChatOverlay({ messages, input, setInput, loading, streamingId, isOnboarding, language, isMobile, onSend, onClose, onReset }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const lang = (language === 'he' ? 'he' : 'en') as keyof typeof T
   const isRTL = language === 'he' || language === 'ar'
   const t = T[lang]
@@ -116,12 +116,25 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
 
         {/* Input */}
         <div style={{ flexShrink: 0, padding: '10px 16px 16px', borderTop: '1px solid var(--border)', paddingBottom: isMobile ? 'calc(16px + env(safe-area-inset-bottom, 0px))' : 16 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <textarea
               ref={inputRef}
               value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(input) } }}
+              rows={1}
+              onChange={e => {
+                setInput(e.target.value)
+                // Auto-grow up to ~5 lines
+                e.target.style.height = 'auto'
+                e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
+              }}
+              onKeyDown={e => {
+                // Desktop: Enter sends, Shift+Enter = new line
+                // Mobile: Enter always = new line (send via button only)
+                if (e.key === 'Enter' && !e.shiftKey && !isMobile) {
+                  e.preventDefault()
+                  onSend(input)
+                }
+              }}
               placeholder={t.placeholder}
               disabled={loading}
               dir={isRTL ? 'rtl' : 'ltr'}
@@ -129,6 +142,8 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
                 flex: 1, padding: '11px 16px', borderRadius: 14, outline: 'none', fontFamily: 'inherit',
                 border: '1px solid var(--border-hi)', background: 'var(--bg-input)', color: 'var(--text)',
                 fontSize: 16, opacity: loading ? 0.5 : 1,
+                resize: 'none', overflow: 'hidden', lineHeight: '1.45',
+                minHeight: 44, maxHeight: 120,
               }}
             />
             {input.trim() && (
