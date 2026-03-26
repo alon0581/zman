@@ -100,19 +100,28 @@ function SwipeableTask({
   }
 
   return (
-    <div style={{ position: 'relative', borderRadius: 10, overflow: 'hidden' }}>
-      {/* Red delete button — revealed on left swipe */}
+    // Outer container: overflow:hidden + borderRadius handle the visual clipping.
+    // The inner draggable surface must have NO borderRadius — transparent corners
+    // would expose the red button behind even when x=0.
+    <div style={{
+      position: 'relative',
+      borderRadius: 10,
+      overflow: 'hidden',
+      border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
+    }}>
+      {/* Red delete button — absolutely behind the task surface, right-aligned */}
       <div style={{
-        position: 'absolute', inset: 0,
-        display: 'flex', alignItems: 'stretch', justifyContent: 'flex-end',
+        position: 'absolute', right: 0, top: 0, bottom: 0, width: 80,
+        background: '#EF4444',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', gap: 3,
       }}>
         <button
           onClick={handleDeleteTap}
           style={{
-            width: 80, background: '#EF4444', border: 'none', cursor: 'pointer',
+            background: 'none', border: 'none', cursor: 'pointer',
             display: 'flex', flexDirection: 'column', alignItems: 'center',
-            justifyContent: 'center', gap: 3, color: '#fff',
-            borderRadius: '0 10px 10px 0', flexShrink: 0,
+            gap: 3, color: '#fff', padding: '8px 0', width: '100%',
           }}
         >
           <Trash2 size={15} />
@@ -120,7 +129,7 @@ function SwipeableTask({
         </button>
       </div>
 
-      {/* Draggable task surface */}
+      {/* Draggable task surface — NO borderRadius so no transparent corners expose the red behind */}
       <motion.div
         drag="x"
         dragConstraints={{ left: -80, right: 0 }}
@@ -130,8 +139,7 @@ function SwipeableTask({
         style={{
           x,
           background: 'var(--bg-card)',
-          borderRadius: 10,
-          border: `1px solid ${isOverdue ? 'rgba(239,68,68,0.35)' : 'var(--border)'}`,
+          // borderRadius intentionally omitted — outer overflow:hidden handles rounding
           padding: '10px 12px',
           display: 'flex', alignItems: 'flex-start', gap: 10,
         }}
