@@ -638,8 +638,8 @@ export default function CalendarPanel({
                     </div>
                   </div>
                   <span style={{
-                    position: 'absolute', top: 2, right: 4,
-                    fontSize: 8, lineHeight: 1, opacity: 0.8,
+                    position: 'absolute', bottom: 3, right: 4,
+                    fontSize: 8, lineHeight: 1, opacity: 0.7,
                   }}>{mobilityIcon}</span>
                 </div>
               )
