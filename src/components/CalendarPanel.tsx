@@ -75,8 +75,26 @@ export default function CalendarPanel({
     setSlotHeight(h)
   }, [])
 
-  const goPrev = useCallback(() => calRef.current?.getApi().prev(), [])
-  const goNext = useCallback(() => calRef.current?.getApi().next(), [])
+  const goPrev = useCallback(() => {
+    const api = calRef.current?.getApi()
+    if (!api) return
+    const v = api.view.type
+    if (v === 'timeGrid3Day' || v === 'timeGridWeek') {
+      api.incrementDate({ days: -1 })
+    } else {
+      api.prev()
+    }
+  }, [])
+  const goNext = useCallback(() => {
+    const api = calRef.current?.getApi()
+    if (!api) return
+    const v = api.view.type
+    if (v === 'timeGrid3Day' || v === 'timeGridWeek') {
+      api.incrementDate({ days: 1 })
+    } else {
+      api.next()
+    }
+  }, [])
 
   // Swipe spring animation — brief nudge feedback on the inner FC wrapper
   const [swipeOffset, setSwipeOffset] = useState(0)
