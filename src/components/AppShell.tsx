@@ -9,6 +9,7 @@ import Header from './Header'
 import SettingsClient from '@/app/settings/SettingsClient'
 import VoiceFAB from './VoiceFAB'
 import ChatOverlay from './ChatOverlay'
+import MethodOnboardingModal from './MethodOnboardingModal'
 import ToastContainer from './Toast'
 import { useChatEngine } from '@/hooks/useChatEngine'
 import { CalendarDays, CheckSquare, Sun, Moon, Settings as SettingsIcon } from 'lucide-react'
@@ -31,6 +32,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   const [mobileTab, setMobileTab] = useState<'calendar' | 'tasks'>('calendar')
   const [showSettings, setShowSettings] = useState(false)
   const [chatOverlayOpen, setChatOverlayOpen] = useState(false)
+  const [showMethodModal, setShowMethodModal] = useState(false)
   const [aliveActive, setAliveActive] = useState(false)
 
   const language = profile?.language ?? 'en'
@@ -162,6 +164,14 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       setChatOverlayOpen(true)
     }
   }, [needsOnboarding, chatEngine.isOnboarding])
+
+  // Show method selection modal when user has no scheduling method yet
+  useEffect(() => {
+    if (profile && profile.onboarding_completed && !profile.scheduling_method && !needsOnboarding) {
+      const timer = setTimeout(() => setShowMethodModal(true), 800)
+      return () => clearTimeout(timer)
+    }
+  }, [profile, needsOnboarding])
 
   const handleAliveChange = useCallback((alive: boolean) => {
     setAliveActive(alive)
@@ -348,6 +358,19 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
           profile={profile}
           onClose={() => setShowSettings(false)}
           onProfileUpdate={handleProfileUpdate}
+        />
+      )}
+
+      {showMethodModal && profile && (
+        <MethodOnboardingModal
+          profile={profile}
+          memory={chatEngine.memory}
+          language={language}
+          onComplete={(updated) => {
+            handleProfileUpdate(updated)
+            setShowMethodModal(false)
+          }}
+          onSkip={() => setShowMethodModal(false)}
         />
       )}
     </div>

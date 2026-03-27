@@ -5,6 +5,7 @@ import { CalendarEvent } from '@/types'
 import { format, parseISO } from 'date-fns'
 import { he as heLocale } from 'date-fns/locale'
 import { X, Trash2, Check } from 'lucide-react'
+import { classifyMobility, getMobilityReason } from '@/lib/scheduling/mobilityClassifier'
 
 const COLORS = [
   { hex: '#3B7EF7', label: 'Work' },
@@ -29,7 +30,9 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
   const isHe = language === 'he'
   const [title, setTitle] = useState(event.title)
   const [color, setColor] = useState(event.color ?? '#3B7EF7')
-  const [mobility, setMobility] = useState<'fixed' | 'flexible' | 'ask_first'>(event.mobility_type ?? 'ask_first')
+  const autoMobility = event.mobility_type ?? classifyMobility(event.title, event.created_by, true)
+  const [mobility, setMobility] = useState<'fixed' | 'flexible' | 'ask_first'>(autoMobility)
+  const [mobilityManual, setMobilityManual] = useState(!!event.mobility_type)
   const [saving, setSaving] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
@@ -164,6 +167,10 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
         </div>
 
         {/* Mobility selector */}
+        <div style={{ fontSize: 10, color: 'var(--text-2)', marginBottom: 6, opacity: 0.75 }}>
+          {getMobilityReason(event.title, mobility, event.created_by ?? 'user', isHe)}
+          {mobilityManual && <span style={{ marginLeft: 4, opacity: 0.6 }}>{isHe ? '(ידני)' : '(manual)'}</span>}
+        </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
           {([
             { key: 'fixed' as const, emoji: '🔒', label: isHe ? 'קבוע' : 'Fixed' },
@@ -172,7 +179,7 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
           ]).map(m => (
             <button
               key={m.key}
-              onClick={() => setMobility(m.key)}
+              onClick={() => { setMobility(m.key); setMobilityManual(true) }}
               style={{
                 flex: 1, padding: '5px 4px', borderRadius: 8,
                 border: mobility === m.key ? '1.5px solid #3B7EF7' : '1px solid var(--border)',
