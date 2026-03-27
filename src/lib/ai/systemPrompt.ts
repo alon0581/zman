@@ -22,6 +22,34 @@ export function buildSystemPrompt(
     .map(e => `- ${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}]${e.mobility_type ? ` [${e.mobility_type === 'fixed' ? '🔒' : e.mobility_type === 'flexible' ? '🟡' : '🔵'}]` : ''}`)
     .join('\n')
 
+  // Build course intelligence from all recurring events
+  const baseCourse = (title: string) =>
+    title.replace(/^(מעבדה ל|תרגול ל|תרגיל ל|חדווה ל|lab for |tutorial for |lab |recitation )/i, '').trim()
+
+  const seriesMap: Record<string, { title: string; count: number }> = {}
+  for (const e of events) {
+    if (e.series_id) {
+      if (!seriesMap[e.series_id]) seriesMap[e.series_id] = { title: e.title, count: 0 }
+      seriesMap[e.series_id].count++
+    }
+  }
+  const courseGroups: Record<string, Array<{ title: string; count: number }>> = {}
+  for (const s of Object.values(seriesMap)) {
+    const base = baseCourse(s.title)
+    if (!courseGroups[base]) courseGroups[base] = []
+    courseGroups[base].push(s)
+  }
+  const numCourses = Object.keys(courseGroups).length
+  const courseIntelligence = numCourses > 0 ? `
+📚 Schedule Intelligence (pre-computed — use this for course/schedule questions):
+Distinct courses: ${numCourses}
+${Object.entries(courseGroups).map(([base, parts]) =>
+    `  • ${base}${parts.length > 1 ? ` [${parts.map(p => p.title).join(' + ')}]` : ''}`
+  ).join('\n')}
+RULE: Hebrew number words (אחד/שתיים/שלוש) in course names are part of the name — do NOT convert.
+RULE: When asked "how many courses?" → answer ${numCourses}, not a raw event/series count.
+` : ''
+
   const peak = profile?.productivity_peak ?? 'morning'
   const peakStart = peak === 'morning' ? 6 : peak === 'afternoon' ? 12 : 18
   const peakEnd   = peak === 'morning' ? 12 : peak === 'afternoon' ? 18 : 23
@@ -109,7 +137,7 @@ When the user mentions ANY task, deadline, project, or exam — apply this proto
 Current time: ${nowStr}
 ${isMorning ? '(Morning — be especially proactive about today)' : ''}
 ${profileSummary}
-${methodContext}
+${courseIntelligence}${methodContext}
 ${taskIntakeProtocol}
 ${memorySummary}
 ${taskSummary}
