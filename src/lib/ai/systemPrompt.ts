@@ -38,9 +38,14 @@ User preferences:
 - Work hours: ${profile.preferred_hours ? `${profile.preferred_hours.start}:00–${profile.preferred_hours.end}:00` : 'flexible'}
 - Language: ${profile.language === 'he' ? 'Hebrew (עברית)' : profile.language}
 ${profile.occupation ? `- Occupation: ${profile.occupation}` : ''}
-${profile.scheduling_method ? `- Scheduling method: ${METHOD_LABELS[profile.scheduling_method as SchedulingMethod]?.en ?? profile.scheduling_method}` : ''}` : ''
+${profile.scheduling_method ? `- Primary scheduling method: ${METHOD_LABELS[profile.scheduling_method as SchedulingMethod]?.en ?? profile.scheduling_method} ${METHOD_LABELS[profile.scheduling_method as SchedulingMethod]?.emoji ?? ''}` : ''}
+${profile.secondary_methods && profile.secondary_methods.length > 0 ? `- Complementary methods: ${profile.secondary_methods.map(m => `${METHOD_LABELS[m as SchedulingMethod]?.en ?? m} ${METHOD_LABELS[m as SchedulingMethod]?.emoji ?? ''}`).join(', ')}` : ''}
+${profile.challenge ? `- Main challenge: ${profile.challenge}` : ''}
+${profile.persona ? `- Persona: ${profile.persona}` : ''}` : ''
 
-  const methodContext = profile?.scheduling_method ? buildMethodContext(profile.scheduling_method) : ''
+  const methodContext = profile?.scheduling_method
+    ? buildMethodContext(profile.scheduling_method, profile.secondary_methods ?? [])
+    : ''
 
   const memorySummary = (() => {
     if (!memory || memory.length === 0) return ''
@@ -344,8 +349,8 @@ Tasks = todo items to track. Events = scheduled time blocks. Use BOTH when appro
 - After creating task: "הוספתי '[title]' למשימות תחת [topic] ✓" (or English)`
 }
 
-/** Returns method-specific AI behavior instructions */
-function buildMethodContext(method: string): string {
+/** Returns method-specific AI behavior instructions, including secondary method hints */
+function buildMethodContext(method: string, secondary: string[] = []): string {
   const m: Record<string, string> = {
     pomodoro: `
 ════════════════════════════════════════
@@ -532,5 +537,37 @@ The user follows Time Boxing (hard deadlines). Adapt ALL scheduling behavior:
 - At timebox end: create next timebox if task unfinished rather than extending`,
   }
 
-  return m[method] ?? ''
+  const primaryContext = m[method] ?? ''
+  if (!primaryContext) return ''
+
+  // Secondary method short hints — how to combine with primary
+  const secondaryHints: Record<string, string> = {
+    eat_the_frog:   '🐸 Eat the Frog (complement): schedule the hardest task FIRST every morning, before the primary method sessions begin.',
+    theme_days:     '🗓️ Theme Days (complement): align sessions with the day\'s theme — don\'t schedule deep work on meetings-day.',
+    the_one_thing:  '🎯 The One Thing (complement): before scheduling, ask "what\'s the ONE thing that makes everything else easier today?"',
+    weekly_review:  '🔄 Weekly Review (complement): every Friday/Sunday — schedule a 45-min review: clear inboxes, check goals, plan next week.',
+    okr:            '🏆 OKR (complement): link every scheduled task to a quarterly KR. If it doesn\'t advance a KR, question its priority.',
+    kanban:         '🗂️ Kanban (complement): limit WIP to 3 tasks in-progress. Before adding new tasks, check if something can be completed first.',
+    time_boxing:    '⏱️ Time Boxing (complement): assign hard time limits to sessions — when the box ends, move on regardless of completion.',
+    pomodoro:       '🍅 Pomodoro (complement): break sessions into 25-min focus blocks with 5-min breaks.',
+    deep_work:      '🧠 Deep Work (complement): protect 2–3 hour uninterrupted blocks during peak hours for the hardest work.',
+    eisenhower:     '📊 Eisenhower (complement): classify tasks by urgency+importance before scheduling — prioritize Q2 (important, not urgent).',
+    gtd:            '📥 GTD (complement): capture every loose thought immediately, clarify next action, process inbox weekly.',
+    time_blocking:  '📅 Time Blocking (complement): every task on the calendar — no unscheduled work time.',
+    ivy_lee:        '📝 Ivy Lee (complement): each evening, write exactly 6 tasks for tomorrow in priority order.',
+  }
+
+  const secondaryContext = secondary
+    .filter(s => s !== method && secondaryHints[s])
+    .map(s => secondaryHints[s])
+    .join('\n')
+
+  if (!secondaryContext) return primaryContext
+
+  return `${primaryContext}
+
+════════════════════════════════════════
+COMPLEMENTARY METHODS (use alongside primary)
+════════════════════════════════════════
+${secondaryContext}`
 }
