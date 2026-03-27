@@ -104,13 +104,14 @@ export async function POST(req: NextRequest) {
     if (!userId) return new Response('Unauthorized', { status: 401 })
 
     const body = await req.json()
-    const { messages, events, profile, isOnboarding, memory, tasks } = body as {
+    const { messages, events, profile, isOnboarding, memory, tasks, timezone } = body as {
       messages: Array<{ role: 'user' | 'assistant'; content: string }>
       events: CalendarEvent[]
       profile: UserProfile | null
       isOnboarding?: boolean
       memory?: Array<{ key: string; value: string }>
       tasks?: Task[]
+      timezone?: string
     }
 
     // ── Resolve AI provider + key ───────────────────────────────────────────
@@ -147,9 +148,25 @@ export async function POST(req: NextRequest) {
     }
     // ───────────────────────────────────────────────────────────────────────
 
+    // Create "now" in the user's timezone (Railway runs UTC; user may be in Asia/Jerusalem etc.)
+    const userNow = (() => {
+      if (!timezone) return new Date()
+      try {
+        // Get the current time as it appears in the user's timezone
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: false,
+        }).formatToParts(new Date())
+        const get = (t: string) => parts.find(p => p.type === t)?.value ?? '0'
+        return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`)
+      } catch { return new Date() }
+    })()
+
     const systemPrompt = isOnboarding
-      ? buildOnboardingSystemPrompt(profile?.language ?? 'en', new Date())
-      : buildSystemPrompt(profile, events, new Date(), memory as AIMemory[] | undefined, tasks)
+      ? buildOnboardingSystemPrompt(profile?.language ?? 'en', userNow)
+      : buildSystemPrompt(profile, events, userNow, memory as AIMemory[] | undefined, tasks)
 
     const createdEvents: CalendarEvent[] = []
     const updatedEvents: CalendarEvent[] = []

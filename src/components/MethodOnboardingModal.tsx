@@ -65,6 +65,7 @@ export default function MethodOnboardingModal({ profile, memory, language, onCom
           messages: messagesPayload,
           profile, memory, events: [], tasks: [],
           isOnboarding: true,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       })
       if (!res.ok || !res.body) return
