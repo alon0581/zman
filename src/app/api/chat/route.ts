@@ -658,6 +658,31 @@ async function executeTool(
       return { success: true, event, buffer_warnings: bufferWarnings.length > 0 ? bufferWarnings : undefined }
     }
 
+    case 'update_event': {
+      const { event_id, title, color, mobility_type } = input as { event_id: string; title?: string; color?: string; mobility_type?: string }
+      const existing = currentEvents.find(e => e.id === event_id)
+      if (!existing) return { error: 'Event not found' }
+
+      const changes: Record<string, string> = {}
+      if (title)         changes.title         = title
+      if (color)         changes.color         = color
+      if (mobility_type) changes.mobility_type = mobility_type
+
+      if (Object.keys(changes).length === 0) return { error: 'No changes provided' }
+
+      if (DEMO_MODE) {
+        demoStorage.updateEvent(event_id, changes as Partial<CalendarEvent>, userId)
+      } else {
+        const { createClient } = await import('@/lib/supabase/server')
+        const supabase = await createClient()
+        await supabase.from('events').update(changes).eq('id', event_id).eq('user_id', userId)
+      }
+
+      const updated = { ...existing, ...changes }
+      updatedEvents.push(updated as CalendarEvent)
+      return { success: true, event: updated }
+    }
+
     case 'move_event': {
       const { event_id, new_start_time, new_end_time } = input as { event_id: string; new_start_time: string; new_end_time: string }
       const existing = currentEvents.find(e => e.id === event_id)

@@ -153,6 +153,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
   // Memory state
   const [memory, setMemory] = useState<AIMemory[]>([])
   const [deletingMemKey, setDeletingMemKey] = useState<string | null>(null)
+  const [memoryExpanded, setMemoryExpanded] = useState(false)
 
   const supabase = createClient()
   const lang = p.language ?? 'en'
@@ -439,44 +440,67 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
         {/* ── MEMORY ── */}
         <Card label={t(lang, 'memorySection')}>
-          <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>{t(lang, 'memoryDesc')}</div>
-          {memory.length === 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--text-2)', fontStyle: 'italic', padding: '8px 0' }}>
-              {t(lang, 'memoryEmpty')}
+          {/* Toggle row */}
+          <button
+            onClick={() => setMemoryExpanded(v => !v)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px 16px', background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--text)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 500 }}>{t(lang, 'memoryDesc')}</span>
+              {memory.length > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 700, background: 'rgba(59,126,247,0.15)', color: 'var(--blue)', padding: '2px 8px', borderRadius: 20 }}>
+                  {memory.length}
+                </span>
+              )}
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {memory.map(m => {
-                const sourceLabels = MEMORY_SOURCE_LABELS[lang] ?? MEMORY_SOURCE_LABELS.en
-                const srcLabel = sourceLabels[m.learned_from] ?? m.learned_from
-                return (
-                  <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 10, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: 'var(--blue)', background: 'rgba(59,126,247,0.1)', padding: '2px 6px', borderRadius: 5, flexShrink: 0 }}>{m.key}</span>
-                    <span style={{ fontSize: 13, color: 'var(--text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.value}</span>
-                    <span style={{ fontSize: 10, color: 'var(--text-2)', flexShrink: 0 }}>{srcLabel}</span>
-                    <button
-                      onClick={async () => {
-                        setDeletingMemKey(m.key)
-                        await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [m.key] }) })
-                        setMemory(prev => prev.filter(x => x.key !== m.key))
-                        setDeletingMemKey(null)
-                      }}
-                      disabled={deletingMemKey === m.key}
-                      style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: 'none', background: 'rgba(255,100,100,0.15)', color: '#F87171', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: deletingMemKey === m.key ? 0.5 : 1 }}
-                    >×</button>
-                  </div>
-                )
-              })}
-              <button
-                onClick={async () => {
-                  if (!window.confirm(t(lang, 'memoryClearConfirm'))) return
-                  await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) })
-                  setMemory([])
-                }}
-                style={{ marginTop: 4, padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.08)', color: '#F87171', fontSize: 12, cursor: 'pointer', alignSelf: 'flex-start' }}
-              >
-                🗑 {t(lang, 'memoryClearAll')}
-              </button>
+            <span style={{ fontSize: 18, color: 'var(--text-2)', transform: memoryExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>›</span>
+          </button>
+
+          {memoryExpanded && (
+            <div style={{ borderTop: '1px solid var(--border)', padding: '12px 14px' }}>
+              {memory.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-2)', fontStyle: 'italic' }}>
+                  {t(lang, 'memoryEmpty')}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {memory.map(m => {
+                    const sourceLabels = MEMORY_SOURCE_LABELS[lang] ?? MEMORY_SOURCE_LABELS.en
+                    const srcLabel = sourceLabels[m.learned_from] ?? m.learned_from
+                    return (
+                      <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                        <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: 'var(--blue)', background: 'rgba(59,126,247,0.1)', padding: '2px 6px', borderRadius: 5, flexShrink: 0, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.key}</span>
+                        <span style={{ fontSize: 13, color: 'var(--text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.value}</span>
+                        <span style={{ fontSize: 10, color: 'var(--text-2)', flexShrink: 0, opacity: 0.7 }}>{srcLabel}</span>
+                        <button
+                          onClick={async () => {
+                            setDeletingMemKey(m.key)
+                            await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [m.key] }) })
+                            setMemory(prev => prev.filter(x => x.key !== m.key))
+                            setDeletingMemKey(null)
+                          }}
+                          disabled={deletingMemKey === m.key}
+                          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: 'none', background: 'rgba(255,100,100,0.15)', color: '#F87171', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: deletingMemKey === m.key ? 0.5 : 1 }}
+                        >×</button>
+                      </div>
+                    )
+                  })}
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm(t(lang, 'memoryClearConfirm'))) return
+                      await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) })
+                      setMemory([])
+                    }}
+                    style={{ marginTop: 4, padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.08)', color: '#F87171', fontSize: 12, cursor: 'pointer', alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    🗑 {t(lang, 'memoryClearAll')}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </Card>

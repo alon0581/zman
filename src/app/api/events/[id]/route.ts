@@ -26,13 +26,14 @@ export async function PUT(
 
   const { id } = await params
   const body = await req.json()
-  const { title, color, start_time, end_time } = body as Record<string, string>
+  const { title, color, start_time, end_time, mobility_type } = body as Record<string, string>
 
   const changes: Record<string, string> = {}
-  if (title)      changes.title      = title
-  if (color)      changes.color      = color
-  if (start_time) changes.start_time = start_time
-  if (end_time)   changes.end_time   = end_time
+  if (title)         changes.title         = title
+  if (color)         changes.color         = color
+  if (start_time)    changes.start_time    = start_time
+  if (end_time)      changes.end_time      = end_time
+  if (mobility_type) changes.mobility_type = mobility_type
 
   if (DEMO_MODE) {
     demoStorage.updateEvent(id, changes, userId)

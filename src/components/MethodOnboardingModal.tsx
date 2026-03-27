@@ -273,7 +273,8 @@ export default function MethodOnboardingModal({ profile, memory, language, onCom
             onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
           />
 
-          {/* Mic button */}
+          {/* Mic button — hidden while user is typing */}
+          {!input.trim() && (
           <button
             onClick={toggleMic}
             disabled={done || recState === 'processing' || loading}
@@ -293,6 +294,7 @@ export default function MethodOnboardingModal({ profile, memory, language, onCom
               ? <MicOff size={16} />
               : <Mic size={16} />}
           </button>
+          )}
 
           {/* Send button */}
           <button

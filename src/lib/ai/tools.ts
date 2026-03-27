@@ -50,6 +50,23 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'update_event',
+      description: 'Update properties of an existing event WITHOUT changing its time. Use to change title, color, or mobility_type. For example: user says "mark this as fixed", "זה קבוע", "make this flexible", "change to ask first" — call this tool with the new mobility_type.',
+      parameters: {
+        type: 'object',
+        properties: {
+          event_id: { type: 'string' },
+          title: { type: 'string', description: 'New title (optional)' },
+          color: { type: 'string', description: 'New hex color (optional)' },
+          mobility_type: { type: 'string', enum: ['fixed', 'flexible', 'ask_first'], description: 'New mobility classification (optional). fixed=🔒 never move, flexible=🟡 AI can move freely, ask_first=🔵 ask user before moving' },
+        },
+        required: ['event_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'delete_event',
       description: 'Delete an event. Always confirm first unless user explicitly asked. For recurring events: use delete_series:true to delete the entire series, or leave it false/omit to delete only this one instance.',
       parameters: {
