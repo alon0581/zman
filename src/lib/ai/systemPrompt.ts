@@ -22,10 +22,7 @@ export function buildSystemPrompt(
     .map(e => `- ${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}]${e.mobility_type ? ` [${e.mobility_type === 'fixed' ? '🔒' : e.mobility_type === 'flexible' ? '🟡' : '🔵'}]` : ''}`)
     .join('\n')
 
-  // Build course intelligence from all recurring events
-  const baseCourse = (title: string) =>
-    title.replace(/^(מעבדה ל|תרגול ל|תרגיל ל|חדווה ל|lab for |tutorial for |lab |recitation )/i, '').trim()
-
+  // Build accurate series list from recurring events — NO automatic grouping (grouping causes errors)
   const seriesMap: Record<string, { title: string; count: number }> = {}
   for (const e of events) {
     if (e.series_id) {
@@ -33,21 +30,14 @@ export function buildSystemPrompt(
       seriesMap[e.series_id].count++
     }
   }
-  const courseGroups: Record<string, Array<{ title: string; count: number }>> = {}
-  for (const s of Object.values(seriesMap)) {
-    const base = baseCourse(s.title)
-    if (!courseGroups[base]) courseGroups[base] = []
-    courseGroups[base].push(s)
-  }
-  const numCourses = Object.keys(courseGroups).length
-  const courseIntelligence = numCourses > 0 ? `
-📚 Schedule Intelligence (pre-computed — use this for course/schedule questions):
-Distinct courses: ${numCourses}
-${Object.entries(courseGroups).map(([base, parts]) =>
-    `  • ${base}${parts.length > 1 ? ` [${parts.map(p => p.title).join(' + ')}]` : ''}`
-  ).join('\n')}
-RULE: Hebrew number words (אחד/שתיים/שלוש) in course names are part of the name — do NOT convert.
-RULE: When asked "how many courses?" → answer ${numCourses}, not a raw event/series count.
+  const allSeries = Object.values(seriesMap)
+  const courseIntelligence = allSeries.length > 0 ? `
+📚 Recurring Series (exact data — ${allSeries.length} series total):
+${allSeries.map(s => `  • "${s.title}" — ${s.count} instances`).join('\n')}
+RULES:
+- Hebrew number words (אחד/שתיים/שלוש) in titles are PART of the name — do NOT alter them.
+- To count "courses": reason from the series names above — a lecture + its lab + its tutorial are ONE course. Do NOT assume components exist; only group series whose names clearly belong together.
+- Do NOT invent groupings — only group series that are clearly related by name (e.g. "X" + "מעבדה ל-X" = one course).
 ` : ''
 
   const peak = profile?.productivity_peak ?? 'morning'
