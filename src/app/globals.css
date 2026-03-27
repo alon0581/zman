@@ -340,7 +340,13 @@ input  { touch-action: manipulation; }
   box-shadow: 0 6px 20px rgba(0,0,0,0.4), inset 3px 0 0 rgba(255,255,255,0.28) !important;
 }
 .fc .fc-event-title { font-weight: 700 !important; }
-.fc .fc-event-time { font-size: 10px !important; opacity: 0.8 !important; }
+.fc .fc-event-time {
+  font-size: 10px !important;
+  opacity: 0.8 !important;
+  /* Force LTR so "8:00–10:00" never reverses in RTL Hebrew calendar */
+  direction: ltr !important;
+  unicode-bidi: embed !important;
+}
 
 /* Now indicator — thicker */
 .fc .fc-timegrid-now-indicator-line { border-width: 2px !important; }

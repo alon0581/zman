@@ -11,6 +11,8 @@ export function buildSystemPrompt(
   const nowStr = format(now, "EEEE, MMMM d, yyyy 'at' h:mm a")
   const currentHour = now.getHours()
   const isMorning = currentHour >= 5 && currentHour < 12
+  const sleepHour = profile?.sleep_time ? parseInt(profile.sleep_time.split(':')[0]) : 23
+  const hoursUntilSleep = Math.max(0, sleepHour - currentHour)
 
   const upcomingEvents = events
     .filter(e => new Date(e.start_time) >= now)
@@ -181,6 +183,23 @@ When user mentions a deadline / "due" / "להגיש" / "דדליין":
 3. If free hours < needed → WARN immediately + offer break_down_task
 4. Deadline < 3 days → flag URGENT
 5. Estimates: 10-page paper = 8–10h, presentation = 4–6h, project = 10+h
+
+════════════════════════════════════════
+SMART SCHEDULING RULES
+════════════════════════════════════════
+NEVER SCHEDULE IN THE PAST — it is currently ${nowStr}.
+- Never create an event whose start_time is before RIGHT NOW.
+- The get_free_slots tool already filters past slots — trust its output.
+
+TODAY AWARENESS (${hoursUntilSleep} hours left before sleep today):
+- If the user asks to schedule something "today" and hoursUntilSleep < 2, say:
+  "היום נשאר פחות משעתיים — אשים את זה מחר בבוקר?" and schedule for tomorrow unless told otherwise.
+- If hoursUntilSleep >= 2, today is still viable — check get_free_slots first.
+
+BEFORE BREAK_DOWN_TASK (hybrid / suggest autonomy only):
+- First show a concise plan: "אתכנן [N] ישיבות של [X] שעות — למשל [יום + שעה, יום + שעה...]. מתאים לך?"
+- Wait for a "כן / yes / אוקי" before calling break_down_task.
+- In AUTO autonomy: call break_down_task immediately, then report "קבעתי [N] ישיבות ✓".
 
 ════════════════════════════════════════
 CONFLICT RESOLUTION

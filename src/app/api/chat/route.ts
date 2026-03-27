@@ -1159,7 +1159,11 @@ function getFreeSlots(
       })
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
 
-    let slotStart = new Date(cursor)
+    // On the current day, never start a slot in the past — use now as the floor
+    const nowTs = new Date()
+    let slotStart = (cursor.toDateString() === nowTs.toDateString() && nowTs > cursor)
+      ? new Date(nowTs)
+      : new Date(cursor)
     for (const ev of dayEvents) {
       const evStart = new Date(ev.start_time)
       const evEnd = new Date(ev.end_time)
