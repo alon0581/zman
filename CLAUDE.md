@@ -59,24 +59,29 @@ src/
       chat/route.ts             — POST: AI chat endpoint (tool-call loop + SSE stream)
       transcribe/route.ts       — POST: Whisper transcription (multipart/form-data)
       events/route.ts           — GET: fetch all events
-      events/[id]/route.ts      — PUT: update single event (title/time/color)
+      events/[id]/route.ts      — PUT: update single event (title/time/color/mobility_type)
+      memory/route.ts           — GET/POST/DELETE: AI memory key-value store
       demo-profile/route.ts     — GET/POST: demo profile read/write
       onboarding/route.ts       — POST: save onboarding data
   components/
-    AppShell.tsx                — Layout shell (desktop: Header+Calendar+Tasks; mobile: minimal top bar + 2-tab bar)
+    AppShell.tsx                — Layout shell; triggers MethodOnboardingModal if no scheduling_method
     CalendarPanel.tsx           — FullCalendar wrapper with EventPopup + pinch-to-zoom + swipe
     ChatOverlay.tsx             — Floating chat panel (desktop: side drawer; mobile: bottom sheet)
     ChatPanel.tsx               — ⚠️ UNUSED — was replaced by ChatOverlay + VoiceFAB
-    EventPopup.tsx              — Apple Calendar-style inline event editor popup
+    EventPopup.tsx              — Apple Calendar-style inline editor (+ mobility_type + AI reasoning)
     Header.tsx                  — Top nav (desktop only; hidden on mobile)
+    MethodOnboardingModal.tsx   — AI chat popup for users with no scheduling_method yet
     TasksPanel.tsx              — Task list with AI scheduling
     Toast.tsx                   — Notification toasts (Motion spring animations)
     VoiceFAB.tsx                — Floating mic button (hold=auto-send, tap=edit mode)
     OnboardingModal.tsx         — First-run onboarding form
   lib/
     ai/
-      tools.ts                  — OpenAI tool definitions (create/move/delete/list/etc.)
-      systemPrompt.ts           — System prompt builder (profile + events context)
+      tools.ts                  — OpenAI tool definitions (create/move/update/delete/list/etc.)
+      systemPrompt.ts           — System prompt builder (profile + events + recurring series context)
+    scheduling/
+      mobilityClassifier.ts     — classifyMobility() + getMobilityReason() + MOBILITY_INFO
+      methodMapper.ts           — mapToMethod(persona, challenge, dayStructure) → primary+secondary
     demo/
       storage.ts                — File-based demo storage (read/write demo-events.json)
     supabase/
@@ -87,6 +92,7 @@ src/
 data/
   demo-events.json              — Demo event storage (auto-created, git-ignored)
   demo-profile.json             — Demo user profile (auto-created, git-ignored)
+  users/{userId}/memory.json    — Per-user AI memory (key-value facts, deduped by key)
 ```
 
 ---
@@ -132,10 +138,16 @@ The core AI logic lives here. Flow:
 ### Tool definitions (`src/lib/ai/tools.ts`)
 - `create_event` — creates event; server-side duplicate check built into `executeTool`
 - `move_event` — updates start/end times
-- `delete_event` — deletes by id
+- `update_event` — updates properties WITHOUT changing time (title, color, mobility_type). `apply_to_series:true` updates ALL instances of a recurring series at once
+- `delete_event` — deletes by id; `delete_series:true` deletes all future instances
 - `get_free_slots` — finds gaps respecting profile hours
 - `break_down_task` — splits task into N sessions across free slots
-- `list_events` — lists events in date range
+- `list_events` — lists events; returns `recurring_series` (grouped by series_id) + `logical_courses` (grouped by base course name) + `summary`
+- `analyze_schedule` — deep analysis with pre-computed issues (back-to-back, missing lunch, overloaded days, etc.)
+- `save_memory` / `delete_memory` — persistent key-value facts about the user
+- `create_task` / `update_task` / `delete_task` / `list_tasks` — task management
+- `send_notification` — real push notification to device
+- `delete_all_events` — wipe all events (requires explicit confirmation)
 
 ### Color convention (used in tools.ts + systemPrompt.ts)
 | Color | Hex | Use |
@@ -261,9 +273,91 @@ Shared hook used by both `AppShell` and `ChatOverlay`. Handles:
 
 ### Event Popup
 - `eventClick` opens `EventPopup` near cursor (desktop) or centered on screen (mobile)
-- `EventPopup` is an Apple Calendar-style inline editor (title, time, color, delete/save)
+- `EventPopup` is an Apple Calendar-style inline editor (title, time, color, mobility_type, delete/save)
 - `onEventUpdate(id, changes)` → calls `PUT /api/events/[id]` → updates demo storage + state
 - `onEventDelete(id)` → calls `DELETE /api/events/[id]` → removes from storage + state
+- Mobility selector shows AI reasoning via `getMobilityReason()` — why the event was classified as fixed/flexible/ask_first
+- Manual override adds `(ידני)/(manual)` label and saves to DB
+- `PUT /api/events/[id]` now persists `mobility_type` (previously only title/color/times were saved)
+
+---
+
+## Mobility Classification (`src/lib/scheduling/mobilityClassifier.ts`)
+
+Every event has a `mobility_type: 'fixed' | 'flexible' | 'ask_first'` that controls how the AI handles scheduling conflicts.
+
+### Classification logic (priority order)
+1. **Fixed keywords** in title → `fixed` 🔒 (בחינה, הרצאה, מעבדה, טיסה, ראיון, exam, lecture, lab…)
+2. **Created by AI** → `flexible` 🟡 (all AI-generated events default to flexible)
+3. **Flexible keywords** in title → `flexible` 🟡 (session, work block, study block…)
+4. **Created by user** → `ask_first` 🔵 (default for anything the user added)
+
+### Where it runs
+- **EventPopup**: `event.mobility_type ?? classifyMobility(title, created_by)` — uses saved value or re-computes
+- **Calendar tile badge**: same fallback logic — shows 🔒/🟡/🔵 icon at bottom-right of event (not top, to avoid overlapping time text)
+- **AI tool `update_event`**: AI can change mobility_type; `apply_to_series:true` updates all instances of a recurring series at once
+
+### `getMobilityReason(title, mobility, createdBy, isHe)`
+Returns a human-readable explanation shown in EventPopup:
+- "זוהה 'בחינה' — מועד שלא ניתן להזיז"
+- "נוצר על ידי זמן — ניתן לשינוי בחופשיות"
+- "הוספת את זה — ישאל לפני הזזה"
+
+Manual overrides show `(ידני)` label and are persisted to the DB.
+
+---
+
+## Recurring Events & AI Intelligence
+
+### `series_id` field
+All instances of a recurring event share the same `series_id`. The AI uses this for bulk operations.
+
+### `update_event` with `apply_to_series: true`
+When the AI needs to change mobility_type (or title/color) for an entire series, it calls `update_event` once with `apply_to_series: true` — the server finds all events with the same `series_id` and updates them all. Never loops per-instance.
+
+### `list_events` response enrichment
+Returns extra context beyond raw events:
+- `recurring_series` — array of `{ series_id, title, count, from, to }` (one entry per series)
+- `logical_courses` — groups series by base course name (strips "מעבדה ל", "תרגול ל", "lab for" prefixes)
+- `summary` — short human-readable text
+
+### `systemPrompt.ts` — Recurring Series block
+`buildSystemPrompt()` pre-computes a `courseIntelligence` block from the events array and injects it into the system prompt. This lets the AI answer "how many courses do I have?" accurately without an extra tool call. Key rules injected:
+- Hebrew number words (אחד/שתיים/שלוש) in course names are part of the name, NOT arithmetic
+- Answer from the series list, not from raw event count
+- "INFER BEFORE YOU ANSWER" — reason from the data, don't report raw numbers directly
+
+---
+
+## AI Memory (`data/users/{userId}/memory.json`)
+
+Key-value store of facts the AI learns about the user (occupation, wake_time, study_field, etc.).
+
+- **API**: `GET/POST/DELETE /api/memory`
+- **Deduplication**: POST deduplicates by `key` — same key = update in place, never duplicates
+- **Tools**: `save_memory` (AI writes), `delete_memory` (AI removes outdated facts)
+- **Settings display**: Collapsible section — collapsed by default, shows count badge. Keys translated to Hebrew labels (scheduling_method → "שיטת ניהול זמן"). Display also deduplicates by key client-side.
+
+---
+
+## Scheduling Methods (`src/lib/scheduling/methodMapper.ts`)
+
+`mapToMethod(persona, challenge, dayStructure)` returns `{ primary, secondary[] }`.
+
+### Personas: `student | manager | entrepreneur | developer | other`
+### Challenges: `procrastination | overwhelmed | focus | scattered | goals`
+### Day structures: `fixed | variable | mixed | independent`
+
+### Available methods (13 total)
+`pomodoro`, `deep_work`, `eisenhower`, `gtd`, `time_blocking`, `ivy_lee`,
+`eat_the_frog`, `theme_days`, `the_one_thing`, `weekly_review`, `okr`, `kanban`, `time_boxing`,
+`moscow`, `rule_5217`, `scrum`, `energy_management`, `twelve_week_year`
+
+### MethodOnboardingModal
+- Triggered by `AppShell` (800ms delay) when `onboarding_completed=true` but `scheduling_method` is missing
+- AI chat popup with SSE streaming + inline mic
+- Auto-closes when AI calls `complete_onboarding` and `memory_updated` event fires
+- Mic button hides when input has text (avoids overlap)
 
 ---
 
