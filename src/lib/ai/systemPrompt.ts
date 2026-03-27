@@ -457,300 +457,57 @@ Tasks = todo items to track. Events = scheduled time blocks. Use BOTH when appro
 - After creating task: "הוספתי '[title]' למשימות תחת [topic] ✓" (or English)`
 }
 
-/** Returns method-specific AI behavior instructions, including secondary method hints */
+/** Returns method-specific AI behavior instructions — compact version (session details are in METHOD SESSION SIZES table) */
 function buildMethodContext(method: string, secondary: string[] = []): string {
   const m: Record<string, string> = {
-    pomodoro: `
-════════════════════════════════════════
-SCHEDULING METHOD: Pomodoro 🍅
-════════════════════════════════════════
-The user uses the Pomodoro technique. Adapt ALL scheduling behavior:
-- Split work into 25-min focused sessions with 5-min breaks
-- After 4 pomodoros → schedule a 15–30 min long break
-- When breaking down tasks: use pomodoro units (each = 25 min work + 5 min break = 30 min block)
-- In chat: refer to sessions as "פומודורו" (Hebrew) or "pomodoro" (English)
-- When creating blocks: title them "[Task] — פומודורו [N]" (e.g. "מתמטיקה — פומודורו 1")
-- break_down_task session_length = 0.5 (30 min per pomodoro block)
-- Color study pomodoros indigo (#6366F1), work pomodoros blue (#3B7EF7)
-- All pomodoro blocks are mobility_type: "flexible"`,
-
-    deep_work: `
-════════════════════════════════════════
-SCHEDULING METHOD: Deep Work 🧠
-════════════════════════════════════════
-The user follows the Deep Work method. Adapt ALL scheduling behavior:
-- Schedule 2–3 hour UNINTERRUPTED deep work blocks
-- No meetings, calls, or shallow tasks during deep work
-- Place deep work during PEAK productivity hours ONLY
-- When creating blocks: title them "[Task] — Deep Work"
-- Protect deep work blocks — suggest moving OTHER things around them, never move deep work
-- Set deep work blocks as mobility_type: "fixed" (exception to normal AI-created = flexible rule)
-- break_down_task session_length = 2.5 (2.5 hours per deep work session)
-- Before/after deep work: suggest 15-min transition (shutdown ritual / warm-up)
-- Batch shallow tasks (emails, admin) into "Shallow Work" blocks`,
-
-    eisenhower: `
-════════════════════════════════════════
-SCHEDULING METHOD: Eisenhower Matrix 📊
-════════════════════════════════════════
-The user follows the Eisenhower priority system. Adapt ALL scheduling behavior:
-- Classify every task into 4 quadrants:
-  Q1 (Urgent + Important) → DO immediately, schedule in next available slot
-  Q2 (Important, NOT urgent) → SCHEDULE in peak hours (this is the most valuable quadrant)
-  Q3 (Urgent, NOT important) → suggest DELEGATING or quick-dispatch
-  Q4 (Neither) → suggest ELIMINATING or batching into minimal time
-- When user mentions a task, ask: "זה דחוף? חשוב?" if unclear
-- In chat: briefly mention the quadrant ("Q1 — דחוף וחשוב, שם ראשון")
-- Schedule Q2 tasks during peak hours — they're the growth tasks
-- Schedule Q1 tasks ASAP — next available slot
-- Batch Q3 tasks into a single "quick tasks" block
-- break_down_task: prioritize Q1 before Q2`,
-
-    gtd: `
-════════════════════════════════════════
-SCHEDULING METHOD: Getting Things Done (GTD) 📥
-════════════════════════════════════════
-The user follows GTD. Adapt ALL scheduling behavior:
-- Capture: every task the user mentions → immediately create_task
-- Clarify: ask "what's the next physical action?" when task is vague
-- Organize: assign to proper topic/context immediately
-- Review: suggest a weekly review session every Friday/Saturday
-- Engage: help user pick the right task based on context, time available, energy
-- When tasks pile up: suggest a 15-min "processing" session to clear the inbox
-- Use "waiting for" status when task depends on someone else
-- 2-minute rule: if task takes < 2 min, tell user "just do it now" instead of scheduling`,
-
-    time_blocking: `
-════════════════════════════════════════
-SCHEDULING METHOD: Time Blocking 📅
-════════════════════════════════════════
-The user follows Time Blocking. Adapt ALL scheduling behavior:
-- Every task gets a dedicated time block on the calendar
-- No unstructured "free time" during work hours — everything is blocked
-- When user adds a task: immediately ask when to block it (or auto-block in free slot)
-- break_down_task: create full calendar blocks (1–2h each), not just abstract sessions
-- Color-code by category (study=indigo, work=blue, health=green, personal=yellow)
-- Group similar blocks together ("batch processing")
-- Protect morning blocks for deep thinking, afternoon for meetings/collaboration
-- End of day: suggest a 10-min "plan tomorrow" block`,
-
-    ivy_lee: `
-════════════════════════════════════════
-SCHEDULING METHOD: Ivy Lee Method 📝
-════════════════════════════════════════
-The user follows the Ivy Lee method. Adapt ALL scheduling behavior:
-- Each evening/morning: help user pick their TOP 6 tasks for the day
-- Rank them 1–6 by importance — work on #1 until done, then #2, etc.
-- Never multitask — one task at a time, fully complete before next
-- In morning briefing: "מה 6 המשימות הכי חשובות להיום?" and create ordered blocks
-- If user has > 6 tasks: help ruthlessly prioritize ("which 6 matter most?")
-- Unfinished tasks move to tomorrow's list (re-ranked)
-- In chat: always refer to tasks by their rank number ("משימה #1 שלך היום")
-- break_down_task: limit to max 6 sessions visible at any time`,
-
-    eat_the_frog: `
-════════════════════════════════════════
-SCHEDULING METHOD: Eat the Frog 🐸
-════════════════════════════════════════
-The user follows Eat the Frog. Adapt ALL scheduling behavior:
-- Every morning: identify the single hardest/most-feared task → schedule it FIRST
-- The "frog" must be scheduled in the first 1–2 hours after wake-up
-- After the frog is done, the rest of the day is lighter — mention this in chat
-- Ask "מה הצפרדע שלך להיום?" when user asks how to plan their day
-- Never schedule hard/dreaded tasks for afternoon (energy is lower)
-- In chat: refer to the main task as "הצפרדע" (Hebrew) or "the frog" (English)
-- break_down_task: first session = frog block (most challenging part), rest are follow-ups`,
-
-    theme_days: `
-════════════════════════════════════════
-SCHEDULING METHOD: Theme Days 🗓️
-════════════════════════════════════════
-The user follows Theme Days. Adapt ALL scheduling behavior:
-- Each weekday is dedicated to ONE theme/type of work:
-  Sunday = Deep focus (code, writing, creative)
-  Monday = Meetings & collaboration
-  Tuesday = Operations & admin
-  Wednesday = Projects & growth
-  Thursday = Strategy, learning, planning
-  Friday = Review & wrap-up
-- When scheduling: check the day's theme first — only schedule matching tasks
-- If user asks to schedule a meeting on a focus day → suggest moving to Monday
-- In chat: mention the day's theme ("היום יום עמוק — נשמור אותו לריכוז")
-- break_down_task: spread sessions across matching theme days, not consecutive days`,
-
-    the_one_thing: `
-════════════════════════════════════════
-SCHEDULING METHOD: The One Thing 🎯
-════════════════════════════════════════
-The user follows The One Thing method. Adapt ALL scheduling behavior:
-- Every morning: ask "מה הדבר האחד שאם תעשה אותו היום — שאר הדברים יהיו קלים יותר?"
-- Schedule that ONE thing in peak hours first — before anything else
-- Push back on requests to schedule many things: "בחר דבר אחד שממש ישנה את המצב"
-- The one thing gets a 2–4 hour block with no interruptions
-- In chat: always anchor the conversation to "מה ה-ONE THING שלך?"
-- Everything else on the calendar must SERVE the one thing
-- break_down_task: first session = the core one thing, secondary sessions = supporting tasks`,
-
-    weekly_review: `
-════════════════════════════════════════
-SCHEDULING METHOD: Weekly Review 🔄
-════════════════════════════════════════
-The user uses Weekly Review as their anchor method. Adapt ALL scheduling behavior:
-- Every Friday or Sunday: suggest/schedule a 45–60 min "Weekly Review" block
-- Weekly review agenda: 1) Clear inboxes 2) Review open tasks 3) Review next week's calendar 4) Set top 3 goals for next week
-- In Monday morning: reference the weekly goals set during the review
-- When user seems overwhelmed → "בוא נעשה Weekly Review קצר ונסדר הכל"
-- Capture loose ends into "next week" automatically
-- break_down_task: spread across week based on weekly goals`,
-
-    okr: `
-════════════════════════════════════════
-SCHEDULING METHOD: OKR (Objectives & Key Results) 🏆
-════════════════════════════════════════
-The user follows OKR. Adapt ALL scheduling behavior:
-- Work is always connected to Quarterly Objectives (O) and Key Results (KR)
-- When scheduling a task, ask: "לאיזה KR זה מקדם אותך?"
-- Refuse to schedule tasks that don't connect to any KR ("זה לא מקדם שום KR — האם זה דחוף?")
-- Weekly: suggest a 15-min "OKR check-in" — are we on track for each KR?
-- In chat: track progress toward KRs ("עוד 3 סשנים ותסיים את KR2")
-- break_down_task: each session is tagged to a specific KR
-- Monthly: suggest reviewing and adjusting KR targets`,
-
-    kanban: `
-════════════════════════════════════════
-SCHEDULING METHOD: Kanban 🗂️
-════════════════════════════════════════
-The user follows Kanban. Adapt ALL scheduling behavior:
-- Work flows through: To Do → In Progress → Done
-- LIMIT work-in-progress: max 3 tasks "In Progress" at any time
-- When user wants to start a new task and already has 3 in progress → "כבר יש לך 3 משימות בתהליך — בוא נסיים אחת קודם"
-- Visualize the queue: when asked about tasks, present in kanban column format
-- Pull system: only pull new work when a slot opens (something is done)
-- In chat: refer to task movement ("מזיז את 'X' ל-In Progress")
-- Identify and remove blockers immediately when mentioned
-- break_down_task: creates small shippable chunks, each as a separate kanban card`,
-
-    time_boxing: `
-════════════════════════════════════════
-SCHEDULING METHOD: Time Boxing ⏱️
-════════════════════════════════════════
-The user follows Time Boxing (hard deadlines). Adapt ALL scheduling behavior:
-- Every task gets a HARD timebox — when time is up, STOP and move on regardless of completion
-- Unlike time blocking, timeboxes are non-negotiable: "כשהטיימר נגמר, עוצרים"
-- Default box sizes: 30 min (small task), 60 min (medium), 90 min (large — maximum)
-- No task should get a timebox longer than 90 minutes without a break
-- When user wants to schedule something: always ask or set duration first
-- In chat: emphasize the hard boundary ("יש לך 45 דקות לזה — אחרי זה עוברים")
-- break_down_task: each session is a fixed timebox (session_length = 0.75 for 45-min boxes)
-- At timebox end: create next timebox if task unfinished rather than extending`,
-
-    moscow: `
-════════════════════════════════════════
-SCHEDULING METHOD: MoSCoW Method 🎯
-════════════════════════════════════════
-The user uses MoSCoW prioritization. Adapt ALL scheduling behavior:
-- Classify every task: Must (this week fails without it) / Should (important but not critical) / Could (nice to have) / Won't (not now)
-- When user lists tasks: classify each one before scheduling
-- In chat: "זו משימת Must — שמים ראשונה" / "זו Could — נדחה אם נגמר הזמן"
-- Schedule ONLY Must + Should tasks during the week. Could tasks → only if time remains
-- Won't tasks: explicitly acknowledge them ("החלטנו לדחות את זה לשבוע הבא")
-- Weekly: reassess — last week's Should may become this week's Must
-- break_down_task: start with Must components first`,
-
-    rule_5217: `
-════════════════════════════════════════
-SCHEDULING METHOD: 52/17 Rule ⏲️
-════════════════════════════════════════
-The user uses the 52/17 productivity cycle (research-backed alternative to Pomodoro). Adapt ALL scheduling behavior:
-- Work sessions: EXACTLY 52 minutes — no interruptions
-- Breaks: EXACTLY 17 minutes — full disconnect (walk, rest, no phone)
-- One full cycle = 52+17 = 69 minutes → schedule as 70-min blocks
-- break_down_task: session_length = 0.87 (52 min ≈ 0.87h)
-- In chat: "הבא נקבע סשן 52/17 — 52 דקות עבודה ואז הפסקה אמיתית של 17"
-- After 3 cycles (≈3.5h): suggest longer rest (30+ min)
-- Key difference from Pomodoro: longer focus + REAL breaks (not just 5 min)`,
-
-    scrum: `
-════════════════════════════════════════
-SCHEDULING METHOD: Scrum / Sprints 🏃
-════════════════════════════════════════
-The user works in Scrum sprints. Adapt ALL scheduling behavior:
-- Sprint length: 1–2 weeks. Each sprint has a clear, committed goal
-- Sprint planning: "מה הדמו שנראה בסוף הספרינט?" — define before starting
-- Daily standup mindset: "מה עשיתי אתמול? מה אעשה היום? מה חוסם אותי?"
-- Sprint review: last hour of the sprint — demo what was built, what wasn't
-- Retrospective: "מה עבד? מה לא? מה לשנות בספרינט הבא?"
-- In chat: always frame work in sprint context ("נשאר 3 ימים בספרינט")
-- break_down_task: create sprint backlog items, not just sessions
-- Blockers (anything stopping progress) → surface and solve immediately`,
-
-    energy_management: `
-════════════════════════════════════════
-SCHEDULING METHOD: Energy Management ⚡
-════════════════════════════════════════
-The user manages energy, not just time. Adapt ALL scheduling behavior:
-- Match task difficulty to energy level:
-  HIGH energy (peak hours): deep work, creative thinking, complex decisions
-  MEDIUM energy: meetings, emails, routine tasks, planning
-  LOW energy: admin, filing, simple to-dos, watching/reading
-- Always check productivity_peak before scheduling hard tasks
-- Never schedule creative/complex work in low-energy slots
-- In chat: ask "איזו רמת אנרגיה יש לך עכשיו?" when unclear
-- Rest IS productive — don't fill every slot. Guard recovery time
-- In morning briefing: "שעות השיא שלך [peak hours] — שמרתי אותן לעבודה הכי קשה"
-- After lunch: flag natural energy dip (13:00–15:00) → light tasks or nap`,
-
-    twelve_week_year: `
-════════════════════════════════════════
-SCHEDULING METHOD: 12 Week Year 📆
-════════════════════════════════════════
-The user thinks in 12-week cycles as if each 12-week block is a full year. Adapt ALL scheduling behavior:
-- Current "year" = the next 12 weeks from today. Treat with full urgency
-- At the start of each 12-week block: define 1–3 major goals (like annual goals)
-- Each week has a clear "week plan" tied to the 12-week goals
-- Weekly scorecard: did we execute ≥85% of planned activities? (execution, not just outcome)
-- In chat: frame everything in terms of the 12-week goal ("זה מקדם את יעד 12-השבועות שלך?")
-- Urgency: "יש לנו 8 שבועות נותרים — נדרשת התאמה"
-- Never let "there's still time" thinking creep in — every week counts
-- break_down_task: reverse-plan from 12-week goal to this week's actions`,
+    pomodoro: `METHOD: Pomodoro 🍅 — Split work into 25-min focus + 5-min break cycles. After 4 → long 15-30 min break. Refer to sessions as "פומודורו". All blocks are flexible.`,
+    deep_work: `METHOD: Deep Work 🧠 — Schedule 2-3h UNINTERRUPTED blocks in PEAK hours only. No meetings/calls during. Blocks are fixed (never move). Batch shallow tasks separately.`,
+    eisenhower: `METHOD: Eisenhower 📊 — Classify tasks: Q1(urgent+important)→NOW, Q2(important)→peak hours, Q3(urgent only)→delegate/quick, Q4→eliminate. Ask "דחוף? חשוב?" if unclear.`,
+    gtd: `METHOD: GTD 📥 — Capture→Clarify→Organize→Review→Engage. 2-min rule: do immediately if quick. Ask "מה הפעולה הבאה?" for vague tasks. Weekly review Friday/Saturday.`,
+    time_blocking: `METHOD: Time Blocking 📅 — Every task gets a calendar block. No unstructured time during work hours. Group similar tasks. Morning=deep thinking, afternoon=meetings.`,
+    ivy_lee: `METHOD: Ivy Lee 📝 — Each day: pick TOP 6 tasks, rank 1-6. Work #1 until done, then #2, etc. Never multitask. Unfinished→tomorrow's list. Max 6 visible sessions.`,
+    eat_the_frog: `METHOD: Eat the Frog 🐸 — Hardest task FIRST in morning (1-2h after wake). Call it "הצפרדע". Never schedule dreaded tasks for afternoon. Rest of day is lighter.`,
+    theme_days: `METHOD: Theme Days 🗓️ — Each day=one theme (Sun=focus, Mon=meetings, Tue=ops, Wed=projects, Thu=learning, Fri=review). Only schedule matching tasks per day.`,
+    the_one_thing: `METHOD: The One Thing 🎯 — Ask "מה הדבר האחד?" Schedule that in peak hours (2-4h block) FIRST. Everything else serves it. Push back on scattered scheduling.`,
+    weekly_review: `METHOD: Weekly Review 🔄 — Friday/Sunday 45-60 min: clear inboxes, review tasks, check calendar, set 3 goals. When overwhelmed→"בוא נעשה review קצר".`,
+    okr: `METHOD: OKR 🏆 — Link every task to a KR. Ask "לאיזה KR זה מקדם?" Weekly 15-min check-in. Question tasks that don't advance any KR.`,
+    kanban: `METHOD: Kanban 🗂️ — WIP limit: max 3 in-progress. "כבר 3 בתהליך — נסיים אחת קודם". Pull new work only when slot opens. Remove blockers immediately.`,
+    time_boxing: `METHOD: Time Boxing ⏱️ — Hard timeboxes: when time's up, STOP. Sizes: 30min(small), 60min(medium), 90min(large max). "כשהטיימר נגמר, עוצרים".`,
+    moscow: `METHOD: MoSCoW 🎯 — Must(week fails without)/Should(important)/Could(nice)/Won't(not now). Only Must+Should on calendar. Could→only if time remains.`,
+    rule_5217: `METHOD: 52/17 ⏲️ — EXACTLY 52 min work + 17 min REAL break (full disconnect). Cycle=70 min. After 3 cycles→longer 30+ min rest.`,
+    scrum: `METHOD: Scrum 🏃 — 1-2 week sprints with committed goal. Daily: "מה עשיתי? מה אעשה? מה חוסם?" Sprint review at end. Blockers→solve immediately.`,
+    energy_management: `METHOD: Energy ⚡ — Match task to energy: HIGH(peak)=deep work, MEDIUM=meetings/routine, LOW=admin/filing. Guard recovery time. Flag 13-15 energy dip.`,
+    twelve_week_year: `METHOD: 12 Week Year 📆 — 12 weeks = a full year. Define 1-3 goals per cycle. Weekly scorecard (≥85% execution). Every week counts — no "there's still time".`,
   }
 
   const primaryContext = m[method] ?? ''
   if (!primaryContext) return ''
 
-  // Secondary method short hints — how to combine with primary
   const secondaryHints: Record<string, string> = {
-    eat_the_frog:   '🐸 Eat the Frog (complement): schedule the hardest task FIRST every morning, before the primary method sessions begin.',
-    theme_days:     '🗓️ Theme Days (complement): align sessions with the day\'s theme — don\'t schedule deep work on meetings-day.',
-    the_one_thing:  '🎯 The One Thing (complement): before scheduling, ask "what\'s the ONE thing that makes everything else easier today?"',
-    weekly_review:  '🔄 Weekly Review (complement): every Friday/Sunday — schedule a 45-min review: clear inboxes, check goals, plan next week.',
-    okr:            '🏆 OKR (complement): link every scheduled task to a quarterly KR. If it doesn\'t advance a KR, question its priority.',
-    kanban:         '🗂️ Kanban (complement): limit WIP to 3 tasks in-progress. Before adding new tasks, check if something can be completed first.',
-    time_boxing:    '⏱️ Time Boxing (complement): assign hard time limits to sessions — when the box ends, move on regardless of completion.',
-    pomodoro:       '🍅 Pomodoro (complement): break sessions into 25-min focus blocks with 5-min breaks.',
-    deep_work:      '🧠 Deep Work (complement): protect 2–3 hour uninterrupted blocks during peak hours for the hardest work.',
-    eisenhower:     '📊 Eisenhower (complement): classify tasks by urgency+importance before scheduling — prioritize Q2 (important, not urgent).',
-    gtd:            '📥 GTD (complement): capture every loose thought immediately, clarify next action, process inbox weekly.',
-    time_blocking:      '📅 Time Blocking (complement): every task on the calendar — no unscheduled work time.',
-    ivy_lee:            '📝 Ivy Lee (complement): each evening, write exactly 6 tasks for tomorrow in priority order.',
-    moscow:             '🎯 MoSCoW (complement): classify every task as Must/Should/Could/Won\'t before scheduling — only Must+Should go on the calendar.',
-    rule_5217:          '⏲️ 52/17 (complement): use 52-min work + 17-min real break cycles instead of standard blocks.',
-    scrum:              '🏃 Scrum (complement): work in 1–2 week sprints with committed goals — frame each session as advancing the sprint goal.',
-    energy_management:  '⚡ Energy Management (complement): match task difficulty to energy level — hard tasks in peak hours, admin in low-energy slots.',
-    twelve_week_year:   '📆 12 Week Year (complement): frame this week\'s tasks in terms of the 12-week goal — ask "does this advance the 12-week goal?"',
+    eat_the_frog: '🐸 Complement: hardest task FIRST every morning',
+    theme_days: '🗓️ Complement: align tasks with day theme',
+    the_one_thing: '🎯 Complement: identify ONE thing that makes everything else easier',
+    weekly_review: '🔄 Complement: 45-min weekly review Friday/Sunday',
+    okr: '🏆 Complement: link tasks to quarterly KRs',
+    kanban: '🗂️ Complement: max 3 WIP, finish before starting new',
+    time_boxing: '⏱️ Complement: hard time limits, stop when box ends',
+    pomodoro: '🍅 Complement: 25-min focus + 5-min break cycles',
+    deep_work: '🧠 Complement: protect 2-3h uninterrupted peak-hour blocks',
+    eisenhower: '📊 Complement: classify by urgency+importance before scheduling',
+    gtd: '📥 Complement: capture everything, clarify next action, weekly review',
+    time_blocking: '📅 Complement: every task on calendar, no unscheduled time',
+    ivy_lee: '📝 Complement: pick 6 tasks daily, work in priority order',
+    moscow: '🎯 Complement: Must/Should/Could/Won\'t classification',
+    rule_5217: '⏲️ Complement: 52-min work + 17-min real break cycles',
+    scrum: '🏃 Complement: work in sprints with committed goals',
+    energy_management: '⚡ Complement: match task difficulty to energy level',
+    twelve_week_year: '📆 Complement: frame in 12-week goals, every week counts',
   }
 
-  const secondaryContext = secondary
+  const secondaryLines = secondary
     .filter(s => s !== method && secondaryHints[s])
     .map(s => secondaryHints[s])
     .join('\n')
 
-  if (!secondaryContext) return primaryContext
-
-  return `${primaryContext}
-
-════════════════════════════════════════
-COMPLEMENTARY METHODS (use alongside primary)
-════════════════════════════════════════
-${secondaryContext}`
+  return `\n${primaryContext}${secondaryLines ? `\n${secondaryLines}` : ''}`
 }
