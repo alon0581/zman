@@ -54,6 +54,7 @@ export interface UserProfile {
   // Time management methodology
   persona?: 'student' | 'manager' | 'entrepreneur' | 'developer' | 'other'
   scheduling_method?: 'pomodoro' | 'deep_work' | 'eisenhower' | 'gtd' | 'time_blocking' | 'ivy_lee'
+    | 'eat_the_frog' | 'theme_days' | 'the_one_thing' | 'weekly_review' | 'okr' | 'kanban' | 'time_boxing'
   secondary_methods?: string[]
   challenge?: 'procrastination' | 'overwhelmed' | 'focus' | 'scattered' | 'goals'
   day_structure?: 'fixed' | 'variable' | 'mixed' | 'independent'

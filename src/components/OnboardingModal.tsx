@@ -15,10 +15,10 @@ interface Props {
 
 /** Maps UI persona labels → internal persona values */
 const PERSONA_MAP_EN: Record<string, string> = {
-  'student': 'student', 'professional': 'manager', 'freelancer': 'entrepreneur', 'parent': 'other', 'other': 'other',
+  'student': 'student', 'professional': 'manager', 'freelancer': 'entrepreneur', 'developer': 'developer', 'other': 'other',
 }
 const PERSONA_MAP_HE: Record<string, string> = {
-  'סטודנט': 'student', 'עובד/ת שכיר/ה': 'manager', 'פרילנסר': 'entrepreneur', 'הורה': 'other', 'אחר': 'other',
+  'סטודנט': 'student', 'עובד/ת שכיר/ה': 'manager', 'פרילנסר': 'entrepreneur', 'מפתח': 'developer', 'אחר': 'other',
 }
 
 const stepsEn = [
@@ -29,7 +29,7 @@ const stepsEn = [
       { label: '🎓 Student', value: 'student' },
       { label: '💼 Professional', value: 'professional' },
       { label: '🚀 Freelancer', value: 'freelancer' },
-      { label: '👨‍👩‍👧 Parent', value: 'parent' },
+      { label: '💻 Developer / Technical', value: 'developer' },
       { label: '🌀 Other', value: 'other' },
     ],
   },
@@ -82,7 +82,7 @@ const stepsHe = [
       { label: '🎓 סטודנט', value: 'סטודנט' },
       { label: '💼 עובד/ת שכיר/ה', value: 'עובד/ת שכיר/ה' },
       { label: '🚀 פרילנסר', value: 'פרילנסר' },
-      { label: '👨‍👩‍👧 הורה', value: 'הורה' },
+      { label: '💻 מפתח / טכנאי', value: 'מפתח' },
       { label: '🌀 אחר', value: 'אחר' },
     ],
   },
