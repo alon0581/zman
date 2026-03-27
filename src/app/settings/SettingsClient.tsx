@@ -6,6 +6,7 @@ import { UserProfile, AIMemory } from '@/types'
 import { createClient } from '@/lib/supabase/client'
 import { ArrowLeft, X, Check } from 'lucide-react'
 import Link from 'next/link'
+import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
 
 interface Props {
   user: User
@@ -41,6 +42,8 @@ const LANGS: Record<string, Record<string, string>> = {
     schedSection: 'Schedule', peakLabel: 'Peak Productivity',
     peakDesc: 'When do you work best?',
     wakeLabel: 'Wake Time', sleepLabel: 'Sleep Time',
+    methodSection: 'Scheduling Method', methodDesc: 'Your time management approach',
+    changeMethodBtn: 'Change Method',
     accountSection: 'Account', signOutBtn: 'Sign Out',
     saveBtn: 'Save Settings', savedBtn: 'Saved!', savingBtn: 'Saving…',
     memorySection: 'AI Memory', memoryDesc: 'What the AI remembers about you',
@@ -71,6 +74,8 @@ const LANGS: Record<string, Record<string, string>> = {
     schedSection: 'לוח זמנים', peakLabel: 'שעות שיא',
     peakDesc: 'מתי אתה עובד הכי טוב?',
     wakeLabel: 'שעת קימה', sleepLabel: 'שעת שינה',
+    methodSection: 'שיטת ניהול זמן', methodDesc: 'הגישה שלך לניהול זמן',
+    changeMethodBtn: 'שנה שיטה',
     accountSection: 'חשבון', signOutBtn: 'יציאה',
     saveBtn: 'שמור הגדרות', savedBtn: '!נשמר', savingBtn: '…שומר',
     memorySection: 'זיכרון AI', memoryDesc: 'מה ה-AI זוכר עליך',
@@ -236,6 +241,55 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
             <input type="time" value={p.sleep_time ?? '23:00'} onChange={e => set('sleep_time', e.target.value)}
               style={{ ...selectStyle }} />
           </Row>
+        </Card>
+
+        {/* ── SCHEDULING METHOD ── */}
+        <Card label={t(lang, 'methodSection')}>
+          <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>{t(lang, 'methodDesc')}</div>
+          {p.scheduling_method ? (() => {
+            const m = METHOD_LABELS[p.scheduling_method as SchedulingMethod]
+            return m ? (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '10px 14px', borderRadius: 12,
+                background: 'rgba(59,126,247,0.08)', border: '1px solid rgba(59,126,247,0.2)',
+                marginBottom: 12,
+              }}>
+                <span style={{ fontSize: 24 }}>{m.emoji}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+                    {lang === 'he' ? m.he : m.en}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 2 }}>
+                    {lang === 'he' ? m.description_he : m.description_en}
+                  </div>
+                </div>
+              </div>
+            ) : null
+          })() : (
+            <div style={{ fontSize: 13, color: 'var(--text-2)', fontStyle: 'italic', padding: '8px 0', marginBottom: 12 }}>
+              {lang === 'he' ? 'לא נבחרה שיטה — תיבחר באונבורדינג' : 'No method selected — will be chosen during onboarding'}
+            </div>
+          )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {(Object.entries(METHOD_LABELS) as [SchedulingMethod, typeof METHOD_LABELS[SchedulingMethod]][]).map(([key, m]) => (
+              <button
+                key={key}
+                onClick={() => set('scheduling_method', key)}
+                style={{
+                  padding: '6px 12px', borderRadius: 8,
+                  border: p.scheduling_method === key ? '1.5px solid #3B7EF7' : '1px solid var(--border)',
+                  background: p.scheduling_method === key ? 'rgba(59,126,247,0.1)' : 'var(--bg-input)',
+                  cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                  color: 'var(--text)', transition: 'all 0.15s',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <span>{m.emoji}</span>
+                <span>{lang === 'he' ? m.he : m.en}</span>
+              </button>
+            ))}
+          </div>
         </Card>
 
         {/* ── MEMORY ── */}

@@ -1,5 +1,6 @@
 import { UserProfile, CalendarEvent, AIMemory, Task } from '@/types'
 import { format } from 'date-fns'
+import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
 
 export function buildSystemPrompt(
   profile: UserProfile | null,
@@ -18,7 +19,7 @@ export function buildSystemPrompt(
     .filter(e => new Date(e.start_time) >= now)
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(0, 30)
-    .map(e => `- ${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}]`)
+    .map(e => `- ${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}]${e.mobility_type ? ` [${e.mobility_type === 'fixed' ? '🔒' : e.mobility_type === 'flexible' ? '🟡' : '🔵'}]` : ''}`)
     .join('\n')
 
   const peak = profile?.productivity_peak ?? 'morning'
@@ -36,7 +37,10 @@ User preferences:
 - Sleep: ${profile.sleep_time ?? '23:00'} – Wake: ${profile.wake_time ?? '07:00'}
 - Work hours: ${profile.preferred_hours ? `${profile.preferred_hours.start}:00–${profile.preferred_hours.end}:00` : 'flexible'}
 - Language: ${profile.language === 'he' ? 'Hebrew (עברית)' : profile.language}
-${profile.occupation ? `- Occupation: ${profile.occupation}` : ''}` : ''
+${profile.occupation ? `- Occupation: ${profile.occupation}` : ''}
+${profile.scheduling_method ? `- Scheduling method: ${METHOD_LABELS[profile.scheduling_method as SchedulingMethod]?.en ?? profile.scheduling_method}` : ''}` : ''
+
+  const methodContext = profile?.scheduling_method ? buildMethodContext(profile.scheduling_method) : ''
 
   const memorySummary = (() => {
     if (!memory || memory.length === 0) return ''
@@ -82,6 +86,7 @@ ${profile.occupation ? `- Occupation: ${profile.occupation}` : ''}` : ''
 Current time: ${nowStr}
 ${isMorning ? '(Morning — be especially proactive about today)' : ''}
 ${profileSummary}
+${methodContext}
 ${memorySummary}
 ${taskSummary}
 
@@ -202,6 +207,36 @@ BEFORE BREAK_DOWN_TASK (hybrid / suggest autonomy only):
 - In AUTO autonomy: call break_down_task immediately, then report "קבעתי [N] ישיבות ✓".
 
 ════════════════════════════════════════
+EVENT MOBILITY
+════════════════════════════════════════
+Every event has a mobility_type:
+🔒 fixed — NEVER move, no matter what (exams, flights, interviews)
+🟡 flexible — Move freely when needed to optimize schedule (AI-created blocks, study sessions)
+🔵 ask_first — Ask user before moving (default for user-created events)
+
+When moving/rescheduling events:
+- SKIP Fixed events entirely — never suggest moving them
+- Move Flexible events without asking — just do it and report
+- For Ask First events: "אפשר להזיז את '[event]' ל[time]?" and wait for approval
+- When creating new events: set mobility_type based on context (use the parameter)
+  - Exams/flights/interviews → fixed
+  - AI-created study blocks/work sessions → flexible
+  - User-specified events → ask_first
+- After creating: mention the mobility type naturally: "הוספתי [event] — סימנתי כקבוע 🔒"
+
+════════════════════════════════════════
+DYNAMIC RESCHEDULING
+════════════════════════════════════════
+When a NEW task/deadline is added that requires calendar time:
+1. Call get_free_slots for the next 7 days
+2. Check if there's enough room for the new task
+3. If NOT enough room — identify Flexible events that can be moved/shortened
+4. Propose a reorganized schedule showing what moves where
+5. Ask about Ask First events before moving them
+6. NEVER touch Fixed events
+7. Execute the plan after user approval (or immediately in auto mode)
+
+════════════════════════════════════════
 CONFLICT RESOLUTION
 ════════════════════════════════════════
 When create_event returns { error: 'conflict' }:
@@ -307,4 +342,99 @@ Tasks = todo items to track. Events = scheduled time blocks. Use BOTH when appro
 - When marking done, say: "✅ סימנתי [title] כבוצע" (or English equivalent) — brief confirmation only
 - Overdue task (deadline in the past) → proactively mention it once
 - After creating task: "הוספתי '[title]' למשימות תחת [topic] ✓" (or English)`
+}
+
+/** Returns method-specific AI behavior instructions */
+function buildMethodContext(method: string): string {
+  const m: Record<string, string> = {
+    pomodoro: `
+════════════════════════════════════════
+SCHEDULING METHOD: Pomodoro 🍅
+════════════════════════════════════════
+The user uses the Pomodoro technique. Adapt ALL scheduling behavior:
+- Split work into 25-min focused sessions with 5-min breaks
+- After 4 pomodoros → schedule a 15–30 min long break
+- When breaking down tasks: use pomodoro units (each = 25 min work + 5 min break = 30 min block)
+- In chat: refer to sessions as "פומודורו" (Hebrew) or "pomodoro" (English)
+- When creating blocks: title them "[Task] — פומודורו [N]" (e.g. "מתמטיקה — פומודורו 1")
+- break_down_task session_length = 0.5 (30 min per pomodoro block)
+- Color study pomodoros indigo (#6366F1), work pomodoros blue (#3B7EF7)
+- All pomodoro blocks are mobility_type: "flexible"`,
+
+    deep_work: `
+════════════════════════════════════════
+SCHEDULING METHOD: Deep Work 🧠
+════════════════════════════════════════
+The user follows the Deep Work method. Adapt ALL scheduling behavior:
+- Schedule 2–3 hour UNINTERRUPTED deep work blocks
+- No meetings, calls, or shallow tasks during deep work
+- Place deep work during PEAK productivity hours ONLY
+- When creating blocks: title them "[Task] — Deep Work"
+- Protect deep work blocks — suggest moving OTHER things around them, never move deep work
+- Set deep work blocks as mobility_type: "fixed" (exception to normal AI-created = flexible rule)
+- break_down_task session_length = 2.5 (2.5 hours per deep work session)
+- Before/after deep work: suggest 15-min transition (shutdown ritual / warm-up)
+- Batch shallow tasks (emails, admin) into "Shallow Work" blocks`,
+
+    eisenhower: `
+════════════════════════════════════════
+SCHEDULING METHOD: Eisenhower Matrix 📊
+════════════════════════════════════════
+The user follows the Eisenhower priority system. Adapt ALL scheduling behavior:
+- Classify every task into 4 quadrants:
+  Q1 (Urgent + Important) → DO immediately, schedule in next available slot
+  Q2 (Important, NOT urgent) → SCHEDULE in peak hours (this is the most valuable quadrant)
+  Q3 (Urgent, NOT important) → suggest DELEGATING or quick-dispatch
+  Q4 (Neither) → suggest ELIMINATING or batching into minimal time
+- When user mentions a task, ask: "זה דחוף? חשוב?" if unclear
+- In chat: briefly mention the quadrant ("Q1 — דחוף וחשוב, שם ראשון")
+- Schedule Q2 tasks during peak hours — they're the growth tasks
+- Schedule Q1 tasks ASAP — next available slot
+- Batch Q3 tasks into a single "quick tasks" block
+- break_down_task: prioritize Q1 before Q2`,
+
+    gtd: `
+════════════════════════════════════════
+SCHEDULING METHOD: Getting Things Done (GTD) 📥
+════════════════════════════════════════
+The user follows GTD. Adapt ALL scheduling behavior:
+- Capture: every task the user mentions → immediately create_task
+- Clarify: ask "what's the next physical action?" when task is vague
+- Organize: assign to proper topic/context immediately
+- Review: suggest a weekly review session every Friday/Saturday
+- Engage: help user pick the right task based on context, time available, energy
+- When tasks pile up: suggest a 15-min "processing" session to clear the inbox
+- Use "waiting for" status when task depends on someone else
+- 2-minute rule: if task takes < 2 min, tell user "just do it now" instead of scheduling`,
+
+    time_blocking: `
+════════════════════════════════════════
+SCHEDULING METHOD: Time Blocking 📅
+════════════════════════════════════════
+The user follows Time Blocking. Adapt ALL scheduling behavior:
+- Every task gets a dedicated time block on the calendar
+- No unstructured "free time" during work hours — everything is blocked
+- When user adds a task: immediately ask when to block it (or auto-block in free slot)
+- break_down_task: create full calendar blocks (1–2h each), not just abstract sessions
+- Color-code by category (study=indigo, work=blue, health=green, personal=yellow)
+- Group similar blocks together ("batch processing")
+- Protect morning blocks for deep thinking, afternoon for meetings/collaboration
+- End of day: suggest a 10-min "plan tomorrow" block`,
+
+    ivy_lee: `
+════════════════════════════════════════
+SCHEDULING METHOD: Ivy Lee Method 📝
+════════════════════════════════════════
+The user follows the Ivy Lee method. Adapt ALL scheduling behavior:
+- Each evening/morning: help user pick their TOP 6 tasks for the day
+- Rank them 1–6 by importance — work on #1 until done, then #2, etc.
+- Never multitask — one task at a time, fully complete before next
+- In morning briefing: "מה 6 המשימות הכי חשובות להיום?" and create ordered blocks
+- If user has > 6 tasks: help ruthlessly prioritize ("which 6 matter most?")
+- Unfinished tasks move to tomorrow's list (re-ranked)
+- In chat: always refer to tasks by their rank number ("משימה #1 שלך היום")
+- break_down_task: limit to max 6 sessions visible at any time`,
+  }
+
+  return m[method] ?? ''
 }

@@ -14,6 +14,7 @@ export interface CalendarEvent {
   created_at: string
   series_id?: string          // groups all instances of a recurring event
   recurrence_rule?: string    // e.g. "weekly", "biweekly", "monthly"
+  mobility_type?: 'fixed' | 'flexible' | 'ask_first'  // how movable this event is
 }
 
 export interface Task {
@@ -50,6 +51,12 @@ export interface UserProfile {
   push_subscription?: string       // JSON-serialised PushSubscription for Web Push (browser PWA)
   fcm_token?: string               // Firebase Cloud Messaging token for native Capacitor push
   mic_position?: 'left' | 'right'  // VoiceFAB side (default: 'right')
+  // Time management methodology
+  persona?: 'student' | 'manager' | 'entrepreneur' | 'developer' | 'other'
+  scheduling_method?: 'pomodoro' | 'deep_work' | 'eisenhower' | 'gtd' | 'time_blocking' | 'ivy_lee'
+  secondary_methods?: string[]
+  challenge?: 'procrastination' | 'overwhelmed' | 'focus' | 'scattered' | 'goals'
+  day_structure?: 'fixed' | 'variable' | 'mixed' | 'independent'
 }
 
 export interface Message {

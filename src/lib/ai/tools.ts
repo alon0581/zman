@@ -15,6 +15,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
           description: { type: 'string', description: 'Optional description' },
           color: { type: 'string', description: 'Hex color by type: #3B7EF7=work/meetings/calls, #6366F1=study/exams/homework, #34D399=fitness/sport/gym, #FBBF24=personal/errands, #F97316=social/friends/fun' },
           status: { type: 'string', enum: ['confirmed', 'proposed'] },
+          mobility_type: { type: 'string', enum: ['fixed', 'flexible', 'ask_first'], description: 'How movable this event is. fixed=never move (exams, flights), flexible=AI can move freely (study blocks, AI sessions), ask_first=ask user before moving (default)' },
           recurrence: {
             type: 'object',
             description: 'Create a recurring event. Generates multiple instances automatically. Use when the user says "every Tuesday", "כל שלישי", "every week", "כל שבוע", etc.',
@@ -34,7 +35,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'move_event',
-      description: 'Move an existing event to a different time.',
+      description: 'Move an existing event to a different time. IMPORTANT: Check the event\'s mobility_type before calling. Never move fixed events. For ask_first events, ask the user first. Flexible events can be moved freely.',
       parameters: {
         type: 'object',
         properties: {

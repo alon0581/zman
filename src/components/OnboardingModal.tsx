@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { User } from '@supabase/supabase-js'
 import { UserProfile } from '@/types'
 import { ChevronRight, X } from 'lucide-react'
+import { mapToMethod } from '@/lib/scheduling/methodMapper'
 
 interface Props {
   user: User
@@ -12,17 +13,55 @@ interface Props {
   onSkip: () => void
 }
 
+/** Maps UI persona labels → internal persona values */
+const PERSONA_MAP_EN: Record<string, string> = {
+  'student': 'student', 'professional': 'manager', 'freelancer': 'entrepreneur', 'parent': 'other', 'other': 'other',
+}
+const PERSONA_MAP_HE: Record<string, string> = {
+  'סטודנט': 'student', 'עובד/ת שכיר/ה': 'manager', 'פרילנסר': 'entrepreneur', 'הורה': 'other', 'אחר': 'other',
+}
+
 const stepsEn = [
   {
     key: 'occupation',
     question: 'What do you do?',
-    options: ['Student', 'Professional', 'Freelancer', 'Parent', 'Other'],
+    options: [
+      { label: '🎓 Student', value: 'student' },
+      { label: '💼 Professional', value: 'professional' },
+      { label: '🚀 Freelancer', value: 'freelancer' },
+      { label: '👨‍👩‍👧 Parent', value: 'parent' },
+      { label: '🌀 Other', value: 'other' },
+    ],
+  },
+  {
+    key: 'challenge',
+    question: "What's your biggest challenge?",
+    options: [
+      { label: '⏳ I procrastinate on tasks', value: 'procrastination' },
+      { label: '🌊 I feel overwhelmed and don\'t know what to do first', value: 'overwhelmed' },
+      { label: '🎯 I have trouble focusing', value: 'focus' },
+      { label: '🔀 I\'m scattered across too many things', value: 'scattered' },
+      { label: '🏔️ I lose track of my big goals', value: 'goals' },
+    ],
+  },
+  {
+    key: 'day_structure',
+    question: 'What does your typical day look like?',
+    options: [
+      { label: '📋 Fixed schedule — same every day', value: 'fixed' },
+      { label: '🎲 Every day is different', value: 'variable' },
+      { label: '🔄 Mix of meetings + independent work', value: 'mixed' },
+      { label: '🕊️ Mostly independent — I set my own hours', value: 'independent' },
+    ],
   },
   {
     key: 'productivity_peak',
     question: 'When are you most productive?',
-    options: ['Morning (6am–12pm)', 'Afternoon (12pm–6pm)', 'Evening (6pm–12am)'],
-    map: { 'Morning (6am–12pm)': 'morning', 'Afternoon (12pm–6pm)': 'afternoon', 'Evening (6pm–12am)': 'evening' },
+    options: [
+      { label: '🌅 Morning (6am–12pm)', value: 'morning' },
+      { label: '☀️ Afternoon (12pm–6pm)', value: 'afternoon' },
+      { label: '🌙 Evening (6pm–12am)', value: 'evening' },
+    ],
   },
   {
     key: 'autonomy_mode',
@@ -39,13 +78,43 @@ const stepsHe = [
   {
     key: 'occupation',
     question: 'מה אתה עושה?',
-    options: ['סטודנט', 'עובד/ת שכיר/ה', 'פרילנסר', 'הורה', 'אחר'],
+    options: [
+      { label: '🎓 סטודנט', value: 'סטודנט' },
+      { label: '💼 עובד/ת שכיר/ה', value: 'עובד/ת שכיר/ה' },
+      { label: '🚀 פרילנסר', value: 'פרילנסר' },
+      { label: '👨‍👩‍👧 הורה', value: 'הורה' },
+      { label: '🌀 אחר', value: 'אחר' },
+    ],
+  },
+  {
+    key: 'challenge',
+    question: 'מה האתגר הכי גדול שלך?',
+    options: [
+      { label: '⏳ אני מדחיין/נת משימות', value: 'procrastination' },
+      { label: '🌊 אני מוצף/ת ולא יודע/ת מה קודם', value: 'overwhelmed' },
+      { label: '🎯 קשה לי להתרכז', value: 'focus' },
+      { label: '🔀 אני מפזר/ת קשב בין הרבה דברים', value: 'scattered' },
+      { label: '🏔️ אני לא עוקב/ת אחרי היעדים הגדולים', value: 'goals' },
+    ],
+  },
+  {
+    key: 'day_structure',
+    question: 'איך נראה היום שלך?',
+    options: [
+      { label: '📋 לוח זמנים קבוע וצפוי', value: 'fixed' },
+      { label: '🎲 כל יום שונה לגמרי', value: 'variable' },
+      { label: '🔄 שילוב של פגישות + עבודה עצמאית', value: 'mixed' },
+      { label: '🕊️ עיקר הזמן שלי עצמאי לחלוטין', value: 'independent' },
+    ],
   },
   {
     key: 'productivity_peak',
     question: 'מתי אתה הכי פרודוקטיבי?',
-    options: ['בוקר (6:00–12:00)', 'צהריים (12:00–18:00)', 'ערב (18:00–00:00)'],
-    map: { 'בוקר (6:00–12:00)': 'morning', 'צהריים (12:00–18:00)': 'afternoon', 'ערב (18:00–00:00)': 'evening' },
+    options: [
+      { label: '🌅 בוקר (6:00–12:00)', value: 'morning' },
+      { label: '☀️ צהריים (12:00–18:00)', value: 'afternoon' },
+      { label: '🌙 ערב (18:00–00:00)', value: 'evening' },
+    ],
   },
   {
     key: 'autonomy_mode',
@@ -81,11 +150,25 @@ export default function OnboardingModal({ user: _user, language, onComplete, onS
 
   const save = async (data: Record<string, string>) => {
     setSaving(true)
+    // Map UI occupation label → internal persona value
+    const personaMap = isHe ? PERSONA_MAP_HE : PERSONA_MAP_EN
+    const persona = (personaMap[data.occupation] ?? data.occupation) as UserProfile['persona']
+    const challenge = data.challenge as UserProfile['challenge']
+    const dayStructure = data.day_structure as UserProfile['day_structure']
+
+    // Determine scheduling method from answers
+    const methodResult = mapToMethod(persona ?? 'other', challenge ?? 'overwhelmed', dayStructure ?? 'mixed')
+
     const updates: Partial<UserProfile> = {
       autonomy_mode: (data.autonomy_mode as UserProfile['autonomy_mode']) ?? 'hybrid',
       productivity_peak: data.productivity_peak as UserProfile['productivity_peak'],
       occupation: data.occupation,
       onboarding_completed: true,
+      persona,
+      challenge,
+      day_structure: dayStructure,
+      scheduling_method: methodResult.primary,
+      secondary_methods: methodResult.secondary,
     }
     const res = await fetch('/api/profile', {
       method: 'POST',
@@ -101,11 +184,7 @@ export default function OnboardingModal({ user: _user, language, onComplete, onS
     }
   }
 
-  const getOptions = () => currentStep.options.map(o =>
-    typeof o === 'string'
-      ? { label: o, value: (currentStep as { map?: Record<string, string> }).map?.[o] ?? o.toLowerCase() }
-      : o
-  )
+  const getOptions = () => currentStep.options as Array<{ label: string; value: string }>
 
   return (
     <div dir={isHe ? 'rtl' : 'ltr'} style={{

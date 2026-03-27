@@ -8,6 +8,7 @@ import { CalendarEvent, UserProfile, AIMemory, Task } from '@/types'
 import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay } from 'date-fns'
 import { demoStorage } from '@/lib/demo/storage'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
 import { decryptApiKey } from '@/lib/encryption'
 import { sendPush, sendFcmPush } from '@/lib/push'
 import fs from 'fs'
@@ -636,6 +637,10 @@ async function executeTool(
         status: (status === 'confirmed' || status === 'proposed') ? status : 'confirmed',
         is_all_day: bool(input.is_all_day),
         created_at: new Date().toISOString(),
+        // Auto-classify mobility if AI didn't specify
+        mobility_type: (input.mobility_type === 'fixed' || input.mobility_type === 'flexible' || input.mobility_type === 'ask_first')
+          ? input.mobility_type
+          : classifyMobility(str(input.title), 'ai', true),
       }
 
       if (DEMO_MODE) {
@@ -656,6 +661,10 @@ async function executeTool(
       const { event_id, new_start_time, new_end_time } = input as { event_id: string; new_start_time: string; new_end_time: string }
       const existing = currentEvents.find(e => e.id === event_id)
       if (!existing) return { error: 'Event not found' }
+      // Enforce mobility_type — fixed events cannot be moved
+      if (existing.mobility_type === 'fixed') {
+        return { error: 'fixed_event', message: `"${existing.title}" is marked as Fixed (🔒) and cannot be moved.` }
+      }
 
       const updated = { ...existing, start_time: new_start_time, end_time: new_end_time }
 
@@ -735,6 +744,7 @@ async function executeTool(
           status: 'confirmed',
           is_all_day: false,
           created_at: new Date().toISOString(),
+          mobility_type: 'flexible' as const, // AI-created study sessions are always flexible
         }
 
         if (DEMO_MODE) {

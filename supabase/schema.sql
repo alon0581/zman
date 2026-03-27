@@ -17,6 +17,12 @@ create table if not exists public.user_profiles (
   language text not null default 'en',
   onboarding_completed boolean not null default false,
   occupation text,
+  -- Time management methodology
+  persona text check (persona in ('student', 'manager', 'entrepreneur', 'developer', 'other')),
+  scheduling_method text check (scheduling_method in ('pomodoro', 'deep_work', 'eisenhower', 'gtd', 'time_blocking', 'ivy_lee')),
+  secondary_methods text[],
+  challenge text check (challenge in ('procrastination', 'overwhelmed', 'focus', 'scattered', 'goals')),
+  day_structure text check (day_structure in ('fixed', 'variable', 'mixed', 'independent')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -35,6 +41,7 @@ create table if not exists public.events (
   external_id text,
   created_by text not null default 'user' check (created_by in ('user', 'ai')),
   status text not null default 'confirmed' check (status in ('confirmed', 'proposed')),
+  mobility_type text default 'ask_first' check (mobility_type in ('fixed', 'flexible', 'ask_first')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

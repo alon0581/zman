@@ -359,6 +359,7 @@ export default function CalendarPanel({
       ev.status === 'proposed' ? 'ai-proposed' : '',
       newEventIds.has(ev.id) ? 'ai-new' : '',
     ].filter(Boolean),
+    extendedProps: { mobility_type: ev.mobility_type },
   }))
 
   const eventMap = useMemo(() => new Map(events.map(e => [e.id, e])), [events])
@@ -624,7 +625,26 @@ export default function CalendarPanel({
                 </div>
               )
             }
-            return true // default rendering for time-grid views
+            // Timegrid views: show mobility icon badge
+            const mobilityType = arg.event.extendedProps?.mobility_type
+            const mobilityIcon = mobilityType === 'fixed' ? '🔒' : mobilityType === 'flexible' ? '🟡' : mobilityType === 'ask_first' ? '🔵' : null
+            if (mobilityIcon) {
+              return (
+                <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                  <div className="fc-event-main-frame">
+                    <div className="fc-event-time">{arg.timeText}</div>
+                    <div className="fc-event-title-container">
+                      <div className="fc-event-title fc-sticky">{arg.event.title}</div>
+                    </div>
+                  </div>
+                  <span style={{
+                    position: 'absolute', top: 2, right: 4,
+                    fontSize: 8, lineHeight: 1, opacity: 0.8,
+                  }}>{mobilityIcon}</span>
+                </div>
+              )
+            }
+            return true // default rendering
           }}
           views={{
             /* 3-day custom view */

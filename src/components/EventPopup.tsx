@@ -29,6 +29,7 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
   const isHe = language === 'he'
   const [title, setTitle] = useState(event.title)
   const [color, setColor] = useState(event.color ?? '#3B7EF7')
+  const [mobility, setMobility] = useState<'fixed' | 'flexible' | 'ask_first'>(event.mobility_type ?? 'ask_first')
   const [saving, setSaving] = useState(false)
   const popupRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
@@ -68,9 +69,9 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
       await fetch(`/api/events/${event.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), color }),
+        body: JSON.stringify({ title: title.trim(), color, mobility_type: mobility }),
       })
-      onSave(event.id, { title: title.trim(), color })
+      onSave(event.id, { title: title.trim(), color, mobility_type: mobility })
       onClose()
     } finally {
       setSaving(false)
@@ -159,6 +160,31 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
                 transition: 'transform var(--t-fast), box-shadow var(--t-fast)',
               }}
             />
+          ))}
+        </div>
+
+        {/* Mobility selector */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+          {([
+            { key: 'fixed' as const, emoji: '🔒', label: isHe ? 'קבוע' : 'Fixed' },
+            { key: 'flexible' as const, emoji: '🟡', label: isHe ? 'גמיש' : 'Flexible' },
+            { key: 'ask_first' as const, emoji: '🔵', label: isHe ? 'שאל' : 'Ask' },
+          ]).map(m => (
+            <button
+              key={m.key}
+              onClick={() => setMobility(m.key)}
+              style={{
+                flex: 1, padding: '5px 4px', borderRadius: 8,
+                border: mobility === m.key ? '1.5px solid #3B7EF7' : '1px solid var(--border)',
+                background: mobility === m.key ? 'rgba(59,126,247,0.1)' : 'var(--bg-input)',
+                cursor: 'pointer', fontSize: 10, fontWeight: 600,
+                color: 'var(--text)', display: 'flex', flexDirection: 'column',
+                alignItems: 'center', gap: 2, transition: 'all 0.15s',
+              }}
+            >
+              <span style={{ fontSize: 12 }}>{m.emoji}</span>
+              <span>{m.label}</span>
+            </button>
           ))}
         </div>
 
