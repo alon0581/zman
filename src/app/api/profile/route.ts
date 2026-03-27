@@ -4,7 +4,7 @@ import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { encryptApiKey, maskApiKey } from '@/lib/encryption'
 import fs from 'fs'
 import path from 'path'
-import { UserProfile } from '@/types'
+import { UserProfile, AIMemory } from '@/types'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
@@ -83,8 +83,43 @@ export async function POST(req: NextRequest) {
   }
 
   const existing = readProfile(userId)
-  const profile: UserProfile = { ...existing, ...(body as Partial<UserProfile>), user_id: userId }
+  const updates = body as Partial<UserProfile>
+  const profile: UserProfile = { ...existing, ...updates, user_id: userId }
   writeProfile(userId, profile)
+
+  // When UI onboarding completes for the first time, also save key facts to memory
+  if (!existing.onboarding_completed && updates.onboarding_completed === true) {
+    const memoryEntries: Array<{ key: string; value: string }> = []
+    if (profile.persona)           memoryEntries.push({ key: 'persona_type',       value: profile.persona })
+    if (profile.challenge)         memoryEntries.push({ key: 'main_challenge',      value: profile.challenge })
+    if (profile.day_structure)     memoryEntries.push({ key: 'day_structure',       value: profile.day_structure })
+    if (profile.scheduling_method) memoryEntries.push({ key: 'scheduling_method',   value: profile.scheduling_method })
+    if (profile.secondary_methods?.length)
+                                   memoryEntries.push({ key: 'secondary_methods',   value: profile.secondary_methods.join(', ') })
+    if (profile.productivity_peak) memoryEntries.push({ key: 'productivity_peak',   value: profile.productivity_peak })
+    if (profile.occupation)        memoryEntries.push({ key: 'occupation',          value: profile.occupation })
+
+    if (memoryEntries.length > 0) {
+      const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
+      const existing2: AIMemory[] = fs.existsSync(memFile)
+        ? JSON.parse(fs.readFileSync(memFile, 'utf-8'))
+        : []
+      for (const entry of memoryEntries) {
+        const idx = existing2.findIndex(m => m.key === entry.key)
+        const item: AIMemory = {
+          id: idx >= 0 ? existing2[idx].id : crypto.randomUUID(),
+          user_id: userId, key: entry.key, value: entry.value,
+          learned_from: 'onboarding',
+          created_at: idx >= 0 ? existing2[idx].created_at : new Date().toISOString(),
+        }
+        if (idx >= 0) existing2[idx] = item
+        else existing2.push(item)
+      }
+      const dir = path.join(process.cwd(), 'data', 'users', userId)
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(memFile, JSON.stringify(existing2, null, 2))
+    }
+  }
 
   // Never return the encrypted key to the frontend
   const { ai_api_key_encrypted: _, ...safeProfile } = profile

@@ -272,7 +272,7 @@ export const onboardingTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'complete_onboarding',
-      description: 'Call this ONCE when you have gathered enough information (all 6 topics covered) OR when user wants to skip. Saves everything and marks onboarding as complete.',
+      description: 'Call this ONCE when you have gathered enough information (all 6 topics covered) OR when user wants to skip. Saves everything and marks onboarding as complete. IMPORTANT: also gather persona (user type), challenge (their main time-management struggle), and day_structure (how their typical day looks) — these are used to assign the right scheduling methods automatically.',
       parameters: {
         type: 'object',
         properties: {
@@ -285,6 +285,9 @@ export const onboardingTools: OpenAI.ChatCompletionTool[] = [
               wake_time: { type: 'string', description: 'e.g. "07:00"' },
               occupation: { type: 'string' },
               autonomy_mode: { type: 'string', enum: ['suggest', 'hybrid', 'auto'] },
+              persona: { type: 'string', enum: ['student', 'manager', 'entrepreneur', 'developer', 'other'], description: 'User type inferred from occupation/role' },
+              challenge: { type: 'string', enum: ['procrastination', 'overwhelmed', 'focus', 'scattered', 'goals'], description: 'Their biggest time-management challenge' },
+              day_structure: { type: 'string', enum: ['fixed', 'variable', 'mixed', 'independent'], description: 'fixed=same schedule daily, variable=different every day, mixed=meetings+independent, independent=fully self-directed' },
             },
           },
           memory_entries: {

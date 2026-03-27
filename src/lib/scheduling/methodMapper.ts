@@ -24,6 +24,11 @@ export type SchedulingMethod =
   | 'okr'
   | 'kanban'
   | 'time_boxing'
+  | 'moscow'
+  | 'rule_5217'
+  | 'scrum'
+  | 'energy_management'
+  | 'twelve_week_year'
 
 export interface MethodResult {
   primary: SchedulingMethod
@@ -100,6 +105,31 @@ export const METHOD_LABELS: Record<SchedulingMethod, {
     description_en: 'Hard timeboxes — when time is up, move on',
     description_he: 'תיבות זמן קשוחות — כשהזמן נגמר, עוברים הלאה',
   },
+  moscow: {
+    en: 'MoSCoW Method', he: 'שיטת MoSCoW', emoji: '🎯',
+    description_en: 'Must / Should / Could / Won\'t — rank tasks by necessity',
+    description_he: 'חייב / כדאי / אפשרי / לא עכשיו — מיון לפי הכרח',
+  },
+  rule_5217: {
+    en: '52/17 Rule', he: 'כלל 52/17', emoji: '⏲️',
+    description_en: '52 min focused work + 17 min real break (research-based)',
+    description_he: '52 דקות עבודה + 17 דקות הפסקה אמיתית (מבוסס מחקר)',
+  },
+  scrum: {
+    en: 'Scrum / Sprints', he: 'סקראם / ספרינטים', emoji: '🏃',
+    description_en: '1–2 week sprints with clear goals and retrospectives',
+    description_he: 'ספרינטים של 1–2 שבועות עם יעדים ברורים וריטרוספקטיבה',
+  },
+  energy_management: {
+    en: 'Energy Management', he: 'ניהול אנרגיה', emoji: '⚡',
+    description_en: 'Match task difficulty to your energy level, not just time',
+    description_he: 'התאם קושי משימה לרמת האנרגיה שלך — לא רק לזמן פנוי',
+  },
+  twelve_week_year: {
+    en: '12 Week Year', he: '12 שבועות כשנה', emoji: '📆',
+    description_en: 'Treat 12 weeks as a full year — create urgency and focus',
+    description_he: 'תייחס ל-12 שבועות כאל שנה שלמה — צור דחיפות ומיקוד',
+  },
 }
 
 /**
@@ -135,8 +165,8 @@ export function mapToMethod(
   if (persona === 'manager') {
     if (challenge === 'overwhelmed') {
       if (dayStructure === 'mixed')
-        return { primary: 'eisenhower', secondary: ['gtd', 'okr', 'weekly_review'] }
-      return { primary: 'eisenhower', secondary: ['gtd', 'weekly_review'] }
+        return { primary: 'eisenhower', secondary: ['gtd', 'okr', 'weekly_review', 'moscow'] }
+      return { primary: 'eisenhower', secondary: ['gtd', 'weekly_review', 'moscow'] }
     }
     if (challenge === 'scattered')
       return { primary: 'gtd', secondary: ['eisenhower', 'time_blocking'] }
@@ -161,7 +191,7 @@ export function mapToMethod(
       return { primary: 'deep_work', secondary: ['time_blocking'] }
     }
     if (challenge === 'goals')
-      return { primary: 'ivy_lee', secondary: ['deep_work', 'time_blocking'] }
+      return { primary: 'ivy_lee', secondary: ['deep_work', 'time_blocking', 'twelve_week_year'] }
     if (challenge === 'overwhelmed')
       return { primary: 'gtd', secondary: ['time_blocking', 'weekly_review'] }
     // entrepreneur default
@@ -172,17 +202,19 @@ export function mapToMethod(
   if (persona === 'developer') {
     if (challenge === 'focus') {
       if (dayStructure === 'mixed')
-        return { primary: 'pomodoro', secondary: ['kanban', 'deep_work', 'time_boxing'] }
-      return { primary: 'pomodoro', secondary: ['deep_work'] }
+        return { primary: 'pomodoro', secondary: ['kanban', 'deep_work', 'time_boxing', 'rule_5217'] }
+      return { primary: 'pomodoro', secondary: ['deep_work', 'rule_5217'] }
     }
     if (challenge === 'scattered')
-      return { primary: 'time_blocking', secondary: ['kanban', 'pomodoro'] }
+      return { primary: 'time_blocking', secondary: ['kanban', 'pomodoro', 'scrum'] }
     if (challenge === 'procrastination')
       return { primary: 'pomodoro', secondary: ['eat_the_frog', 'kanban'] }
+    if (challenge === 'goals')
+      return { primary: 'okr', secondary: ['scrum', 'twelve_week_year'] }
     if (dayStructure === 'independent')
-      return { primary: 'deep_work', secondary: ['pomodoro'] }
+      return { primary: 'deep_work', secondary: ['pomodoro', 'scrum'] }
     // developer default
-    return { primary: 'pomodoro', secondary: ['deep_work', 'time_blocking'] }
+    return { primary: 'pomodoro', secondary: ['deep_work', 'kanban', 'scrum'] }
   }
 
   // ── FALLBACK (other / unmatched) ───────────────────────────

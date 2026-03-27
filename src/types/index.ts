@@ -55,6 +55,7 @@ export interface UserProfile {
   persona?: 'student' | 'manager' | 'entrepreneur' | 'developer' | 'other'
   scheduling_method?: 'pomodoro' | 'deep_work' | 'eisenhower' | 'gtd' | 'time_blocking' | 'ivy_lee'
     | 'eat_the_frog' | 'theme_days' | 'the_one_thing' | 'weekly_review' | 'okr' | 'kanban' | 'time_boxing'
+    | 'moscow' | 'rule_5217' | 'scrum' | 'energy_management' | 'twelve_week_year'
   secondary_methods?: string[]
   challenge?: 'procrastination' | 'overwhelmed' | 'focus' | 'scattered' | 'goals'
   day_structure?: 'fixed' | 'variable' | 'mixed' | 'independent'

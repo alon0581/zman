@@ -47,6 +47,24 @@ ${profile.persona ? `- Persona: ${profile.persona}` : ''}` : ''
     ? buildMethodContext(profile.scheduling_method, profile.secondary_methods ?? [])
     : ''
 
+  const taskIntakeProtocol = (profile?.scheduling_method || profile?.challenge) ? `
+════════════════════════════════════════
+TASK INTAKE PROTOCOL
+════════════════════════════════════════
+When the user mentions ANY task, deadline, project, or exam — apply this protocol EVERY TIME:
+1. CHALLENGE CHECK → User's challenge is "${profile?.challenge ?? 'unknown'}":
+   - procrastination → proactively suggest scheduling the hardest part FIRST (today, morning if possible)
+   - overwhelmed     → classify by urgency+importance before scheduling; ask "מה הדחוף ביותר?"
+   - focus           → suggest one focused session (no interruptions); don't scatter across many slots
+   - scattered       → consolidate: "בוא נשים הכל במקום אחד ונסדר עדיפויות"
+   - goals           → connect to big-picture goal: "איך זה מקדם את המטרה שלך?"
+2. METHOD APPLICATION → Apply primary method (${profile?.scheduling_method ?? 'time_blocking'}) immediately:
+   - Don't ask "when should I schedule this?" — PROPOSE a specific time slot using get_free_slots
+   - Frame the proposal in method language (e.g. "פומודורו 1 ו-2" / "בלוק עמוק של 2 שעות")
+3. SECONDARY MENTION → After proposing, briefly mention 1 complementary method if highly relevant
+4. PEAK HOURS → Always place hard/creative tasks in peak hours (${peakStart}:00–${peakEnd}:00)
+5. AUTONOMY → ${profile?.autonomy_mode === 'auto' ? 'Auto mode: act immediately, don\'t ask' : profile?.autonomy_mode === 'suggest' ? 'Suggest mode: propose and wait for confirmation' : 'Hybrid mode: auto for small tasks, ask for big changes'}` : ''
+
   const memorySummary = (() => {
     if (!memory || memory.length === 0) return ''
     const categories: Record<string, AIMemory[]> = {}
@@ -92,6 +110,7 @@ Current time: ${nowStr}
 ${isMorning ? '(Morning — be especially proactive about today)' : ''}
 ${profileSummary}
 ${methodContext}
+${taskIntakeProtocol}
 ${memorySummary}
 ${taskSummary}
 
@@ -535,6 +554,76 @@ The user follows Time Boxing (hard deadlines). Adapt ALL scheduling behavior:
 - In chat: emphasize the hard boundary ("יש לך 45 דקות לזה — אחרי זה עוברים")
 - break_down_task: each session is a fixed timebox (session_length = 0.75 for 45-min boxes)
 - At timebox end: create next timebox if task unfinished rather than extending`,
+
+    moscow: `
+════════════════════════════════════════
+SCHEDULING METHOD: MoSCoW Method 🎯
+════════════════════════════════════════
+The user uses MoSCoW prioritization. Adapt ALL scheduling behavior:
+- Classify every task: Must (this week fails without it) / Should (important but not critical) / Could (nice to have) / Won't (not now)
+- When user lists tasks: classify each one before scheduling
+- In chat: "זו משימת Must — שמים ראשונה" / "זו Could — נדחה אם נגמר הזמן"
+- Schedule ONLY Must + Should tasks during the week. Could tasks → only if time remains
+- Won't tasks: explicitly acknowledge them ("החלטנו לדחות את זה לשבוע הבא")
+- Weekly: reassess — last week's Should may become this week's Must
+- break_down_task: start with Must components first`,
+
+    rule_5217: `
+════════════════════════════════════════
+SCHEDULING METHOD: 52/17 Rule ⏲️
+════════════════════════════════════════
+The user uses the 52/17 productivity cycle (research-backed alternative to Pomodoro). Adapt ALL scheduling behavior:
+- Work sessions: EXACTLY 52 minutes — no interruptions
+- Breaks: EXACTLY 17 minutes — full disconnect (walk, rest, no phone)
+- One full cycle = 52+17 = 69 minutes → schedule as 70-min blocks
+- break_down_task: session_length = 0.87 (52 min ≈ 0.87h)
+- In chat: "הבא נקבע סשן 52/17 — 52 דקות עבודה ואז הפסקה אמיתית של 17"
+- After 3 cycles (≈3.5h): suggest longer rest (30+ min)
+- Key difference from Pomodoro: longer focus + REAL breaks (not just 5 min)`,
+
+    scrum: `
+════════════════════════════════════════
+SCHEDULING METHOD: Scrum / Sprints 🏃
+════════════════════════════════════════
+The user works in Scrum sprints. Adapt ALL scheduling behavior:
+- Sprint length: 1–2 weeks. Each sprint has a clear, committed goal
+- Sprint planning: "מה הדמו שנראה בסוף הספרינט?" — define before starting
+- Daily standup mindset: "מה עשיתי אתמול? מה אעשה היום? מה חוסם אותי?"
+- Sprint review: last hour of the sprint — demo what was built, what wasn't
+- Retrospective: "מה עבד? מה לא? מה לשנות בספרינט הבא?"
+- In chat: always frame work in sprint context ("נשאר 3 ימים בספרינט")
+- break_down_task: create sprint backlog items, not just sessions
+- Blockers (anything stopping progress) → surface and solve immediately`,
+
+    energy_management: `
+════════════════════════════════════════
+SCHEDULING METHOD: Energy Management ⚡
+════════════════════════════════════════
+The user manages energy, not just time. Adapt ALL scheduling behavior:
+- Match task difficulty to energy level:
+  HIGH energy (peak hours): deep work, creative thinking, complex decisions
+  MEDIUM energy: meetings, emails, routine tasks, planning
+  LOW energy: admin, filing, simple to-dos, watching/reading
+- Always check productivity_peak before scheduling hard tasks
+- Never schedule creative/complex work in low-energy slots
+- In chat: ask "איזו רמת אנרגיה יש לך עכשיו?" when unclear
+- Rest IS productive — don't fill every slot. Guard recovery time
+- In morning briefing: "שעות השיא שלך [peak hours] — שמרתי אותן לעבודה הכי קשה"
+- After lunch: flag natural energy dip (13:00–15:00) → light tasks or nap`,
+
+    twelve_week_year: `
+════════════════════════════════════════
+SCHEDULING METHOD: 12 Week Year 📆
+════════════════════════════════════════
+The user thinks in 12-week cycles as if each 12-week block is a full year. Adapt ALL scheduling behavior:
+- Current "year" = the next 12 weeks from today. Treat with full urgency
+- At the start of each 12-week block: define 1–3 major goals (like annual goals)
+- Each week has a clear "week plan" tied to the 12-week goals
+- Weekly scorecard: did we execute ≥85% of planned activities? (execution, not just outcome)
+- In chat: frame everything in terms of the 12-week goal ("זה מקדם את יעד 12-השבועות שלך?")
+- Urgency: "יש לנו 8 שבועות נותרים — נדרשת התאמה"
+- Never let "there's still time" thinking creep in — every week counts
+- break_down_task: reverse-plan from 12-week goal to this week's actions`,
   }
 
   const primaryContext = m[method] ?? ''
@@ -553,8 +642,13 @@ The user follows Time Boxing (hard deadlines). Adapt ALL scheduling behavior:
     deep_work:      '🧠 Deep Work (complement): protect 2–3 hour uninterrupted blocks during peak hours for the hardest work.',
     eisenhower:     '📊 Eisenhower (complement): classify tasks by urgency+importance before scheduling — prioritize Q2 (important, not urgent).',
     gtd:            '📥 GTD (complement): capture every loose thought immediately, clarify next action, process inbox weekly.',
-    time_blocking:  '📅 Time Blocking (complement): every task on the calendar — no unscheduled work time.',
-    ivy_lee:        '📝 Ivy Lee (complement): each evening, write exactly 6 tasks for tomorrow in priority order.',
+    time_blocking:      '📅 Time Blocking (complement): every task on the calendar — no unscheduled work time.',
+    ivy_lee:            '📝 Ivy Lee (complement): each evening, write exactly 6 tasks for tomorrow in priority order.',
+    moscow:             '🎯 MoSCoW (complement): classify every task as Must/Should/Could/Won\'t before scheduling — only Must+Should go on the calendar.',
+    rule_5217:          '⏲️ 52/17 (complement): use 52-min work + 17-min real break cycles instead of standard blocks.',
+    scrum:              '🏃 Scrum (complement): work in 1–2 week sprints with committed goals — frame each session as advancing the sprint goal.',
+    energy_management:  '⚡ Energy Management (complement): match task difficulty to energy level — hard tasks in peak hours, admin in low-energy slots.',
+    twelve_week_year:   '📆 12 Week Year (complement): frame this week\'s tasks in terms of the 12-week goal — ask "does this advance the 12-week goal?"',
   }
 
   const secondaryContext = secondary

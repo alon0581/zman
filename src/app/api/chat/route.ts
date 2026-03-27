@@ -9,6 +9,7 @@ import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay }
 import { demoStorage } from '@/lib/demo/storage'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
+import { mapToMethod } from '@/lib/scheduling/methodMapper'
 import { decryptApiKey } from '@/lib/encryption'
 import { sendPush, sendFcmPush } from '@/lib/push'
 import fs from 'fs'
@@ -1041,6 +1042,27 @@ async function executeTool(
       const { profile_updates, memory_entries } = input as {
         profile_updates?: Partial<UserProfile>
         memory_entries?: Array<{ key: string; value: string }>
+      }
+
+      // Compute scheduling methods from persona+challenge+day_structure if provided
+      const pu = profile_updates ?? {}
+      if (pu.persona && pu.challenge && pu.day_structure) {
+        const methodResult = mapToMethod(pu.persona, pu.challenge, pu.day_structure)
+        pu.scheduling_method = methodResult.primary
+        pu.secondary_methods = methodResult.secondary
+        // Append method info to memory_entries so it survives cross-device
+        const extraEntries: Array<{ key: string; value: string }> = [
+          { key: 'persona_type', value: pu.persona },
+          { key: 'main_challenge', value: pu.challenge },
+          { key: 'day_structure', value: pu.day_structure },
+          { key: 'scheduling_method', value: methodResult.primary },
+          { key: 'secondary_methods', value: methodResult.secondary.join(', ') },
+        ];
+        if (memory_entries) {
+          memory_entries.push(...extraEntries)
+        } else {
+          (input as Record<string, unknown>).memory_entries = extraEntries
+        }
       }
 
       if (DEMO_MODE) {
