@@ -766,12 +766,59 @@ async function executeTool(
     }
 
     case 'break_down_task': {
-      const { task_title, deadline, total_hours, session_length_hours = 2, color = '#6366F1' } = input as {
+      const { task_title, deadline, total_hours, session_length_hours, color = '#6366F1' } = input as {
         task_title: string; deadline: string; total_hours: number; session_length_hours?: number; color?: string
       }
+
+      // Method-aware session length safety net (all 18 methods)
+      const METHOD_SESSION_HOURS: Record<string, number> = {
+        pomodoro: 0.5, deep_work: 2.5, eisenhower: 1.5, gtd: 1,
+        time_blocking: 1.5, ivy_lee: 1, eat_the_frog: 1.5, theme_days: 2,
+        the_one_thing: 3, weekly_review: 1.25, okr: 1.5, kanban: 1,
+        time_boxing: 0.75, moscow: 1.5, rule_5217: 0.87, scrum: 1.5,
+        energy_management: 1.5, twelve_week_year: 1.5,
+      }
+      const userMethod = profile?.scheduling_method as string | undefined
+      const effectiveSessionLength = session_length_hours
+        ?? (userMethod ? METHOD_SESSION_HOURS[userMethod] : undefined)
+        ?? 2
+
+      // Method-aware title format (all 18 methods)
+      const METHOD_TITLE: Record<string, (t: string, i: number) => string> = {
+        pomodoro:     (t, i) => `${t} — פומודורו ${i + 1}`,
+        deep_work:    (t, i) => `${t} — Deep Work ${i + 1}`,
+        eisenhower:   (t, i) => `${t} — Session ${i + 1}`,
+        gtd:          (t, i) => `${t} — Action ${i + 1}`,
+        time_blocking:(t, i) => `${t} — Block ${i + 1}`,
+        ivy_lee:      (t, i) => `#${i + 1} ${t}`,
+        eat_the_frog: (t, i) => i === 0 ? `🐸 ${t}` : `${t} — Session ${i + 1}`,
+        theme_days:   (t, i) => `${t} — Session ${i + 1}`,
+        the_one_thing:(t, i) => i === 0 ? `🎯 ${t}` : `${t} — Session ${i + 1}`,
+        weekly_review:(t, i) => `🔄 ${t}`,
+        okr:          (t, i) => `${t} — OKR ${i + 1}`,
+        kanban:       (t, i) => `${t} — ${i + 1}`,
+        time_boxing:  (t, i) => `${t} (timebox ${i + 1})`,
+        moscow:       (t, i) => `${t} — Session ${i + 1}`,
+        rule_5217:    (t, i) => `${t} — 52/17 #${i + 1}`,
+        scrum:        (t, i) => `${t} — Sprint Task ${i + 1}`,
+        energy_management: (t, i) => `${t} — Session ${i + 1}`,
+        twelve_week_year:  (t, i) => `${t} — W${i + 1}`,
+      }
+      const formatTitle = userMethod && METHOD_TITLE[userMethod]
+        ? METHOD_TITLE[userMethod]
+        : (t: string, i: number) => `${t} — Session ${i + 1}`
+
+      // Method-aware mobility default
+      const FIXED_METHODS = new Set(['deep_work', 'the_one_thing'])
+      const ASK_FIRST_METHODS = new Set(['eat_the_frog', 'theme_days', 'weekly_review', 'scrum', 'moscow'])
+      const defaultMobility: 'fixed' | 'flexible' | 'ask_first' =
+        userMethod && FIXED_METHODS.has(userMethod) ? 'fixed' :
+        userMethod && ASK_FIRST_METHODS.has(userMethod) ? 'ask_first' :
+        'flexible'
+
       // Use peak-hour preferred slots for study/work tasks
-      const slots = getFreeSlots(currentEvents, new Date().toISOString(), deadline, (session_length_hours as number) * 60, profile, true)
-      const sessionsNeeded = Math.ceil(total_hours / (session_length_hours as number))
+      const slots = getFreeSlots(currentEvents, new Date().toISOString(), deadline, effectiveSessionLength * 60, profile, true)
+      const sessionsNeeded = Math.ceil(total_hours / effectiveSessionLength)
       let created = 0
 
       for (let i = 0; i < Math.min(sessionsNeeded, slots.length); i++) {
@@ -779,16 +826,16 @@ async function executeTool(
         const event: CalendarEvent = {
           id: crypto.randomUUID(),
           user_id: userId,
-          title: `${task_title} — Session ${i + 1}`,
+          title: formatTitle(task_title, i),
           start_time: slot.start,
-          end_time: format(addMinutes(parseISO(slot.start), (session_length_hours as number) * 60), "yyyy-MM-dd'T'HH:mm:ss"),
+          end_time: format(addMinutes(parseISO(slot.start), effectiveSessionLength * 60), "yyyy-MM-dd'T'HH:mm:ss"),
           color: color as string,
           source: 'zman',
           created_by: 'ai',
           status: 'confirmed',
           is_all_day: false,
           created_at: new Date().toISOString(),
-          mobility_type: 'flexible' as const, // AI-created study sessions are always flexible
+          mobility_type: defaultMobility,
         }
 
         if (DEMO_MODE) {

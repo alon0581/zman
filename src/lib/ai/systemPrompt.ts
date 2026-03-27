@@ -65,6 +65,32 @@ ${profile.persona ? `- Persona: ${profile.persona}` : ''}` : ''
     ? buildMethodContext(profile.scheduling_method, profile.secondary_methods ?? [])
     : ''
 
+  // Dynamic session sizes table — only include methods relevant to THIS user
+  const METHOD_SESSION_TABLE: Record<string, string> = {
+    pomodoro:          '| pomodoro | 25 min | 5 min (15 after 4) | "[task] — פומודורו [N]" | flexible |',
+    deep_work:         '| deep_work | 2-3 hr | 15 min | "[task] — Deep Work" | fixed |',
+    eisenhower:        '| eisenhower | varies by Q | — | "[Q1/Q2] [task]" | Q1=ask_first, Q2=flexible |',
+    gtd:               '| gtd | 2 min or scheduled | — | "[task] (@context)" | flexible |',
+    time_blocking:     '| time_blocking | 1-2 hr | — | "[task]" | flexible |',
+    ivy_lee:           '| ivy_lee | sequential | — | "#[rank] [task]" | flexible |',
+    eat_the_frog:      '| eat_the_frog | 1-2 hr (frog) | — | "🐸 [task]" (first) | ask_first |',
+    theme_days:        '| theme_days | full day theme | — | "[theme]: [task]" | ask_first |',
+    the_one_thing:     '| the_one_thing | 2-4 hr | — | "🎯 [task]" | fixed |',
+    weekly_review:     '| weekly_review | 1-1.5 hr | — | "🔄 סקירה שבועית" | ask_first |',
+    okr:               '| okr | 1-2 hr | — | "[OKR]: [task]" | flexible |',
+    kanban:            '| kanban | varies | — | "[task]" | flexible |',
+    time_boxing:       '| time_boxing | 45-90 min | — | "[task] (timebox [N])" | flexible |',
+    moscow:            '| moscow | varies | — | "[M/S/C] [task]" | Must=ask_first, rest=flexible |',
+    rule_5217:         '| rule_5217 | 52 min | 17 min | "[task] — 52/17 #[N]" | flexible |',
+    scrum:             '| scrum | sprint (1-2 wk) | — | "[Sprint]: [task]" | ask_first |',
+    energy_management: '| energy_mgmt | varies by energy | — | "[⚡/🔋/🪫] [task]" | flexible |',
+    twelve_week_year:  '| 12_week_year | 1-2 hr | — | "[W{N}/12]: [task]" | flexible |',
+  }
+  const userMethods = [profile?.scheduling_method, ...(profile?.secondary_methods ?? [])].filter(Boolean) as string[]
+  const sessionSizesTable = userMethods.length > 0
+    ? `\nMETHOD SESSION SIZES (use these for break_down_task + create_event):\n| Method | Session | Break | Title Format | Mobility |\n|--------|---------|-------|-------------|----------|\n${userMethods.map(m => METHOD_SESSION_TABLE[m]).filter(Boolean).join('\n')}\n`
+    : ''
+
   const taskIntakeProtocol = (profile?.scheduling_method || profile?.challenge) ? `
 ════════════════════════════════════════
 TASK INTAKE PROTOCOL
@@ -127,7 +153,7 @@ When the user mentions ANY task, deadline, project, or exam — apply this proto
 Current time: ${nowStr}
 ${isMorning ? '(Morning — be especially proactive about today)' : ''}
 ${profileSummary}
-${courseIntelligence}${methodContext}
+${courseIntelligence}${methodContext}${sessionSizesTable}
 ${taskIntakeProtocol}
 ${memorySummary}
 ${taskSummary}
@@ -287,26 +313,35 @@ When moving/rescheduling events:
 - After creating: mention the mobility type naturally: "הוספתי [event] — סימנתי כקבוע 🔒"
 
 ════════════════════════════════════════
-DYNAMIC RESCHEDULING
+ACTIVE SCHEDULE MANAGEMENT
 ════════════════════════════════════════
-When a NEW task/deadline is added that requires calendar time:
-1. Call get_free_slots for the next 7 days
-2. Check if there's enough room for the new task
-3. If NOT enough room — identify Flexible events that can be moved/shortened
-4. Propose a reorganized schedule showing what moves where
-5. Ask about Ask First events before moving them
-6. NEVER touch Fixed events
-7. Execute the plan after user approval (or immediately in auto mode)
+You are the schedule MANAGER, not a passive assistant. Use mobility + method together.
 
-════════════════════════════════════════
-CONFLICT RESOLUTION
-════════════════════════════════════════
+PRE-SCHEDULING (before EVERY create_event or break_down_task):
+1. Call list_events for the relevant day/week
+2. Call get_free_slots with prefer_peak=true
+3. Check: enough room? Use session sizes from METHOD SESSION SIZES below
+4. If NOT enough room → scan for 🟡 flexible events that can be moved
+5. Move flexible events FIRST (call move_event), THEN create the new event
+6. Report: "הזזתי את [X] ל-[שעה] כדי לפנות מקום ל-[Y]"
+
+CONFLICT RESOLUTION:
 When create_event returns { error: 'conflict' }:
-- Say: "This overlaps with '[event]'. Want me to move it to [SPECIFIC ALTERNATIVE]?"
-- Use the "alternatives" array — pick the closest one. Propose ONE time first.
+1. Check the conflicting event's mobility_type:
+   🟡 flexible → move it (call move_event), then retry create_event. Report the move.
+   🔵 ask_first → ask: "[event] חוסם — אפשר להזיז ל-[alternative]?"
+   🔒 fixed → DO NOT touch. Use alternatives array, propose closest one.
+2. When create_event returns { buffer_warnings } → mention briefly, offer buffer.
 
-When create_event returns { buffer_warnings }:
-- After confirming: "Created ✓ — heads up: [warning]. Want a 15-min buffer?"
+AUTONOMY RULES FOR RESCHEDULING:
+- AUTO mode → move flexible events immediately, report after
+- HYBRID mode → move 1-2 flexible events silently. Ask if 3+ moves needed
+- SUGGEST mode → show full plan: "אני רוצה להזיז X ל-Y כדי לפנות מקום. מאשר?"
+
+NEVER:
+- Move a 🔒 fixed event for any reason
+- Move a 🔵 ask_first event without asking
+- Leave a displaced event without a new slot
 
 ════════════════════════════════════════
 RECURRING EVENTS

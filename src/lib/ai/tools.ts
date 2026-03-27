@@ -5,7 +5,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'create_event',
-      description: "Create a new calendar event. ALWAYS call list_events first to check for duplicates before creating. The server automatically detects time conflicts and returns { error: 'conflict', conflictingEvent, alternatives } if there is an overlap — in that case, propose a specific alternative from the alternatives array. Also returns buffer_warnings if the new event will be back-to-back with another event. When you have freedom to choose the time, prefer the user's peak productivity hours for hard tasks (study, deep work).",
+      description: "Create a new calendar event. ALWAYS call list_events first to check for duplicates before creating. The server automatically detects time conflicts and returns { error: 'conflict', conflictingEvent, alternatives } if there is an overlap — in that case, check the conflicting event's mobility_type: if flexible (🟡) move it first via move_event then retry; if ask_first (🔵) ask user; if fixed (🔒) use alternatives. Also returns buffer_warnings if back-to-back. When the user doesn't specify duration: use the METHOD SESSION SIZES table. Set mobility_type from the same table. Prefer peak hours for hard tasks.",
       parameters: {
         type: 'object',
         properties: {
@@ -35,7 +35,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'move_event',
-      description: 'Move an existing event to a different time. IMPORTANT: Check the event\'s mobility_type before calling. Never move fixed events. For ask_first events, ask the user first. Flexible events can be moved freely.',
+      description: 'Move an existing event to a different time. IMPORTANT: Check mobility_type before calling — never move fixed (🔒), ask user for ask_first (🔵), move flexible (🟡) freely. Use PROACTIVELY: when a new event needs space and flexible events are in the way, move them first. Call get_free_slots to find the new slot.',
       parameters: {
         type: 'object',
         properties: {
@@ -85,7 +85,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'get_free_slots',
-      description: 'Find available time slots between two dates. Set prefer_peak=true for study/deep work tasks to get peak-hour slots listed first. Each slot includes is_peak=true if it falls in the user\'s peak productivity window.',
+      description: 'Find available time slots between two dates. Call this BEFORE any scheduling decision. Set prefer_peak=true for study/deep work tasks. Use min_duration_minutes matching the user\'s method from the METHOD SESSION SIZES table (e.g. Pomodoro=30, Deep Work=150, Time Boxing=45). Each slot includes is_peak=true if in peak window.',
       parameters: {
         type: 'object',
         properties: {
@@ -102,7 +102,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'break_down_task',
-      description: 'Break a big task (exam, project, deadline) into multiple scheduled sessions. Automatically uses peak-hour slots for study/work tasks. Use this whenever the user mentions a deadline, paper, exam, or project that needs multiple sessions.',
+      description: 'Break a big task (exam, project, deadline) into multiple scheduled sessions. CRITICAL: Consult the METHOD SESSION SIZES table in your system prompt — use the user\'s scheduling_method to choose session_length_hours and title format (e.g. Pomodoro=0.5h, Deep Work=2.5h, Time Boxing=0.75h). The server has a safety net but you should pass correct values. Automatically uses peak-hour slots.',
       parameters: {
         type: 'object',
         properties: {
