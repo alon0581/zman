@@ -958,7 +958,7 @@ async function executeTool(
           dayOfWeek: format(new Date(day), 'EEEE'),
           eventCount: dayEvs.length,
           totalHours,
-          events: dayEvs.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time, color: e.color })),
+          events: dayEvs.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time, color: e.color, mobility_type: e.mobility_type ?? 'ask_first' })),
         })
 
         // 1. Back-to-back events (< 15 min gap)
@@ -1038,6 +1038,19 @@ async function executeTool(
         total_events: rangeEvents.length,
         days: dayStats,
         issues,
+        mobility_summary: (() => {
+          const fixedCount = rangeEvents.filter(e => (e.mobility_type ?? 'ask_first') === 'fixed').length
+          const flexibleCount = rangeEvents.filter(e => e.mobility_type === 'flexible').length
+          const askFirstCount = rangeEvents.length - fixedCount - flexibleCount
+          return {
+            fixed: fixedCount,
+            flexible: flexibleCount,
+            ask_first: askFirstCount,
+            note: flexibleCount === 0
+              ? 'ALL events are fixed or ask_first — nothing can be moved freely'
+              : `${flexibleCount} events can be moved freely`,
+          }
+        })(),
         summary: issues.length === 0
           ? 'Schedule looks well-balanced — no major issues detected'
           : `Found ${issues.length} potential issue(s) to address`,
