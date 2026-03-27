@@ -469,13 +469,13 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {memory.map(m => {
-                    const sourceLabels = MEMORY_SOURCE_LABELS[lang] ?? MEMORY_SOURCE_LABELS.en
-                    const srcLabel = sourceLabels[m.learned_from] ?? m.learned_from
+                    const readableKey = m.key.replace(/_/g, ' ')
                     return (
-                      <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)' }}>
-                        <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: 'var(--blue)', background: 'rgba(59,126,247,0.1)', padding: '2px 6px', borderRadius: 5, flexShrink: 0, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.key}</span>
-                        <span style={{ fontSize: 13, color: 'var(--text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.value}</span>
-                        <span style={{ fontSize: 10, color: 'var(--text-2)', flexShrink: 0, opacity: 0.7 }}>{srcLabel}</span>
+                      <div key={m.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--blue)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{readableKey}</div>
+                          <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.4, wordBreak: 'break-word' }}>{m.value}</div>
+                        </div>
                         <button
                           onClick={async () => {
                             setDeletingMemKey(m.key)
@@ -484,7 +484,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                             setDeletingMemKey(null)
                           }}
                           disabled={deletingMemKey === m.key}
-                          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: 'none', background: 'rgba(255,100,100,0.15)', color: '#F87171', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: deletingMemKey === m.key ? 0.5 : 1 }}
+                          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: 'none', background: 'rgba(255,100,100,0.15)', color: '#F87171', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: deletingMemKey === m.key ? 0.5 : 1, marginTop: 2 }}
                         >×</button>
                       </div>
                     )
