@@ -468,8 +468,34 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {memory.map(m => {
-                    const readableKey = m.key.replace(/_/g, ' ')
+                  {/* deduplicate by key — keep last occurrence */}
+                  {Object.values(memory.reduce((acc, m) => { acc[m.key] = m; return acc }, {} as Record<string, typeof memory[0]>)).map(m => {
+                    const KEY_LABELS: Record<string, { he: string; en: string }> = {
+                      occupation: { he: 'עיסוק', en: 'Occupation' },
+                      study_field: { he: 'תחום לימודים', en: 'Study Field' },
+                      university: { he: 'אוניברסיטה', en: 'University' },
+                      year_of_study: { he: 'שנת לימודים', en: 'Year of Study' },
+                      wake_time: { he: 'שעת קימה', en: 'Wake Time' },
+                      sleep_time: { he: 'שעת שינה', en: 'Sleep Time' },
+                      pref_study_time: { he: 'זמן לימוד מועדף', en: 'Preferred Study Time' },
+                      pref_meeting_time: { he: 'זמן פגישות מועדף', en: 'Preferred Meeting Time' },
+                      work_hours: { he: 'שעות עבודה', en: 'Work Hours' },
+                      free_days: { he: 'ימי חופש', en: 'Free Days' },
+                      main_challenge: { he: 'אתגר עיקרי', en: 'Main Challenge' },
+                      goal: { he: 'מטרה', en: 'Goal' },
+                      hobby: { he: 'תחביב', en: 'Hobby' },
+                      location: { he: 'מיקום', en: 'Location' },
+                      scheduling_method: { he: 'שיטת ניהול זמן', en: 'Scheduling Method' },
+                      secondary_methods: { he: 'שיטות משניות', en: 'Secondary Methods' },
+                      persona_type: { he: 'סוג משתמש', en: 'User Type' },
+                      day_structure: { he: 'מבנה יום', en: 'Day Structure' },
+                      productivity_peak: { he: 'שיא פרודוקטיביות', en: 'Peak Hours' },
+                      commute_time: { he: 'זמן נסיעה', en: 'Commute Time' },
+                    }
+                    const label = KEY_LABELS[m.key]
+                    const readableKey = label
+                      ? (lang === 'he' ? label.he : label.en)
+                      : m.key.replace(/_/g, ' ')
                     return (
                       <div key={m.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)' }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
