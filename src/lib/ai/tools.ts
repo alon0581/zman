@@ -51,14 +51,15 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'update_event',
-      description: 'Update properties of an existing event WITHOUT changing its time. Use to change title, color, or mobility_type. For example: user says "mark this as fixed", "זה קבוע", "make this flexible", "change to ask first" — call this tool with the new mobility_type.',
+      description: 'Update properties of an existing event WITHOUT changing its time. Use to change title, color, or mobility_type. IMPORTANT: if the event belongs to a recurring series (has a series_id from list_events), set apply_to_series:true to update ALL instances at once — do NOT call this in a loop for each instance. Example: user says "lock all my course events" → list_events → find recurring_series → call update_event once per series with apply_to_series:true.',
       parameters: {
         type: 'object',
         properties: {
-          event_id: { type: 'string' },
+          event_id: { type: 'string', description: 'Any one instance ID from the series (or the single event ID)' },
           title: { type: 'string', description: 'New title (optional)' },
           color: { type: 'string', description: 'New hex color (optional)' },
-          mobility_type: { type: 'string', enum: ['fixed', 'flexible', 'ask_first'], description: 'New mobility classification (optional). fixed=🔒 never move, flexible=🟡 AI can move freely, ask_first=🔵 ask user before moving' },
+          mobility_type: { type: 'string', enum: ['fixed', 'flexible', 'ask_first'], description: 'New mobility. fixed=🔒 never move, flexible=🟡 AI moves freely, ask_first=🔵 ask user first' },
+          apply_to_series: { type: 'boolean', description: 'If true, applies the change to ALL instances of the recurring series. Use when event has a series_id.' },
         },
         required: ['event_id'],
       },

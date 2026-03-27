@@ -659,7 +659,9 @@ async function executeTool(
     }
 
     case 'update_event': {
-      const { event_id, title, color, mobility_type } = input as { event_id: string; title?: string; color?: string; mobility_type?: string }
+      const { event_id, title, color, mobility_type, apply_to_series } = input as {
+        event_id: string; title?: string; color?: string; mobility_type?: string; apply_to_series?: boolean
+      }
       const existing = currentEvents.find(e => e.id === event_id)
       if (!existing) return { error: 'Event not found' }
 
@@ -670,6 +672,22 @@ async function executeTool(
 
       if (Object.keys(changes).length === 0) return { error: 'No changes provided' }
 
+      // Apply to entire recurring series
+      if (apply_to_series && existing.series_id) {
+        const seriesEvents = currentEvents.filter(e => e.series_id === existing.series_id)
+        if (DEMO_MODE) {
+          for (const e of seriesEvents) demoStorage.updateEvent(e.id, changes as Partial<CalendarEvent>, userId)
+        } else {
+          const { createClient } = await import('@/lib/supabase/server')
+          const supabase = await createClient()
+          await supabase.from('events').update(changes).eq('series_id', existing.series_id).eq('user_id', userId)
+        }
+        const updatedSeries = seriesEvents.map(e => ({ ...e, ...changes } as CalendarEvent))
+        updatedEvents.push(...updatedSeries)
+        return { success: true, updated_count: seriesEvents.length, series_id: existing.series_id }
+      }
+
+      // Single event update
       if (DEMO_MODE) {
         demoStorage.updateEvent(event_id, changes as Partial<CalendarEvent>, userId)
       } else {
@@ -795,7 +813,36 @@ async function executeTool(
         const start = new Date(e.start_time)
         return start >= new Date(from_date) && start <= new Date(to_date)
       })
-      return { events: filtered.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time })) }
+
+      // Group recurring events by series_id so AI understands them as series, not individual instances
+      const seriesMap: Record<string, { title: string; instances: string[]; mobility_type: string | undefined }> = {}
+      const standalone: typeof filtered = []
+
+      for (const e of filtered) {
+        if (e.series_id) {
+          if (!seriesMap[e.series_id]) {
+            seriesMap[e.series_id] = { title: e.title, instances: [], mobility_type: e.mobility_type }
+          }
+          seriesMap[e.series_id].instances.push(e.id)
+        } else {
+          standalone.push(e)
+        }
+      }
+
+      const recurring_series = Object.entries(seriesMap).map(([series_id, s]) => ({
+        series_id,
+        title: s.title,
+        instance_count: s.instances.length,
+        instance_ids: s.instances,
+        mobility_type: s.mobility_type ?? 'ask_first',
+        note: 'Recurring series — use apply_to_series:true in update_event to update all instances at once',
+      }))
+
+      return {
+        events: standalone.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time, mobility_type: e.mobility_type ?? 'ask_first', series_id: e.series_id })),
+        recurring_series,
+        summary: `${standalone.length} standalone events, ${recurring_series.length} recurring series (${filtered.length - standalone.length} total instances)`,
+      }
     }
 
     case 'analyze_schedule': {
