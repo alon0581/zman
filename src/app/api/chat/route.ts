@@ -829,19 +829,41 @@ async function executeTool(
         }
       }
 
+      // Helper: strip lab/tutorial prefixes to find the base course name
+      const baseCourse = (title: string) =>
+        title.replace(/^(מעבדה ל|תרגול ל|תרגיל ל|חדווה ל|lab for |tutorial for |lab |recitation )/i, '').trim()
+
+      // Group series by base course name so AI understands lecture+lab+tutorial = one course
+      const courseGroups: Record<string, string[]> = {}
+      for (const [sid, s] of Object.entries(seriesMap)) {
+        const base = baseCourse(s.title)
+        if (!courseGroups[base]) courseGroups[base] = []
+        courseGroups[base].push(sid)
+      }
+
       const recurring_series = Object.entries(seriesMap).map(([series_id, s]) => ({
         series_id,
         title: s.title,
+        base_course: baseCourse(s.title),
         instance_count: s.instances.length,
         instance_ids: s.instances,
         mobility_type: s.mobility_type ?? 'ask_first',
         note: 'Recurring series — use apply_to_series:true in update_event to update all instances at once',
       }))
 
+      // Logical course list (lecture + lab + tutorial grouped under one course name)
+      const logical_courses = Object.entries(courseGroups).map(([base, seriesIds]) => ({
+        course_name: base,
+        components: seriesIds.map(sid => ({ series_id: sid, title: seriesMap[sid].title, instance_count: seriesMap[sid].instances.length })),
+        total_instances: seriesIds.reduce((n, sid) => n + seriesMap[sid].instances.length, 0),
+        note: seriesIds.length > 1 ? `This course has ${seriesIds.length} components (e.g. lecture + lab). Hebrew number words in the title (אחד/שתיים/שלוש) are part of the course name, not arithmetic.` : undefined,
+      }))
+
       return {
         events: standalone.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time, mobility_type: e.mobility_type ?? 'ask_first', series_id: e.series_id })),
         recurring_series,
-        summary: `${standalone.length} standalone events, ${recurring_series.length} recurring series (${filtered.length - standalone.length} total instances)`,
+        logical_courses,
+        summary: `${standalone.length} standalone events, ${logical_courses.length} distinct courses (${recurring_series.length} series total, ${filtered.length - standalone.length} recurring instances)`,
       }
     }
 
