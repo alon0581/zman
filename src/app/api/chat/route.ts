@@ -325,6 +325,30 @@ export async function POST(req: NextRequest) {
         break
       }
 
+      // Safety net: if AI responded with just "Done!" or similarly terse after tool calls,
+      // re-prompt to get a proper explanation (MiniMax-M2.5 sometimes does this with large prompts)
+      if (lastContent && lastContent.length < 30 && iterations > 1) {
+        try {
+          currentMessages.push({ role: 'assistant', content: lastContent })
+          currentMessages.push({
+            role: 'user',
+            content: 'Please provide a detailed response based on the tool results above. Explain what you found, any issues, and your suggestions. Respond in the user\'s language.',
+          })
+          const retryResp = await openaiClient.chat.completions.create({
+            model,
+            messages: currentMessages,
+            max_tokens: isReasoningModel ? 4096 : 1024,
+          })
+          const retryText = (retryResp.choices[0].message.content ?? '')
+            .replace(/<think>[\s\S]*?<\/think>/g, '')
+            .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
+            .trim()
+          if (retryText.length > lastContent.length) {
+            lastContent = retryText
+          }
+        } catch { /* keep original lastContent */ }
+      }
+
       if (state.completedProfile) completedProfile = state.completedProfile
 
       // Send push notification when AI creates events (FCM for native, VAPID for browser)
