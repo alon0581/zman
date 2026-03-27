@@ -8,6 +8,54 @@ import { ArrowLeft, X, Check } from 'lucide-react'
 import Link from 'next/link'
 import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
 
+// ─── Method Groups ────────────────────────────────────────────────────────────
+const METHOD_GROUPS: Array<{
+  id: string
+  emoji: string
+  name_en: string; name_he: string
+  for_en: string;  for_he: string
+  desc_en: string; desc_he: string
+  color: string
+  methods: SchedulingMethod[]
+}> = [
+  {
+    id: 'focus',
+    emoji: '🎯',
+    name_en: 'Focus & Deep Work', name_he: 'ריכוז ועבודה עמוקה',
+    for_en: 'Developers · Students · Writers', for_he: 'מפתחים · סטודנטים · כותבים',
+    desc_en: 'For anyone who needs sustained concentration. Pick a time format and protect it.', desc_he: 'לכל מי שצריך ריכוז ממושך. בחר פורמט זמן ושמור אותו.',
+    color: '#3B7EF7',
+    methods: ['pomodoro', 'deep_work', 'rule_5217', 'time_boxing'],
+  },
+  {
+    id: 'priority',
+    emoji: '📊',
+    name_en: 'Prioritization', name_he: 'תעדוף',
+    for_en: 'Managers · Overwhelmed · Perfectionists', for_he: 'מנהלים · מוצפים · פרפקציוניסטים',
+    desc_en: 'Too many tasks? These methods help you decide what actually matters.', desc_he: 'יותר מדי משימות? השיטות האלו עוזרות להחליט מה באמת חשוב.',
+    color: '#F97316',
+    methods: ['eisenhower', 'moscow', 'ivy_lee', 'eat_the_frog'],
+  },
+  {
+    id: 'projects',
+    emoji: '🗂️',
+    name_en: 'Projects & Goals', name_he: 'פרויקטים ויעדים',
+    for_en: 'Entrepreneurs · Project Managers · Teams', for_he: 'יזמים · מנהלי פרויקטים · צוותים',
+    desc_en: 'Running multiple projects or chasing big goals? These systems keep everything visible.', desc_he: 'מנהל מספר פרויקטים או רודף אחרי יעדים גדולים? השיטות האלו שומרות על כל דבר גלוי.',
+    color: '#34D399',
+    methods: ['gtd', 'kanban', 'scrum', 'okr', 'twelve_week_year', 'the_one_thing'],
+  },
+  {
+    id: 'structure',
+    emoji: '📅',
+    name_en: 'Structure & Rhythm', name_he: 'מבנה ורצף',
+    for_en: 'Everyone · Great as a base layer', for_he: 'כולם · מצוין כשכבת בסיס',
+    desc_en: 'Give your days and weeks a skeleton. Works alongside any other method.', desc_he: 'תן לימים ולשבועות שלך שלד. עובד לצד כל שיטה אחרת.',
+    color: '#6366F1',
+    methods: ['time_blocking', 'theme_days', 'weekly_review', 'energy_management'],
+  },
+]
+
 interface Props {
   user: User
   profile: UserProfile | null
@@ -110,6 +158,29 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
   const lang = p.language ?? 'en'
   const isRTL = lang === 'he' || lang === 'ar'
   const set = (k: keyof UserProfile, v: unknown) => setP(prev => ({ ...prev, [k]: v }))
+
+  const handleMethodClick = (key: SchedulingMethod) => {
+    const isPrimary = p.scheduling_method === key
+    const secondary = p.secondary_methods ?? []
+    const isSecondary = secondary.includes(key)
+
+    if (isPrimary) {
+      // Deactivate primary — promote first secondary if exists
+      const [next, ...rest] = secondary
+      setP(prev => ({ ...prev, scheduling_method: next as SchedulingMethod | undefined, secondary_methods: rest }))
+    } else if (isSecondary) {
+      // Remove from secondary
+      setP(prev => ({ ...prev, secondary_methods: secondary.filter(m => m !== key) }))
+    } else if (!p.scheduling_method) {
+      // No primary yet — set as primary
+      set('scheduling_method', key)
+    } else {
+      // Add as secondary (max 4)
+      if (secondary.length < 4) {
+        setP(prev => ({ ...prev, secondary_methods: [...secondary, key] }))
+      }
+    }
+  }
   const isLocalMode = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
   // Load memory on mount
@@ -245,50 +316,124 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
         {/* ── SCHEDULING METHOD ── */}
         <Card label={t(lang, 'methodSection')}>
-          <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>{t(lang, 'methodDesc')}</div>
-          {p.scheduling_method ? (() => {
-            const m = METHOD_LABELS[p.scheduling_method as SchedulingMethod]
-            return m ? (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '10px 14px', borderRadius: 12,
-                background: 'rgba(59,126,247,0.08)', border: '1px solid rgba(59,126,247,0.2)',
-                marginBottom: 12,
-              }}>
-                <span style={{ fontSize: 24 }}>{m.emoji}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
-                    {lang === 'he' ? m.he : m.en}
+          <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 16, lineHeight: 1.5 }}>
+            {lang === 'he'
+              ? 'בחר שיטה ראשית + עד 4 משלימות. לחץ על שיטה פעילה כדי לבטל אותה.'
+              : 'Select a primary method + up to 4 complements. Tap an active method to deactivate it.'}
+          </div>
+
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
+            {[
+              { dot: '#3B7EF7', label: lang === 'he' ? 'ראשי' : 'Primary' },
+              { dot: '#6366F1', label: lang === 'he' ? 'משלים' : 'Complement' },
+            ].map(l => (
+              <div key={l.dot} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-2)' }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: l.dot }} />
+                {l.label}
+              </div>
+            ))}
+          </div>
+
+          {/* Method groups */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {METHOD_GROUPS.map(group => {
+              const groupActive = group.methods.some(m => p.scheduling_method === m || (p.secondary_methods ?? []).includes(m))
+              return (
+                <div key={group.id} style={{
+                  borderRadius: 14,
+                  border: groupActive ? `1.5px solid ${group.color}40` : '1px solid var(--border)',
+                  background: groupActive ? `${group.color}08` : 'var(--bg-input)',
+                  overflow: 'hidden',
+                  transition: 'all 0.2s',
+                }}>
+                  {/* Group header */}
+                  <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                      <span style={{ fontSize: 18 }}>{group.emoji}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: groupActive ? group.color : 'var(--text)' }}>
+                        {lang === 'he' ? group.name_he : group.name_en}
+                      </span>
+                      <span style={{
+                        marginInlineStart: 'auto', fontSize: 10, fontWeight: 600,
+                        color: group.color, background: `${group.color}18`,
+                        padding: '2px 8px', borderRadius: 20,
+                      }}>
+                        {lang === 'he' ? group.for_he : group.for_en}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-2)', paddingInlineStart: 26 }}>
+                      {lang === 'he' ? group.desc_he : group.desc_en}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 2 }}>
-                    {lang === 'he' ? m.description_he : m.description_en}
+
+                  {/* Methods */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                    {group.methods.map((key, i) => {
+                      const m = METHOD_LABELS[key]
+                      const isPrimary = p.scheduling_method === key
+                      const isSecondary = (p.secondary_methods ?? []).includes(key)
+                      const isActive = isPrimary || isSecondary
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => handleMethodClick(key)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            padding: '9px 14px',
+                            background: isPrimary
+                              ? `${group.color}18`
+                              : isSecondary ? 'rgba(99,102,241,0.10)' : 'transparent',
+                            border: 'none',
+                            borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                            cursor: 'pointer',
+                            textAlign: isRTL ? 'right' : 'left',
+                            transition: 'background 0.15s',
+                            boxShadow: isPrimary
+                              ? `inset 3px 0 0 ${group.color}` : isSecondary
+                              ? 'inset 3px 0 0 #6366F1' : 'none',
+                          }}
+                          onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.04)' }}
+                          onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                        >
+                          <span style={{ fontSize: 18, flexShrink: 0 }}>{m.emoji}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              fontSize: 13, fontWeight: isPrimary ? 700 : 500,
+                              color: isPrimary ? group.color : isSecondary ? '#6366F1' : 'var(--text)',
+                              marginBottom: 1,
+                            }}>
+                              {lang === 'he' ? m.he : m.en}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--text-2)', lineHeight: 1.3 }}>
+                              {lang === 'he' ? m.description_he : m.description_en}
+                            </div>
+                          </div>
+                          {isPrimary && (
+                            <span style={{
+                              fontSize: 10, fontWeight: 700,
+                              color: group.color, background: `${group.color}20`,
+                              padding: '2px 7px', borderRadius: 10, flexShrink: 0,
+                            }}>
+                              {lang === 'he' ? 'ראשי' : 'Primary'}
+                            </span>
+                          )}
+                          {isSecondary && (
+                            <span style={{
+                              fontSize: 10, fontWeight: 600,
+                              color: '#6366F1', background: 'rgba(99,102,241,0.15)',
+                              padding: '2px 7px', borderRadius: 10, flexShrink: 0,
+                            }}>
+                              {lang === 'he' ? 'משלים' : 'Complement'}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
-              </div>
-            ) : null
-          })() : (
-            <div style={{ fontSize: 13, color: 'var(--text-2)', fontStyle: 'italic', padding: '8px 0', marginBottom: 12 }}>
-              {lang === 'he' ? 'לא נבחרה שיטה — תיבחר באונבורדינג' : 'No method selected — will be chosen during onboarding'}
-            </div>
-          )}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {(Object.entries(METHOD_LABELS) as [SchedulingMethod, typeof METHOD_LABELS[SchedulingMethod]][]).map(([key, m]) => (
-              <button
-                key={key}
-                onClick={() => set('scheduling_method', key)}
-                style={{
-                  padding: '6px 12px', borderRadius: 8,
-                  border: p.scheduling_method === key ? '1.5px solid #3B7EF7' : '1px solid var(--border)',
-                  background: p.scheduling_method === key ? 'rgba(59,126,247,0.1)' : 'var(--bg-input)',
-                  cursor: 'pointer', fontSize: 11, fontWeight: 600,
-                  color: 'var(--text)', transition: 'all 0.15s',
-                  display: 'flex', alignItems: 'center', gap: 4,
-                }}
-              >
-                <span>{m.emoji}</span>
-                <span>{lang === 'he' ? m.he : m.en}</span>
-              </button>
-            ))}
+              )
+            })}
           </div>
         </Card>
 
