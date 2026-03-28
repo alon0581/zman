@@ -157,7 +157,7 @@ export async function POST(req: NextRequest) {
           timeZone: timezone,
           year: 'numeric', month: '2-digit', day: '2-digit',
           hour: '2-digit', minute: '2-digit', second: '2-digit',
-          hour12: false,
+          hourCycle: 'h23',
         }).formatToParts(new Date())
         const get = (t: string) => parts.find(p => p.type === t)?.value ?? '0'
         return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`)
@@ -332,7 +332,9 @@ export async function POST(req: NextRequest) {
           currentMessages.push({ role: 'assistant', content: lastContent })
           currentMessages.push({
             role: 'user',
-            content: 'Please provide a detailed response based on the tool results above. Explain what you found, any issues, and your suggestions. Respond in the user\'s language.',
+            content: profile?.language === 'he'
+              ? 'תן תשובה מפורטת על סמך תוצאות הכלים למעלה. הסבר מה מצאת, בעיות, והצעות. ענה בעברית.'
+              : 'Please provide a detailed response based on the tool results above. Explain what you found, any issues, and your suggestions.',
           })
           const retryResp = await openaiClient.chat.completions.create({
             model,
