@@ -118,19 +118,35 @@ export function computeNotifications(
 
   // ── 1. Pre-event reminders ──────────────────────────────────────────────
   if (profile.notify_pre_event !== false) {
+    // Clean sent list: keep only today's entries to avoid unbounded growth
+    const sentToday = (profile.sent_event_notifications ?? [])
+      .filter(s => s.endsWith(`-${dateStr}`))
+    const sentSet = new Set(sentToday)
+
     const todayEvents = events.filter(e => e.start_time.startsWith(dateStr) && !e.is_all_day)
+    const newSent: string[] = []
+
     for (const ev of todayEvents) {
+      const sentKey = `${ev.id}-${dateStr}`
+      if (sentSet.has(sentKey)) continue  // already sent today — skip
+
       const startMatch = ev.start_time.match(/T(\d{2}):(\d{2})/)
       if (!startMatch) continue
       const evStartMin = toMinutes(parseInt(startMatch[1], 10), parseInt(startMatch[2], 10))
       const reminderMin = getReminderMinutes(ev.title, ev.created_by)
       const diff = evStartMin - nowMin
 
-      // Send if within the 5-minute cron window before the reminder time
-      if (diff >= reminderMin && diff < reminderMin + 5) {
+      // 9-minute window: handles up to 4 min cron delay without missing
+      // reminderMin-4 → reminderMin+5: any cron run within this range sends once
+      if (diff >= reminderMin - 4 && diff < reminderMin + 5) {
         const msg = preEventMessage(ev.title, reminderMin, isHe)
         notifications.push({ ...msg, url: '/app', tag: `pre-event-${ev.id}` })
+        newSent.push(sentKey)
       }
+    }
+
+    if (newSent.length > 0) {
+      profileUpdates.sent_event_notifications = [...sentToday, ...newSent]
     }
   }
 
@@ -139,7 +155,7 @@ export function computeNotifications(
     const wake = parseTime(profile.wake_time ?? '07:00')
     if (wake) {
       const targetMin = toMinutes(wake.hour, wake.minute) + 15
-      if (nowMin >= targetMin && nowMin < targetMin + 5) {
+      if (nowMin >= targetMin - 4 && nowMin < targetMin + 5) {
         const todayEvents = events.filter(e => e.start_time.startsWith(dateStr) && !e.is_all_day)
         todayEvents.sort((a, b) => a.start_time.localeCompare(b.start_time))
         const first = todayEvents[0]
@@ -162,7 +178,7 @@ export function computeNotifications(
     const sleep = parseTime(profile.sleep_time ?? '23:00')
     if (sleep) {
       const targetMin = toMinutes(sleep.hour, sleep.minute) - 60
-      if (nowMin >= targetMin && nowMin < targetMin + 5) {
+      if (nowMin >= targetMin - 4 && nowMin < targetMin + 5) {
         // Compute tomorrow's date
         const tomorrow = new Date()
         tomorrow.setDate(tomorrow.getDate() + 1)

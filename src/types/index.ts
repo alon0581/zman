@@ -60,6 +60,7 @@ export interface UserProfile {
   last_nudge_at?: string                 // ISO timestamp for nudge throttling
   last_morning_briefing_date?: string    // "2026-03-29" — prevents double-send
   last_evening_review_date?: string      // "2026-03-29" — prevents double-send
+  sent_event_notifications?: string[]    // ["eventId-2026-03-29", ...] — dedup pre-event reminders
   timezone?: string                      // IANA timezone (e.g. "Asia/Jerusalem"), set by client
   // Time management methodology
   persona?: 'student' | 'manager' | 'entrepreneur' | 'developer' | 'other'
