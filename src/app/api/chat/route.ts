@@ -284,6 +284,7 @@ export async function POST(req: NextRequest) {
               tc.function.name, input, userId as string, events,
               createdEvents, updatedEvents, deletedEventIds, profile, state,
               freshProfile?.push_subscription,
+              freshProfile?.fcm_token,
             )
             currentMessages.push({
               role: 'tool',
@@ -1323,13 +1324,20 @@ async function executeTool(
 
     case 'send_notification': {
       const { title, body } = input as { title: string; body: string }
-      // Try FCM (native Capacitor) first, then fall back to VAPID (browser PWA)
-      if (fcmToken) {
-        await sendFcmPush(fcmToken, { title, body, url: '/app' }).catch(() => {})
-      } else if (pushSubscription) {
-        await sendPush(pushSubscription, { title, body, url: '/app', tag: 'zman-message' }).catch(() => {})
+      if (!fcmToken && !pushSubscription) {
+        return { success: false, reason: 'no_push_subscription', message: 'User has no push subscription. Ask them to enable notifications in Settings.' }
       }
-      return { success: true }
+      try {
+        // Try FCM (native Capacitor) first, then fall back to VAPID (browser PWA)
+        if (fcmToken) {
+          await sendFcmPush(fcmToken, { title, body, url: '/app' })
+        } else if (pushSubscription) {
+          await sendPush(pushSubscription, { title, body, url: '/app', tag: 'zman-message' })
+        }
+        return { success: true }
+      } catch {
+        return { success: false, reason: 'send_failed' }
+      }
     }
 
     case 'delete_all_events': {

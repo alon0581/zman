@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { subscribePushNotifications, unsubscribePushNotifications } from '@/lib/push-client'
 import { User } from '@supabase/supabase-js'
 import { UserProfile, AIMemory } from '@/types'
 import { createClient } from '@/lib/supabase/client'
@@ -206,6 +207,22 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     }
   }
 
+  const handleNotificationsToggle = useCallback(async (v: boolean) => {
+    set('notifications_enabled', v)
+    if (v) {
+      const ok = await subscribePushNotifications()
+      if (!ok) {
+        // Permission denied — revert
+        set('notifications_enabled', false)
+        saveField('notifications_enabled', false)
+        return
+      }
+    } else {
+      await unsubscribePushNotifications()
+    }
+    saveField('notifications_enabled', v)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Load memory on mount
   useEffect(() => {
     fetch('/api/memory').then(r => r.ok ? r.json() : []).then((m: AIMemory[]) => {
@@ -346,7 +363,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
             {t(lang, 'notifDesc')}
           </div>
           <Row label={t(lang, 'notifMaster')} desc="">
-            <Toggle value={p.notifications_enabled ?? false} onChange={v => { set('notifications_enabled', v); saveField('notifications_enabled', v) }} />
+            <Toggle value={p.notifications_enabled ?? false} onChange={handleNotificationsToggle} />
           </Row>
           {p.notifications_enabled && (
             <>

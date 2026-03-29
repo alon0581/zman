@@ -52,6 +52,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const profile = JSON.parse(fs.readFileSync(p, 'utf8'))
       delete profile.push_subscription
+      delete profile.fcm_token
       fs.writeFileSync(p, JSON.stringify(profile, null, 2))
     } catch {}
     return NextResponse.json({ ok: true })
@@ -59,6 +60,6 @@ export async function DELETE(req: NextRequest) {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  await supabase.from('user_profiles').upsert({ user_id: user.id, push_subscription: null })
+  await supabase.from('user_profiles').upsert({ user_id: user.id, push_subscription: null, fcm_token: null })
   return NextResponse.json({ ok: true })
 }

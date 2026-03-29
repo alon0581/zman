@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Settings, Sun, Moon, LogOut, Bell, BellOff } from 'lucide-react'
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
+import { subscribePushNotifications, unsubscribePushNotifications } from '@/lib/push-client'
 
 interface Props {
   user: User
@@ -35,37 +36,18 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
   const subscribePush = async () => {
     if (notifLoading) return
     setNotifLoading(true)
-    try {
-      const permission = await Notification.requestPermission()
-      setNotifState(permission as 'default' | 'granted' | 'denied')
-      if (permission !== 'granted') return
-
-      const reg = await navigator.serviceWorker.ready
-      const existing = await reg.pushManager.getSubscription()
-      const sub = existing ?? await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-      })
-      await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription: JSON.stringify(sub) }),
-      })
-    } catch { /* ignore */ }
-    finally { setNotifLoading(false) }
+    const ok = await subscribePushNotifications()
+    if (ok) setNotifState('granted')
+    else setNotifState(typeof Notification !== 'undefined' ? Notification.permission as 'default' | 'granted' | 'denied' : 'default')
+    setNotifLoading(false)
   }
 
   const unsubscribePush = async () => {
     if (notifLoading) return
     setNotifLoading(true)
-    try {
-      const reg = await navigator.serviceWorker.ready
-      const sub = await reg.pushManager.getSubscription()
-      if (sub) await sub.unsubscribe()
-      await fetch('/api/push/subscribe', { method: 'DELETE' })
-      setNotifState('default')
-    } catch { /* ignore */ }
-    finally { setNotifLoading(false) }
+    await unsubscribePushNotifications()
+    setNotifState('default')
+    setNotifLoading(false)
   }
 
   return (

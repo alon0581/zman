@@ -17,8 +17,9 @@ export async function sendPush(
   try {
     const sub = JSON.parse(subscription) as webpush.PushSubscription
     await webpush.sendNotification(sub, JSON.stringify(payload))
-  } catch {
-    // Subscription expired or invalid — caller should clear it
+  } catch (err) {
+    console.error('[push] VAPID sendNotification failed:', err)
+    throw err
   }
 }
 
@@ -56,7 +57,8 @@ export async function sendFcmPush(
       android: { priority: 'high' },
       apns: { payload: { aps: { sound: 'default', badge: 1 } } },
     })
-  } catch {
-    // Token expired or invalid
+  } catch (err) {
+    console.error('[push] FCM send failed:', err)
+    throw err
   }
 }
