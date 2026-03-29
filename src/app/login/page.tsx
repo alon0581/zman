@@ -31,7 +31,7 @@ export default function LoginPage() {
 
     if (mode === 'register') {
       if (password !== confirm) { setError('הסיסמאות אינן תואמות'); return }
-      if (password.length < 6)  { setError('הסיסמה חייבת להכיל לפחות 6 תווים'); return }
+      if (password.length < 12) { setError('הסיסמה חייבת להכיל לפחות 12 תווים'); return }
     }
 
     setLoading(true)

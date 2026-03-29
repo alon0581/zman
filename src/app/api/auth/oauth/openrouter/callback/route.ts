@@ -67,7 +67,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(`${APP_URL}/settings?oauth_error=key_exchange_failed`)
     }
 
-    const { key } = await keyRes.json() as { key: string }
+    let key: string
+    try {
+      const body = await keyRes.json() as { key?: string }
+      key = body.key ?? ''
+    } catch {
+      return NextResponse.redirect(`${APP_URL}/settings?oauth_error=invalid_response`)
+    }
 
     if (!key) {
       return NextResponse.redirect(`${APP_URL}/settings?oauth_error=no_key_returned`)

@@ -11,8 +11,8 @@ export async function POST(req: NextRequest) {
     if (!email || !password) {
       return NextResponse.json({ error: 'נדרשים אימייל וסיסמה' }, { status: 400 })
     }
-    if (password.length < 6) {
-      return NextResponse.json({ error: 'הסיסמה חייבת להכיל לפחות 6 תווים' }, { status: 400 })
+    if (password.length < 12) {
+      return NextResponse.json({ error: 'הסיסמה חייבת להכיל לפחות 12 תווים' }, { status: 400 })
     }
 
     // Rate limit: max 5 registrations per 15 min per IP

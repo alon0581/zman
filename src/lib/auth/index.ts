@@ -17,7 +17,7 @@ const DEFAULT_SECRET = 'zman-dev-secret-please-change-me'
 const SECRET = process.env.AUTH_SECRET ?? DEFAULT_SECRET
 
 if (process.env.NODE_ENV === 'production' && SECRET === DEFAULT_SECRET) {
-  console.error('[AUTH] CRITICAL: AUTH_SECRET is not set! Using insecure default. Set AUTH_SECRET in Railway environment variables.')
+  throw new Error('[AUTH] FATAL: AUTH_SECRET is not set in production. Set AUTH_SECRET in Railway environment variables.')
 }
 
 // ─── Rate limiting ──────────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ export function resetPassword(
   const users = readUsers()
   const idx   = users.findIndex(u => u.id === userId)
   if (idx === -1) return { success: false, error: 'משתמש לא נמצא' }
-  if (newPassword.length < 6) return { success: false, error: 'הסיסמה חייבת להכיל לפחות 6 תווים' }
+  if (newPassword.length < 12) return { success: false, error: 'הסיסמה חייבת להכיל לפחות 12 תווים' }
 
   const salt         = crypto.randomBytes(16).toString('hex')
   const passwordHash = hashPassword(newPassword, salt)

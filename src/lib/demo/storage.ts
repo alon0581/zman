@@ -4,7 +4,9 @@ import path from 'path'
 
 const DATA_DIR = path.join(process.cwd(), 'data')
 
+const SAFE_ID_RE = /^[0-9a-f-]+$/i
 function userDir(userId: string) {
+  if (!SAFE_ID_RE.test(userId)) throw new Error(`Invalid userId: ${userId}`)
   return path.join(DATA_DIR, 'users', userId)
 }
 

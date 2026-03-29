@@ -7,6 +7,9 @@ function getKey(): Buffer {
   if (raw && raw.length === 64) return Buffer.from(raw, 'hex')
   // Fallback: derive a 256-bit key from AUTH_SECRET so no new env var is required
   const secret = process.env.AUTH_SECRET ?? 'zman-dev-secret-please-change-me'
+  if (process.env.NODE_ENV === 'production' && !process.env.ENCRYPTION_KEY) {
+    console.warn('[ENCRYPTION] ENCRYPTION_KEY not set — deriving from AUTH_SECRET. Set ENCRYPTION_KEY (64 hex chars) for stronger isolation.')
+  }
   return crypto.createHash('sha256').update(secret).digest()
 }
 
