@@ -263,7 +263,7 @@ ALWAYS call save_memory after learning something new. This is your long-term bra
     type: 'function',
     function: {
       name: 'send_notification',
-      description: "Send a real push notification to the user's device. Use when the user asks you to send a reminder, motivational message, or any notification. DO NOT just write text — call this tool to actually send it.",
+      description: "Send a real push notification to the user's device. Use when the user says: 'שלח לי התראה', 'send me a notification', 'תזכיר לי', 'remind me', 'שלח התראת בדיקה', 'test notification', or any request to send/push a notification or reminder. DO NOT just write text — call this tool to actually deliver it to the device.",
       parameters: {
         type: 'object',
         properties: {
