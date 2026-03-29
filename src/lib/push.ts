@@ -1,12 +1,16 @@
 import webpush from 'web-push'
 
 // ── VAPID (Web Push for browser PWA) ─────────────────────────────────────────
-if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(
-    'mailto:zman@zman.app',
-    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
-  )
+try {
+  if (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+      'mailto:zman@zman.app',
+      process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    )
+  }
+} catch (err) {
+  console.error('[push] Failed to set VAPID details (invalid keys?):', err)
 }
 
 export async function sendPush(
@@ -19,7 +23,6 @@ export async function sendPush(
     await webpush.sendNotification(sub, JSON.stringify(payload))
   } catch (err) {
     console.error('[push] VAPID sendNotification failed:', err)
-    throw err
   }
 }
 
@@ -59,6 +62,5 @@ export async function sendFcmPush(
     })
   } catch (err) {
     console.error('[push] FCM send failed:', err)
-    throw err
   }
 }

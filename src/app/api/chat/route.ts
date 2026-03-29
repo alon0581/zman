@@ -1327,17 +1327,13 @@ async function executeTool(
       if (!fcmToken && !pushSubscription) {
         return { success: false, reason: 'no_push_subscription', message: 'User has no push subscription. Ask them to enable notifications in Settings.' }
       }
-      try {
-        // Try FCM (native Capacitor) first, then fall back to VAPID (browser PWA)
-        if (fcmToken) {
-          await sendFcmPush(fcmToken, { title, body, url: '/app' })
-        } else if (pushSubscription) {
-          await sendPush(pushSubscription, { title, body, url: '/app', tag: 'zman-message' })
-        }
-        return { success: true }
-      } catch {
-        return { success: false, reason: 'send_failed' }
+      // Try FCM (native Capacitor) first, then fall back to VAPID (browser PWA)
+      if (fcmToken) {
+        await sendFcmPush(fcmToken, { title, body, url: '/app' })
+      } else if (pushSubscription) {
+        await sendPush(pushSubscription, { title, body, url: '/app', tag: 'zman-message' })
       }
+      return { success: true }
     }
 
     case 'delete_all_events': {
