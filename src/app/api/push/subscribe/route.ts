@@ -2,18 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import fs from 'fs'
 import path from 'path'
-import crypto from 'crypto'
+import { getUserIdFromCookie } from '@/lib/auth'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 function getUserId(req: NextRequest): string | null {
-  const cookie = req.cookies.get('zman_session')?.value
-  if (!cookie) return null
-  try {
-    const [payload] = cookie.split('.')
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString())
-    return data.userId ?? null
-  } catch { return null }
+  return getUserIdFromCookie(req.cookies.get('zman_session')?.value)
 }
 
 function profilePath(userId: string) {
