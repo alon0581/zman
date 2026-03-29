@@ -92,6 +92,12 @@ const LANGS: Record<string, Record<string, string>> = {
     wakeLabel: 'Wake Time', sleepLabel: 'Sleep Time',
     methodSection: 'Scheduling Method', methodDesc: 'Your time management approach',
     changeMethodBtn: 'Change Method',
+    notifSection: 'Smart Notifications', notifDesc: 'Personalized alerts based on your schedule',
+    notifMaster: 'Enable Notifications', notifPreEvent: 'Pre-Event Reminder',
+    notifPreEventDesc: 'Smart timing by event type',
+    notifMorning: 'Morning Briefing', notifMorningDesc: 'Daily summary after wake-up',
+    notifEvening: 'Evening Review', notifEveningDesc: 'Tomorrow preview before sleep',
+    notifNudge: 'Task Nudge', notifNudgeDesc: 'Suggest tasks during free time',
     accountSection: 'Account', signOutBtn: 'Sign Out',
     saveBtn: 'Save Settings', savedBtn: 'Saved!', savingBtn: 'Saving…',
     memorySection: 'AI Memory', memoryDesc: 'What the AI remembers about you',
@@ -124,6 +130,12 @@ const LANGS: Record<string, Record<string, string>> = {
     wakeLabel: 'שעת קימה', sleepLabel: 'שעת שינה',
     methodSection: 'שיטת ניהול זמן', methodDesc: 'הגישה שלך לניהול זמן',
     changeMethodBtn: 'שנה שיטה',
+    notifSection: 'התראות חכמות', notifDesc: 'התראות מותאמות אישית לפי הלוח שלך',
+    notifMaster: 'הפעל התראות', notifPreEvent: 'תזכורת לפני אירוע',
+    notifPreEventDesc: 'תזמון חכם לפי סוג האירוע',
+    notifMorning: 'בריפינג בוקר', notifMorningDesc: 'סיכום יומי אחרי הקימה',
+    notifEvening: 'סיכום ערב', notifEveningDesc: 'תצוגה מקדימה למחר לפני השינה',
+    notifNudge: 'נאדג׳ משימות', notifNudgeDesc: 'הצע משימות בזמן פנוי',
     accountSection: 'חשבון', signOutBtn: 'יציאה',
     saveBtn: 'שמור הגדרות', savedBtn: '!נשמר', savingBtn: '…שומר',
     memorySection: 'זיכרון AI', memoryDesc: 'מה ה-AI זוכר עליך',
@@ -193,14 +205,17 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
   const save = async () => {
     setSaving(true)
+    // Always capture timezone for cron notifications
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const toSave = { ...p, timezone: tz }
     if (isLocalMode) {
       await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(p),
+        body: JSON.stringify(toSave),
       })
     } else {
-      await supabase.from('user_profiles').upsert({ ...p, user_id: user.id })
+      await supabase.from('user_profiles').upsert({ ...toSave, user_id: user.id })
     }
     setSaving(false)
     if (onClose) {
@@ -313,6 +328,32 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
             <input type="time" value={p.sleep_time ?? '23:00'} onChange={e => set('sleep_time', e.target.value)}
               style={{ ...selectStyle }} />
           </Row>
+        </Card>
+
+        {/* ── SMART NOTIFICATIONS ── */}
+        <Card label={t(lang, 'notifSection')}>
+          <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12, lineHeight: 1.5 }}>
+            {t(lang, 'notifDesc')}
+          </div>
+          <Row label={t(lang, 'notifMaster')} desc="">
+            <Toggle value={p.notifications_enabled ?? false} onChange={v => set('notifications_enabled', v)} />
+          </Row>
+          {p.notifications_enabled && (
+            <>
+              <Row label={`⏰ ${t(lang, 'notifPreEvent')}`} desc={t(lang, 'notifPreEventDesc')}>
+                <Toggle value={p.notify_pre_event ?? true} onChange={v => set('notify_pre_event', v)} />
+              </Row>
+              <Row label={`🌅 ${t(lang, 'notifMorning')}`} desc={t(lang, 'notifMorningDesc')}>
+                <Toggle value={p.notify_morning_briefing ?? true} onChange={v => set('notify_morning_briefing', v)} />
+              </Row>
+              <Row label={`🌙 ${t(lang, 'notifEvening')}`} desc={t(lang, 'notifEveningDesc')}>
+                <Toggle value={p.notify_evening_review ?? true} onChange={v => set('notify_evening_review', v)} />
+              </Row>
+              <Row label={`💡 ${t(lang, 'notifNudge')}`} desc={t(lang, 'notifNudgeDesc')}>
+                <Toggle value={p.notify_task_nudge ?? true} onChange={v => set('notify_task_nudge', v)} />
+              </Row>
+            </>
+          )}
         </Card>
 
         {/* ── SCHEDULING METHOD ── */}

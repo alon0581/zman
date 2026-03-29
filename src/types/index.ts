@@ -51,6 +51,16 @@ export interface UserProfile {
   push_subscription?: string       // JSON-serialised PushSubscription for Web Push (browser PWA)
   fcm_token?: string               // Firebase Cloud Messaging token for native Capacitor push
   mic_position?: 'left' | 'right'  // VoiceFAB side (default: 'right')
+  // Smart notifications
+  notifications_enabled?: boolean
+  notify_pre_event?: boolean
+  notify_morning_briefing?: boolean
+  notify_evening_review?: boolean
+  notify_task_nudge?: boolean
+  last_nudge_at?: string                 // ISO timestamp for nudge throttling
+  last_morning_briefing_date?: string    // "2026-03-29" — prevents double-send
+  last_evening_review_date?: string      // "2026-03-29" — prevents double-send
+  timezone?: string                      // IANA timezone (e.g. "Asia/Jerusalem"), set by client
   // Time management methodology
   persona?: 'student' | 'manager' | 'entrepreneur' | 'developer' | 'other'
   scheduling_method?: 'pomodoro' | 'deep_work' | 'eisenhower' | 'gtd' | 'time_blocking' | 'ivy_lee'
