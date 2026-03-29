@@ -84,13 +84,15 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
     recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
 
     recorder.onstop = async () => {
-      const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
+      const actualMime = mimeType || recorder.mimeType || 'audio/webm'
+      const blob = new Blob(chunksRef.current, { type: actualMime })
       if (blob.size < 1000) { setState('idle'); return }
 
+      const ext = actualMime.includes('mp4') || actualMime.includes('m4a') ? 'm4a' : 'webm'
       setState('processing')
       try {
         const fd = new FormData()
-        fd.append('audio', blob, `recording.${mimeType.includes('mp4') ? 'm4a' : 'webm'}`)
+        fd.append('audio', blob, `recording.${ext}`)
         fd.append('lang', lang)
         const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
         const data = await res.json()

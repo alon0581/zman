@@ -28,12 +28,16 @@ export async function POST(req: NextRequest) {
 
   const whisperLang = (!lang || lang === 'auto') ? undefined : lang
 
+  const prompt = lang === 'he'
+    ? 'לוח שנה, פגישות, אירועים, משימות, תזכורות, מועדים. זמן פנוי, שיעורים, בחינות, אימון, ספורט.'
+    : 'Calendar scheduling. Appointments, meetings, events, tasks, reminders, deadlines.'
+
   try {
     const transcription = await getOpenAI().audio.transcriptions.create({
       file: audio,
       model: 'whisper-1',
       language: whisperLang ?? undefined,
-      prompt: 'Calendar scheduling. Appointments, meetings, events, tasks, reminders.',
+      prompt,
     })
 
     // Reject common Whisper hallucinations on silence
