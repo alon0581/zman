@@ -196,6 +196,16 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
   }
   const isLocalMode = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
+  // Auto-save a single field immediately (used for notification toggles)
+  const saveField = async (key: keyof UserProfile, value: unknown) => {
+    const patch = { [key]: value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+    if (isLocalMode) {
+      await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+    } else {
+      await supabase.from('user_profiles').upsert({ ...patch, user_id: user.id })
+    }
+  }
+
   // Load memory on mount
   useEffect(() => {
     fetch('/api/memory').then(r => r.ok ? r.json() : []).then((m: AIMemory[]) => {
@@ -336,21 +346,21 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
             {t(lang, 'notifDesc')}
           </div>
           <Row label={t(lang, 'notifMaster')} desc="">
-            <Toggle value={p.notifications_enabled ?? false} onChange={v => set('notifications_enabled', v)} />
+            <Toggle value={p.notifications_enabled ?? false} onChange={v => { set('notifications_enabled', v); saveField('notifications_enabled', v) }} />
           </Row>
           {p.notifications_enabled && (
             <>
               <Row label={`⏰ ${t(lang, 'notifPreEvent')}`} desc={t(lang, 'notifPreEventDesc')}>
-                <Toggle value={p.notify_pre_event ?? true} onChange={v => set('notify_pre_event', v)} />
+                <Toggle value={p.notify_pre_event ?? true} onChange={v => { set('notify_pre_event', v); saveField('notify_pre_event', v) }} />
               </Row>
               <Row label={`🌅 ${t(lang, 'notifMorning')}`} desc={t(lang, 'notifMorningDesc')}>
-                <Toggle value={p.notify_morning_briefing ?? true} onChange={v => set('notify_morning_briefing', v)} />
+                <Toggle value={p.notify_morning_briefing ?? true} onChange={v => { set('notify_morning_briefing', v); saveField('notify_morning_briefing', v) }} />
               </Row>
               <Row label={`🌙 ${t(lang, 'notifEvening')}`} desc={t(lang, 'notifEveningDesc')}>
-                <Toggle value={p.notify_evening_review ?? true} onChange={v => set('notify_evening_review', v)} />
+                <Toggle value={p.notify_evening_review ?? true} onChange={v => { set('notify_evening_review', v); saveField('notify_evening_review', v) }} />
               </Row>
               <Row label={`💡 ${t(lang, 'notifNudge')}`} desc={t(lang, 'notifNudgeDesc')}>
-                <Toggle value={p.notify_task_nudge ?? true} onChange={v => set('notify_task_nudge', v)} />
+                <Toggle value={p.notify_task_nudge ?? true} onChange={v => { set('notify_task_nudge', v); saveField('notify_task_nudge', v) }} />
               </Row>
             </>
           )}
