@@ -16,10 +16,13 @@ export function buildSystemPrompt(
   const hoursUntilSleep = Math.max(0, sleepHour - currentHour)
 
   const upcomingEvents = events
-    .filter(e => new Date(e.start_time) >= now)
+    .filter(e => new Date(e.end_time) >= now)
     .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
     .slice(0, 30)
-    .map(e => `- ${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}]${e.mobility_type ? ` [${e.mobility_type === 'fixed' ? '🔒' : e.mobility_type === 'flexible' ? '🟡' : '🔵'}]` : ''}`)
+    .map(e => {
+      const isNow = new Date(e.start_time) <= now && new Date(e.end_time) > now
+      return `- ${isNow ? '[NOW 🔴] ' : ''}${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}]${e.mobility_type ? ` [${e.mobility_type === 'fixed' ? '🔒' : e.mobility_type === 'flexible' ? '🟡' : '🔵'}]` : ''}`
+    })
     .join('\n')
 
   // Build accurate series list from recurring events — NO automatic grouping (grouping causes errors)
