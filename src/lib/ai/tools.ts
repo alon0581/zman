@@ -177,7 +177,7 @@ ALWAYS call save_memory after learning something new. This is your long-term bra
     type: 'function',
     function: {
       name: 'create_task',
-      description: 'Create a new task/todo item. ALWAYS assign a topic — infer from context if not given. Standard topics: "לימודים" (Study), "עבודה" (Work), "בריאות" (Health), "אישי" (Personal), "פרויקטים" (Projects), "חברתי" (Social). After creating, the UI task panel updates automatically.',
+      description: 'Create a new task/todo item. ALWAYS assign a topic — infer from context if not given. Standard topics: "לימודים" (Study), "עבודה" (Work), "בריאות" (Health), "אישי" (Personal), "פרויקטים" (Projects), "חברתי" (Social). Use parent_task_id to create sub-tasks under a parent. After creating, the UI task panel updates automatically.',
       parameters: {
         type: 'object',
         properties: {
@@ -187,6 +187,7 @@ ALWAYS call save_memory after learning something new. This is your long-term bra
           deadline: { type: 'string', description: 'Optional deadline as ISO date string (e.g. 2026-03-25)' },
           estimated_hours: { type: 'number', description: 'Estimated hours to complete' },
           description: { type: 'string', description: 'Optional description' },
+          parent_task_id: { type: 'string', description: 'ID of parent task if this is a sub-task. Use when breaking a complex task into smaller actionable steps.' },
         },
         required: ['title', 'priority', 'topic'],
       },

@@ -144,7 +144,9 @@ When the user mentions ANY task, deadline, project, or exam — apply this proto
       lines.push(`[${topic}]`)
       for (const t of topicTasks.slice(0, 5)) {
         const deadline = t.deadline ? ` | due ${t.deadline}` : ''
-        lines.push(`  ${t.id} | ${t.title} | ${t.priority}${deadline}`)
+        const hours = t.estimated_hours ? ` | ~${t.estimated_hours}h` : ''
+        const parent = t.parent_task_id ? ` | sub-task of ${t.parent_task_id}` : ''
+        lines.push(`  ${t.id} | ${t.title} | ${t.priority}${hours}${deadline}${parent}`)
       }
     }
     lines.push('Use the task IDs above directly in update_task — no need to call list_tasks first.')
@@ -424,9 +426,11 @@ PROACTIVE INTELLIGENCE
 5. MOBILITY CHECK — Before suggesting to move/reorganize events:
    - Check each event's mobility_type (🔒/🟡/🔵) from analyze_schedule response
    - ONLY suggest moving 🟡 flexible events
-   - If mobility_summary.flexible === 0 → "כל האירועים נעולים — אין מה להזיז. אפשר להוסיף לזמנים פנויים"
+   - If mobility_summary.flexible === 0 → DO NOT say "אין מה להזיז" and stop. Instead: call get_free_slots with at least 7-day range to find gaps BETWEEN fixed events.
+   - "All locked" ≠ "no free time" — locked events are FIXED SCHEDULE, free time is the GAPS between them. ALWAYS find and offer those gaps.
    - NEVER say "להזיז שיעורים" when they are 🔒 fixed — they CANNOT be moved
-   - Instead offer: adding breaks to free slots, scheduling prep time around fixed events, or adding events to empty days
+   - Instead: call get_free_slots to find evenings, weekends, gaps between classes, and mornings. A day with 9h of classes still has free hours before/after.
+   - If Mon-Wed are packed → check Thu-Sun. Always look at the full week before saying no time exists.
 6. METHOD-AWARE ANALYSIS — All suggestions from analyze_schedule MUST use the user's scheduling method:
    - Frame every suggestion in the METHOD's language and format (see METHOD SESSION SIZES table)
    - Example (Pomodoro user): "יש לך 2 שעות פנויות — אפשר 4 פומודורו של 25 דק' עם הפסקות"
@@ -470,7 +474,32 @@ Tasks = todo items to track. Events = scheduled time blocks. Use BOTH when appro
 - When user says "done", "finished", "completed", "עשיתי", "סיימתי" about a task → call update_task with status:"done" IMMEDIATELY using the task ID from the list above
 - When marking done, say: "✅ סימנתי [title] כבוצע" (or English equivalent) — brief confirmation only
 - Overdue task (deadline in the past) → proactively mention it once
-- After creating task: "הוספתי '[title]' למשימות תחת [topic] ✓" (or English)`
+- After creating task: "הוספתי '[title]' למשימות תחת [topic] ✓" (or English)
+
+════════════════════════════════════════
+SUB-TASKS
+════════════════════════════════════════
+When a complex task needs multiple steps (NOT just time-blocking — use break_down_task for that):
+1. Keep the parent task as-is
+2. Create sub-tasks with parent_task_id = parent's ID using create_task
+3. Sub-tasks inherit the parent's topic. Give each a clear, actionable title
+4. When ALL sub-tasks are marked done → mark the parent task as done too (update_task)
+5. Example: "להגיש עבודה בחשמל" → sub-tasks: "לקרוא חומר", "לפתור תרגילים", "לכתוב דוח", "להגיש"
+
+════════════════════════════════════════
+BATCH SCHEDULING — "Schedule all tasks" / "קבע את כל המשימות"
+════════════════════════════════════════
+When user asks to schedule all tasks at once:
+1. Call list_tasks(status="pending") to get all open tasks
+2. Sort by: deadline (soonest first) → priority (high > medium > low)
+3. Call get_free_slots for the next 14 days
+4. For each task in sorted order:
+   - If estimated_hours ≤ method session size → create_event directly
+   - If estimated_hours > session size → use break_down_task to split across sessions
+   - If no estimated_hours set → estimate: high priority = 3h, medium = 2h, low = 1h
+5. Place high-priority tasks in peak hours; lower priority in remaining slots
+6. Report summary when done: "קבעתי [N] משימות ב-[N] ישיבות"
+7. If not enough free time for all → schedule what fits and warn about the rest`
 }
 
 /** Returns method-specific AI behavior instructions — compact version (session details are in METHOD SESSION SIZES table) */

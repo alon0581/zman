@@ -190,10 +190,23 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
     return map
   }, [pending, events])
 
-  // Group pending by topic
-  const byTopic = useMemo(() => {
+  // Build children map for sub-tasks
+  const childrenByParent = useMemo(() => {
     const map: Record<string, Task[]> = {}
-    for (const task of pending) {
+    for (const t of tasks) {
+      if (t.parent_task_id) {
+        if (!map[t.parent_task_id]) map[t.parent_task_id] = []
+        map[t.parent_task_id].push(t)
+      }
+    }
+    return map
+  }, [tasks])
+
+  // Group pending by topic (exclude child tasks — they render under their parent)
+  const byTopic = useMemo(() => {
+    const topLevel = pending.filter(t => !t.parent_task_id)
+    const map: Record<string, Task[]> = {}
+    for (const task of topLevel) {
       const topic = task.topic ?? (language === 'he' ? 'כללי' : 'General')
       if (!map[topic]) map[topic] = []
       map[topic].push(task)
@@ -364,6 +377,14 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                                   }}>
                                     {pLabels[task.priority]}
                                   </span>
+                                  {task.estimated_hours && (
+                                    <span style={{
+                                      fontSize: 10, color: 'var(--text-2)', fontWeight: 500,
+                                      display: 'flex', alignItems: 'center', gap: 3,
+                                    }}>
+                                      🕐 {task.estimated_hours}{language === 'he' ? ' שע׳' : 'h'}
+                                    </span>
+                                  )}
                                   {scheduledByTaskId[task.id] && (
                                     <span style={{
                                       fontSize: 11, color: '#3B7EF7', fontWeight: 500,
@@ -403,6 +424,71 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                                 </button>
                               )}
                             </SwipeableTask>
+                            {/* Sub-tasks */}
+                            {childrenByParent[task.id] && childrenByParent[task.id].length > 0 && (() => {
+                              const children = childrenByParent[task.id]
+                              const doneChildren = children.filter(c => c.status === 'done').length
+                              const pendingChildren = children.filter(c => c.status !== 'done')
+                              return (
+                                <div style={{
+                                  marginTop: 4,
+                                  [isRTL ? 'marginRight' : 'marginLeft']: 20,
+                                  display: 'flex', flexDirection: 'column', gap: 4,
+                                }}>
+                                  {/* Sub-task progress */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0' }}>
+                                    <span style={{ fontSize: 10, color: 'var(--text-2)' }}>
+                                      {doneChildren}/{children.length}
+                                    </span>
+                                    <div style={{ flex: 1, height: 3, background: 'var(--border)', borderRadius: 2, maxWidth: 80 }}>
+                                      <div style={{ width: `${Math.round(doneChildren / children.length * 100)}%`, height: '100%', background: '#34D399', borderRadius: 2 }} />
+                                    </div>
+                                  </div>
+                                  {pendingChildren.map(sub => (
+                                    <div key={sub.id} style={{
+                                      display: 'flex', alignItems: 'center', gap: 8,
+                                      padding: '6px 10px', background: 'var(--bg-card)',
+                                      borderRadius: 8, border: '1px solid var(--border)',
+                                    }}>
+                                      <button
+                                        onClick={() => onTaskToggle(sub.id, sub.status === 'done' ? 'pending' : 'done')}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0, color: sub.status === 'done' ? '#34D399' : 'var(--text-2)' }}
+                                      >
+                                        {sub.status === 'done' ? <CheckCircle2 size={15} /> : <Circle size={15} />}
+                                      </button>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 13, fontWeight: 400, color: 'var(--text)', lineHeight: 1.3 }}>
+                                          {sub.title}
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                          {sub.estimated_hours && (
+                                            <span style={{ fontSize: 9, color: 'var(--text-2)' }}>
+                                              🕐 {sub.estimated_hours}{language === 'he' ? ' שע׳' : 'h'}
+                                            </span>
+                                          )}
+                                          {sub.deadline && (
+                                            <span style={{ fontSize: 9, color: isPast(parseISO(sub.deadline)) ? '#EF4444' : 'var(--text-2)' }}>
+                                              {isPast(parseISO(sub.deadline)) ? '⚠ ' : ''}{format(parseISO(sub.deadline), 'MMM d')}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      {sub.status !== 'done' && (
+                                        <button
+                                          onClick={() => onScheduleTask(sub)}
+                                          style={{
+                                            background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+                                            color: 'var(--text-2)', flexShrink: 0,
+                                          }}
+                                        >
+                                          <Calendar size={11} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )
+                            })()}
                           </motion.div>
                         )
                       })}

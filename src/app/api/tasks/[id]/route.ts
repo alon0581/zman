@@ -43,12 +43,19 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params
 
   if (DEMO_MODE) {
+    // Cascade: delete child tasks first
+    const allTasks = demoStorage.getTasks(userId)
+    for (const t of allTasks) {
+      if (t.parent_task_id === id) demoStorage.deleteTask(t.id, userId)
+    }
     demoStorage.deleteTask(id, userId)
     return NextResponse.json({ success: true })
   }
 
   const { createClient } = await import('@/lib/supabase/server')
   const supabase = await createClient()
+  // Cascade: delete child tasks first
+  await supabase.from('tasks').delete().eq('parent_task_id', id).eq('user_id', userId)
   const { error } = await supabase.from('tasks').delete().eq('id', id).eq('user_id', userId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ success: true })

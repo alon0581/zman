@@ -212,16 +212,19 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     if (v) {
       const ok = await subscribePushNotifications()
       if (!ok) {
-        // Permission denied — revert
+        // Permission denied or server error — revert and inform user
         set('notifications_enabled', false)
         saveField('notifications_enabled', false)
+        alert(lang === 'he'
+          ? 'לא ניתן להפעיל התראות. ודא שאתה מחובר ושהרשאת ההתראות מאושרת בדפדפן.'
+          : 'Could not enable notifications. Make sure you are logged in and notification permission is granted.')
         return
       }
     } else {
       await unsubscribePushNotifications()
     }
     saveField('notifications_enabled', v)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [lang]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load memory on mount
   useEffect(() => {

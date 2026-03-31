@@ -15,11 +15,15 @@ export async function subscribePushNotifications(): Promise<boolean> {
       userVisibleOnly: true,
       applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
     })
-    await fetch('/api/push/subscribe', {
+    const res = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscription: JSON.stringify(sub) }),
     })
+    if (!res.ok) {
+      console.error('[push] subscribe failed:', res.status, await res.text().catch(() => ''))
+      return false
+    }
     return true
   } catch {
     return false

@@ -1167,6 +1167,7 @@ async function executeTool(
         priority: (['low', 'medium', 'high'].includes(str(input.priority)) ? str(input.priority) : 'medium') as Task['priority'],
         status: 'pending',
         topic: input.topic ? str(input.topic) : undefined,
+        parent_task_id: input.parent_task_id ? str(input.parent_task_id) : undefined,
         created_at: new Date().toISOString(),
       }
       if (DEMO_MODE) {

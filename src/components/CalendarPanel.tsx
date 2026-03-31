@@ -75,26 +75,37 @@ export default function CalendarPanel({
     setSlotHeight(h)
   }, [])
 
+  // Component-level scroller finder (for scroll preservation on nav)
+  const getBodyScrollerNav = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return null
+    return (Array.from(el.querySelectorAll('.fc-scroller')) as HTMLElement[])
+      .find(s => s.scrollHeight > s.clientHeight) ?? null
+  }, [])
+  const savedScrollRef = useRef<number | null>(null)
+
   const goPrev = useCallback(() => {
     const api = calRef.current?.getApi()
     if (!api) return
+    savedScrollRef.current = getBodyScrollerNav()?.scrollTop ?? null
     const v = api.view.type
     if (v === 'timeGrid3Day' || v === 'timeGridWeek') {
       api.incrementDate({ days: -1 })
     } else {
       api.prev()
     }
-  }, [])
+  }, [getBodyScrollerNav])
   const goNext = useCallback(() => {
     const api = calRef.current?.getApi()
     if (!api) return
+    savedScrollRef.current = getBodyScrollerNav()?.scrollTop ?? null
     const v = api.view.type
     if (v === 'timeGrid3Day' || v === 'timeGridWeek') {
       api.incrementDate({ days: 1 })
     } else {
       api.next()
     }
-  }, [])
+  }, [getBodyScrollerNav])
 
   // Swipe spring animation — brief nudge feedback on the inner FC wrapper
   const [swipeOffset, setSwipeOffset] = useState(0)
@@ -408,22 +419,22 @@ export default function CalendarPanel({
   const scrollTime = useMemo(() => {
     const now = new Date()
     const todayEnd = endOfDay(now)
-    // Ongoing event → scroll to its start
+    // Ongoing event → scroll to 1h before its start
     const ongoing = events.find(e => new Date(e.start_time) <= now && new Date(e.end_time) >= now)
     if (ongoing) {
-      const h = Math.max(0, new Date(ongoing.start_time).getHours() - 4)
+      const h = Math.max(0, new Date(ongoing.start_time).getHours() - 1)
       return `${String(h).padStart(2, '0')}:00:00`
     }
-    // Next upcoming event today → scroll 4h before to center it
+    // Next upcoming event today → scroll to 1h before it
     const upcoming = events
       .filter(e => new Date(e.start_time) > now && new Date(e.start_time) <= todayEnd)
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
     if (upcoming) {
-      const h = Math.max(0, new Date(upcoming.start_time).getHours() - 4)
+      const h = Math.max(0, new Date(upcoming.start_time).getHours() - 1)
       return `${String(h).padStart(2, '0')}:00:00`
     }
-    // Default: current time minus 4 hours to center current time
-    const h = Math.max(0, now.getHours() - 4)
+    // Default: current time minus 1 hour
+    const h = Math.max(0, now.getHours() - 1)
     return `${String(h).padStart(2, '0')}:00:00`
   }, [events])
 
@@ -615,7 +626,18 @@ export default function CalendarPanel({
           selectable={!isMobile}
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: false }}
           dayHeaderFormat={{ weekday: 'short', day: 'numeric' }}
-          datesSet={(info: { view: { currentStart: Date } }) => setCurrentDate(info.view.currentStart)}
+          datesSet={(info: { view: { currentStart: Date } }) => {
+            setCurrentDate(info.view.currentStart)
+            // Restore scroll position after navigation (goPrev/goNext)
+            if (savedScrollRef.current !== null) {
+              const scroll = savedScrollRef.current
+              savedScrollRef.current = null
+              requestAnimationFrame(() => {
+                const s = getBodyScrollerNav()
+                if (s) s.scrollTop = scroll
+              })
+            }
+          }}
           eventClick={handleEventClick}
           dateClick={handleDateClick}
           /* Custom render for month-view events on mobile: bypasses FC's 6px 10px
