@@ -41,17 +41,22 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : undefined)
+
+  const title = str(body.title)
+  if (!title) return NextResponse.json({ error: 'title is required' }, { status: 400 })
+
   const task: Task = {
     id: crypto.randomUUID(),
     user_id: userId,
-    title: body.title,
-    description: body.description,
-    deadline: body.deadline,
-    estimated_hours: body.estimated_hours,
-    priority: body.priority ?? 'medium',
+    title,
+    description: str(body.description),
+    deadline: str(body.deadline),
+    estimated_hours: typeof body.estimated_hours === 'number' && body.estimated_hours > 0 ? body.estimated_hours : undefined,
+    priority: (['low', 'medium', 'high'].includes(body.priority) ? body.priority : 'medium') as Task['priority'],
     status: 'pending',
-    topic: body.topic,
-    parent_task_id: body.parent_task_id,
+    topic: str(body.topic),
+    parent_task_id: str(body.parent_task_id),
     created_at: new Date().toISOString(),
   }
 

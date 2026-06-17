@@ -1,38 +1,24 @@
 import { CalendarEvent, Task } from '@/types'
-import fs from 'fs'
 import path from 'path'
+import { assertSafeUserId } from '@/lib/util/safeUserId'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 
 const DATA_DIR = path.join(process.cwd(), 'data')
 
-const SAFE_ID_RE = /^[0-9a-f-]+$/i
 function userDir(userId: string) {
-  if (!SAFE_ID_RE.test(userId)) throw new Error(`Invalid userId: ${userId}`)
-  return path.join(DATA_DIR, 'users', userId)
+  return path.join(DATA_DIR, 'users', assertSafeUserId(userId))
 }
 
 function eventsFile(userId: string) {
   return path.join(userDir(userId), 'events.json')
 }
 
-function ensureUserDir(userId: string) {
-  const dir = userDir(userId)
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
 function readEvents(userId: string): CalendarEvent[] {
-  try {
-    ensureUserDir(userId)
-    const file = eventsFile(userId)
-    if (!fs.existsSync(file)) return []
-    return JSON.parse(fs.readFileSync(file, 'utf-8'))
-  } catch {
-    return []
-  }
+  return readJsonFile<CalendarEvent[]>(eventsFile(userId), [])
 }
 
 function writeEvents(userId: string, events: CalendarEvent[]) {
-  ensureUserDir(userId)
-  fs.writeFileSync(eventsFile(userId), JSON.stringify(events, null, 2))
+  writeJsonFileAtomic(eventsFile(userId), events)
 }
 
 function tasksFile(userId: string) {
@@ -40,19 +26,11 @@ function tasksFile(userId: string) {
 }
 
 function readTasks(userId: string): Task[] {
-  try {
-    ensureUserDir(userId)
-    const file = tasksFile(userId)
-    if (!fs.existsSync(file)) return []
-    return JSON.parse(fs.readFileSync(file, 'utf-8'))
-  } catch {
-    return []
-  }
+  return readJsonFile<Task[]>(tasksFile(userId), [])
 }
 
 function writeTasks(userId: string, tasks: Task[]) {
-  ensureUserDir(userId)
-  fs.writeFileSync(tasksFile(userId), JSON.stringify(tasks, null, 2))
+  writeJsonFileAtomic(tasksFile(userId), tasks)
 }
 
 export const demoStorage = {

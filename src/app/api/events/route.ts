@@ -32,11 +32,13 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const from = searchParams.get('from') ?? new Date(Date.now() - 30 * 86400000).toISOString()
   const to = searchParams.get('to') ?? new Date(Date.now() + 90 * 86400000).toISOString()
+  const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '2000', 10) || 2000, 1), 5000)
 
   const { data, error } = await supabase
     .from('events').select('*').eq('user_id', userId)
     .gte('start_time', from).lte('start_time', to)
     .order('start_time', { ascending: true })
+    .limit(limit)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ events: data })

@@ -9,8 +9,16 @@
  */
 
 import crypto from 'crypto'
-import fs from 'fs'
 import path from 'path'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+
+/** Constant-time string compare — avoids leaking match progress via timing. */
+function safeEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ba.length !== bb.length) return false
+  return crypto.timingSafeEqual(ba, bb)
+}
 
 // Secret for signing tokens — set AUTH_SECRET in .env.local for production
 const DEFAULT_SECRET = 'zman-dev-secret-please-change-me'
@@ -61,23 +69,12 @@ interface StoredUser {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function ensureDir(dir: string) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
 function readUsers(): StoredUser[] {
-  try {
-    ensureDir(path.dirname(USERS_FILE))
-    if (!fs.existsSync(USERS_FILE)) return []
-    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8'))
-  } catch {
-    return []
-  }
+  return readJsonFile<StoredUser[]>(USERS_FILE, [])
 }
 
 function writeUsers(users: StoredUser[]) {
-  ensureDir(path.dirname(USERS_FILE))
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2))
+  writeJsonFileAtomic(USERS_FILE, users)
 }
 
 function hashPassword(password: string, salt: string): string {
@@ -99,7 +96,7 @@ function verifyToken(token: string): string | null {
     const payload = decoded.slice(0, lastColon)
     const sig     = decoded.slice(lastColon + 1)
     const expected = crypto.createHmac('sha256', SECRET).update(payload).digest('hex')
-    if (sig !== expected) return null
+    if (!safeEqual(sig, expected)) return null
     const parts  = payload.split(':')
     const expiry = parseInt(parts[parts.length - 1])
     if (isNaN(expiry) || Date.now() > expiry) return null
@@ -138,7 +135,7 @@ export function loginUser(
   if (!user) return { success: false, error: 'אימייל או סיסמה שגויים' }
 
   const hash = hashPassword(password, user.salt)
-  if (hash !== user.passwordHash) return { success: false, error: 'אימייל או סיסמה שגויים' }
+  if (!safeEqual(hash, user.passwordHash)) return { success: false, error: 'אימייל או סיסמה שגויים' }
 
   return { success: true, userId: user.id, token: makeToken(user.id) }
 }

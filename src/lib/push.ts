@@ -8,9 +8,16 @@ try {
       process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
       process.env.VAPID_PRIVATE_KEY
     )
+  } else if (process.env.NODE_ENV === 'production') {
+    // Surface misconfiguration in logs rather than silently no-op'ing.
+    console.warn('[push] VAPID keys missing (NEXT_PUBLIC_VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY) — browser web-push is disabled on this deployment.')
   }
 } catch (err) {
   console.error('[push] Failed to set VAPID details (invalid keys?):', err)
+}
+
+if (process.env.NODE_ENV === 'production' && !process.env.FIREBASE_SERVICE_ACCOUNT) {
+  console.warn('[push] FIREBASE_SERVICE_ACCOUNT missing — native (FCM/APNs) push is disabled on this deployment.')
 }
 
 export async function sendPush(

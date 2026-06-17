@@ -12,13 +12,31 @@ import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
 import { mapToMethod } from '@/lib/scheduling/methodMapper'
 import { decryptApiKey } from '@/lib/encryption'
 import { sendPush, sendFcmPush } from '@/lib/push'
-import fs from 'fs'
+import { assertSafeUserId } from '@/lib/util/safeUserId'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import crypto from 'crypto'
 import path from 'path'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 // Shared constants
-const BUFFER_MIN = 15  // minutes of breathing room between events
+const BUFFER_MIN = 15        // minutes of breathing room between events
+const MAX_LOOP_MS = 25000    // hard ceiling on the tool-call loop (avoid hangs)
+const MEM_KEY_MAX = 100      // max length of a memory key
+const MEM_VALUE_MAX = 10000  // max length of a memory value
+
+function memoryFile(userId: string) {
+  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'memory.json')
+}
+
+/** Parse an "HH:mm" string to an hour in [0,23], falling back on bad input. */
+function parseHour(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+  const m = /^(\d{1,2})/.exec(value.trim())
+  if (!m) return fallback
+  const h = parseInt(m[1], 10)
+  return h >= 0 && h <= 23 ? h : fallback
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -43,11 +61,8 @@ function buildErrorStream(message: string): Response {
 
 function loadFreshProfile(userId: string): UserProfile | null {
   if (!DEMO_MODE) return null  // Supabase handled separately in POST
-  try {
-    const file = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) as UserProfile
-  } catch { /* ignore */ }
-  return null
+  const file = path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'profile.json')
+  return readJsonFile<UserProfile | null>(file, null)
 }
 
 function toAnthropicTools(tools: OpenAI.ChatCompletionTool[]) {
@@ -190,7 +205,13 @@ export async function POST(req: NextRequest) {
       }))
 
       let iterations = 0
+      const loopStart = Date.now()
       while (iterations < 10) {
+        if (Date.now() - loopStart > MAX_LOOP_MS) {
+          console.warn('[chat] Anthropic tool-loop timeout after', iterations, 'iterations')
+          if (!lastContent) lastContent = '⏱️ This took too long to process. Please try again.'
+          break
+        }
         iterations++
         const response = await anthropic.messages.create({
           model,
@@ -253,7 +274,7 @@ export async function POST(req: NextRequest) {
         } : undefined,
       })
 
-      let currentMessages: OpenAI.ChatCompletionMessageParam[] = [
+      const currentMessages: OpenAI.ChatCompletionMessageParam[] = [
         { role: 'system', content: systemPrompt },
         ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
       ]
@@ -263,7 +284,13 @@ export async function POST(req: NextRequest) {
       const maxTokens = isReasoningModel ? 4096 : 1024
 
       let iterations = 0
+      const loopStart = Date.now()
       while (iterations < 10) {
+        if (Date.now() - loopStart > MAX_LOOP_MS) {
+          console.warn('[chat] OpenAI tool-loop timeout after', iterations, 'iterations')
+          if (!lastContent) lastContent = '⏱️ This took too long to process. Please try again.'
+          break
+        }
         iterations++
         const response = await openaiClient.chat.completions.create({
           model,
@@ -365,9 +392,9 @@ export async function POST(req: NextRequest) {
           url: '/app',
         }
         if (freshProfile.fcm_token) {
-          sendFcmPush(freshProfile.fcm_token, pushPayload).catch(() => {})
+          sendFcmPush(freshProfile.fcm_token, pushPayload).catch(err => console.warn('[chat] FCM push failed:', err?.message))
         } else if (freshProfile.push_subscription) {
-          sendPush(freshProfile.push_subscription, { ...pushPayload, tag: 'zman-events' }).catch(() => {})
+          sendPush(freshProfile.push_subscription, { ...pushPayload, tag: 'zman-events' }).catch(err => console.warn('[chat] VAPID push failed:', err?.message))
         }
       }
 
@@ -459,7 +486,8 @@ export async function POST(req: NextRequest) {
             controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
           } catch (err) {
             console.error('Stream error:', err)
-            controller.enqueue(encoder.encode('data: {"type":"error"}\n\n'))
+            const message = err instanceof Error ? err.message : 'stream_failed'
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message })}\n\n`))
           } finally {
             controller.close()
           }
@@ -568,6 +596,9 @@ async function executeTool(
       if (isNaN(Date.parse(str(input.start_time))) || isNaN(Date.parse(str(input.end_time)))) {
         return { error: 'invalid_date', message: 'start_time or end_time is not a valid date' }
       }
+      if (Date.parse(str(input.end_time)) <= Date.parse(str(input.start_time))) {
+        return { error: 'invalid_range', message: 'end_time must be after start_time' }
+      }
       // ── Recurring shortcut: generate N instances, skip conflict checks ───
       const recurrence = input.recurrence as { frequency?: string; count?: number; end_date?: string } | undefined
       if (recurrence?.frequency) {
@@ -619,11 +650,12 @@ async function executeTool(
 
       const allKnownEvents = [...currentEvents, ...createdEvents]
 
-      // 1. Duplicate check — same title on same day
+      // 1. Duplicate check — same title AND same start time.
+      // (Same title at a different hour is a legitimate second session, not a dup.)
       const newTitle = str(input.title).toLowerCase().trim()
-      const newDate = new Date(str(input.start_time)).toDateString()
+      const newStartTs = new Date(str(input.start_time)).getTime()
       const duplicate = allKnownEvents.find(e =>
-        new Date(e.start_time).toDateString() === newDate &&
+        new Date(e.start_time).getTime() === newStartTs &&
         e.title.toLowerCase().trim() === newTitle
       )
       if (duplicate) {
@@ -747,6 +779,13 @@ async function executeTool(
 
     case 'move_event': {
       const { event_id, new_start_time, new_end_time } = input as { event_id: string; new_start_time: string; new_end_time: string }
+      if (!str(new_start_time) || !str(new_end_time) ||
+          isNaN(Date.parse(str(new_start_time))) || isNaN(Date.parse(str(new_end_time)))) {
+        return { error: 'invalid_date', message: 'new_start_time and new_end_time must be valid dates' }
+      }
+      if (Date.parse(str(new_end_time)) <= Date.parse(str(new_start_time))) {
+        return { error: 'invalid_range', message: 'new_end_time must be after new_start_time' }
+      }
       const existing = currentEvents.find(e => e.id === event_id)
       if (!existing) return { error: 'Event not found' }
       // Enforce mobility_type — fixed events cannot be moved
@@ -982,7 +1021,7 @@ async function executeTool(
       const peak = profile?.productivity_peak ?? 'morning'
       const peakStart = peak === 'morning' ? 6 : peak === 'afternoon' ? 12 : 18
       const peakEnd   = peak === 'morning' ? 12 : peak === 'afternoon' ? 18 : 24
-      const sleepHour = profile?.sleep_time ? parseInt(profile.sleep_time.split(':')[0]) : 23
+      const sleepHour = parseHour(profile?.sleep_time, 23)
 
       const dayStats: Array<{
         date: string
@@ -1103,6 +1142,21 @@ async function executeTool(
 
     case 'save_memory': {
       const { entries } = input as { entries: Array<{ key: string; value: string }> }
+      if (!Array.isArray(entries) || entries.length === 0) {
+        return { error: 'invalid_entries', message: 'entries must be a non-empty array' }
+      }
+      // Guard against runaway/oversized writes bloating memory.json
+      for (const entry of entries) {
+        if (!entry || typeof entry.key !== 'string' || typeof entry.value !== 'string') {
+          return { error: 'invalid_entry', message: 'each entry needs string key and value' }
+        }
+        if (entry.key.length === 0 || entry.key.length > MEM_KEY_MAX) {
+          return { error: 'key_length', message: `key must be 1–${MEM_KEY_MAX} chars` }
+        }
+        if (entry.value.length > MEM_VALUE_MAX) {
+          return { error: 'value_too_large', message: `value must be ≤ ${MEM_VALUE_MAX} chars` }
+        }
+      }
       const memHelper = (existing: AIMemory[]) => {
         for (const entry of entries) {
           const idx = existing.findIndex(m => m.key === entry.key)
@@ -1120,20 +1174,20 @@ async function executeTool(
         return existing
       }
       if (DEMO_MODE) {
-        const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
-        const existing: AIMemory[] = fs.existsSync(memFile)
-          ? JSON.parse(fs.readFileSync(memFile, 'utf-8')) : []
-        const updated = memHelper(existing)
-        const dir = path.join(process.cwd(), 'data', 'users', userId)
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-        fs.writeFileSync(memFile, JSON.stringify(updated, null, 2))
+        const memFile = memoryFile(userId)
+        const updated = memHelper(readJsonFile<AIMemory[]>(memFile, []))
+        writeJsonFileAtomic(memFile, updated)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
         for (const entry of entries) {
-          await supabase.from('ai_memory').upsert({
+          const { error } = await supabase.from('ai_memory').upsert({
             user_id: userId, key: entry.key, value: entry.value, learned_from: 'behavior',
           }, { onConflict: 'user_id,key' })
+          if (error) {
+            console.error('[chat] save_memory upsert failed:', error.message)
+            return { error: 'memory_save_failed', message: error.message }
+          }
         }
       }
       state.memoryUpdated = true
@@ -1143,11 +1197,9 @@ async function executeTool(
     case 'delete_memory': {
       const { keys } = input as { keys: string[] }
       if (DEMO_MODE) {
-        const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
-        const existing: AIMemory[] = fs.existsSync(memFile)
-          ? JSON.parse(fs.readFileSync(memFile, 'utf-8')) : []
-        const filtered = existing.filter(m => !keys.includes(m.key))
-        fs.writeFileSync(memFile, JSON.stringify(filtered, null, 2))
+        const memFile = memoryFile(userId)
+        const filtered = readJsonFile<AIMemory[]>(memFile, []).filter(m => !keys.includes(m.key))
+        writeJsonFileAtomic(memFile, filtered)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1265,12 +1317,11 @@ async function executeTool(
       }
 
       if (DEMO_MODE) {
+        const safeId = assertSafeUserId(userId)
         // Save memory entries
         if (memory_entries?.length) {
-          const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
-          const existing: AIMemory[] = fs.existsSync(memFile)
-            ? JSON.parse(fs.readFileSync(memFile, 'utf-8'))
-            : []
+          const memFile = path.join(process.cwd(), 'data', 'users', safeId, 'memory.json')
+          const existing = readJsonFile<AIMemory[]>(memFile, [])
           for (const entry of memory_entries) {
             const idx = existing.findIndex(m => m.key === entry.key)
             const item: AIMemory = {
@@ -1282,17 +1333,14 @@ async function executeTool(
             if (idx >= 0) existing[idx] = item
             else existing.push(item)
           }
-          const dir = path.join(process.cwd(), 'data', 'users', userId)
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-          fs.writeFileSync(memFile, JSON.stringify(existing, null, 2))
+          writeJsonFileAtomic(memFile, existing)
         }
         // Update profile
-        const profFile = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
-        const existing: UserProfile = fs.existsSync(profFile)
-          ? JSON.parse(fs.readFileSync(profFile, 'utf-8'))
-          : { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' }
+        const profFile = path.join(process.cwd(), 'data', 'users', safeId, 'profile.json')
+        const existing = readJsonFile<UserProfile>(profFile,
+          { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' })
         const updated: UserProfile = { ...existing, ...(profile_updates ?? {}), onboarding_completed: true, user_id: userId }
-        fs.writeFileSync(profFile, JSON.stringify(updated, null, 2))
+        writeJsonFileAtomic(profFile, updated)
         state.completedProfile = updated
       } else {
         // Supabase mode
@@ -1370,10 +1418,8 @@ function getFreeSlots(
   const to = parseISO(toDate)
 
   // Determine day bounds from profile
-  const dayStartHour = profile?.preferred_hours?.start ??
-    (profile?.wake_time ? parseInt(profile.wake_time.split(':')[0]) : 9)
-  const dayEndHour = profile?.preferred_hours?.end ??
-    (profile?.sleep_time ? parseInt(profile.sleep_time.split(':')[0]) : 22)
+  const dayStartHour = profile?.preferred_hours?.start ?? parseHour(profile?.wake_time, 9)
+  const dayEndHour = profile?.preferred_hours?.end ?? parseHour(profile?.sleep_time, 22)
 
   // Peak productivity window
   const peak = profile?.productivity_peak ?? 'morning'

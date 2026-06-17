@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import crypto from 'crypto'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { encryptApiKey, maskApiKey } from '@/lib/encryption'
-import fs from 'fs'
+import { assertSafeUserId } from '@/lib/util/safeUserId'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import path from 'path'
 import { UserProfile, AIMemory } from '@/types'
 
@@ -19,23 +21,15 @@ const DEFAULT_PROFILE = (userId: string): UserProfile => ({
 })
 
 function profileFile(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'profile.json')
 }
 
 function readProfile(userId: string): UserProfile {
-  try {
-    const file = profileFile(userId)
-    if (!fs.existsSync(file)) return DEFAULT_PROFILE(userId)
-    return JSON.parse(fs.readFileSync(file, 'utf-8'))
-  } catch {
-    return DEFAULT_PROFILE(userId)
-  }
+  return readJsonFile<UserProfile>(profileFile(userId), DEFAULT_PROFILE(userId))
 }
 
 function writeProfile(userId: string, profile: UserProfile) {
-  const dir = path.dirname(profileFile(userId))
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(profileFile(userId), JSON.stringify(profile, null, 2))
+  writeJsonFileAtomic(profileFile(userId), profile)
 }
 
 async function getAuthUserId(req: NextRequest): Promise<string | null> {
@@ -100,10 +94,8 @@ export async function POST(req: NextRequest) {
     if (profile.occupation)        memoryEntries.push({ key: 'occupation',          value: profile.occupation })
 
     if (memoryEntries.length > 0) {
-      const memFile = path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
-      const existing2: AIMemory[] = fs.existsSync(memFile)
-        ? JSON.parse(fs.readFileSync(memFile, 'utf-8'))
-        : []
+      const memFile = path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'memory.json')
+      const existing2 = readJsonFile<AIMemory[]>(memFile, [])
       for (const entry of memoryEntries) {
         const idx = existing2.findIndex(m => m.key === entry.key)
         const item: AIMemory = {
@@ -115,9 +107,7 @@ export async function POST(req: NextRequest) {
         if (idx >= 0) existing2[idx] = item
         else existing2.push(item)
       }
-      const dir = path.join(process.cwd(), 'data', 'users', userId)
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(memFile, JSON.stringify(existing2, null, 2))
+      writeJsonFileAtomic(memFile, existing2)
     }
   }
 
