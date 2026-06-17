@@ -62,19 +62,17 @@ src/
       events/[id]/route.ts      — PUT: update single event (title/time/color/mobility_type)
       memory/route.ts           — GET/POST/DELETE: AI memory key-value store
       demo-profile/route.ts     — GET/POST: demo profile read/write
-      onboarding/route.ts       — POST: save onboarding data
+      (onboarding is handled by the `complete_onboarding` AI tool in chat/route.ts — no dedicated route)
   components/
     AppShell.tsx                — Layout shell; triggers MethodOnboardingModal if no scheduling_method
     CalendarPanel.tsx           — FullCalendar wrapper with EventPopup + pinch-to-zoom + swipe
     ChatOverlay.tsx             — Floating chat panel (desktop: side drawer; mobile: bottom sheet)
-    ChatPanel.tsx               — ⚠️ UNUSED — was replaced by ChatOverlay + VoiceFAB
     EventPopup.tsx              — Apple Calendar-style inline editor (+ mobility_type + AI reasoning)
     Header.tsx                  — Top nav (desktop only; hidden on mobile)
     MethodOnboardingModal.tsx   — AI chat popup for users with no scheduling_method yet
     TasksPanel.tsx              — Task list with AI scheduling
     Toast.tsx                   — Notification toasts (Motion spring animations)
     VoiceFAB.tsx                — Floating mic button (hold=auto-send, tap=edit mode)
-    OnboardingModal.tsx         — First-run onboarding form
   lib/
     ai/
       tools.ts                  — OpenAI tool definitions (create/move/update/delete/list/etc.)
@@ -170,7 +168,7 @@ Floating action button — handles all voice input.
 
 ### Timing
 - **Double-tap window**: 450ms (was 300ms — expanded for comfort)
-- **Single-tap recording delay**: 400ms (matches window so double-tap always cancels cleanly)
+- **Single-tap recording delay**: 450ms (equals the double-tap window so a second tap always cancels the timer before recording starts)
 - If second tap arrives within 450ms: timer is cancelled before recording starts → mic never briefly activates
 
 ### Ref vs State for recording detection
@@ -348,7 +346,7 @@ Key-value store of facts the AI learns about the user (occupation, wake_time, st
 ### Challenges: `procrastination | overwhelmed | focus | scattered | goals`
 ### Day structures: `fixed | variable | mixed | independent`
 
-### Available methods (13 total)
+### Available methods (18 total)
 `pomodoro`, `deep_work`, `eisenhower`, `gtd`, `time_blocking`, `ivy_lee`,
 `eat_the_frog`, `theme_days`, `the_one_thing`, `weekly_review`, `okr`, `kanban`, `time_boxing`,
 `moscow`, `rule_5217`, `scrum`, `energy_management`, `twelve_week_year`
@@ -435,7 +433,7 @@ The mobile layout is designed to look like a native iOS app, not a website.
 
 | # | Issue | File | Status |
 |---|---|---|---|
-| 1 | AI sometimes returns "Done!" with no content | `ChatPanel.tsx` L138-141 | Fallback — rare edge case |
+| 1 | AI sometimes returns "Done!" with no content | `useChatEngine.ts` (streamingStarted fallback) | Fallback — rare edge case |
 | 2 | Push notifications require real Firebase project | `android/app/google-services.json` | Placeholder in place; real setup needed |
 | 3 | Work hours from profile not always respected | `get_free_slots` in route.ts | Implemented via `preferred_hours`/`wake_time`/`sleep_time` |
 

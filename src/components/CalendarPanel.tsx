@@ -52,6 +52,7 @@ export default function CalendarPanel({
   const [FC, setFC] = useState<FCType | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [localeData, setLocaleData] = useState<any>(null)
+  const [loadError, setLoadError] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const calRef = useRef<any>(null)
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -353,6 +354,7 @@ export default function CalendarPanel({
     ]
     if (language === 'he') imports.push(import('@fullcalendar/core/locales/he'))
 
+    setLoadError(false)
     Promise.all(imports).then(([fc, dg, tg, ia, heLoc]) => {
       setFC(() => (fc as { default: FCType }).default)
       setPlugins([
@@ -361,7 +363,7 @@ export default function CalendarPanel({
         (ia as { default: unknown }).default,
       ])
       if (heLoc) setLocaleData((heLoc as { default: unknown }).default)
-    })
+    }).catch(() => setLoadError(true))
   }, [language])
 
   // Change FullCalendar view via API (avoids full remount on view switch)
@@ -377,7 +379,7 @@ export default function CalendarPanel({
   // Close day sheet when navigating months
   useEffect(() => { setSelectedDate(null) }, [currentDate])
 
-  const fcEvents = events.map(ev => ({
+  const fcEvents = useMemo(() => events.map(ev => ({
     id: ev.id,
     title: ev.title,
     start: ev.start_time,
@@ -389,7 +391,7 @@ export default function CalendarPanel({
       newEventIds.has(ev.id) ? 'ai-new' : '',
     ].filter(Boolean),
     extendedProps: { mobility_type: ev.mobility_type },
-  }))
+  })), [events, newEventIds])
 
   const eventMap = useMemo(() => new Map(events.map(e => [e.id, e])), [events])
 
@@ -437,6 +439,21 @@ export default function CalendarPanel({
     const h = Math.max(0, now.getHours() - 1)
     return `${String(h).padStart(2, '0')}:00:00`
   }, [events])
+
+  if (loadError) {
+    return (
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: 'var(--text-2)' }}>
+        <div style={{ fontSize: 36 }}>📅</div>
+        <div style={{ fontSize: 13 }}>{language === 'he' ? 'טעינת הלוח נכשלה' : 'Failed to load calendar'}</div>
+        <button
+          onClick={() => window.location.reload()}
+          style={{ padding: '7px 16px', borderRadius: 9, border: '1px solid var(--border-hi)', background: 'var(--bg-card)', color: 'var(--blue)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+        >
+          {language === 'he' ? '↻ נסה שוב' : '↻ Retry'}
+        </button>
+      </div>
+    )
+  }
 
   if (!FC || plugins.length === 0) {
     return (

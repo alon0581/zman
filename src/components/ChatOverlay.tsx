@@ -17,6 +17,7 @@ interface Props {
   onSend: (text: string) => void
   onClose: () => void
   onReset: () => void
+  onRetry?: () => void
 }
 
 const T = {
@@ -24,7 +25,7 @@ const T = {
   he: { header: 'עוזר AI', placeholder: 'כתוב הודעה…', online: 'פעיל', subtitle: 'דבר או כתוב כדי לנהל את הלוח זמנים שלך' },
 } as const
 
-export default function ChatOverlay({ messages, input, setInput, loading, streamingId, isOnboarding, language, isMobile, onSend, onClose, onReset }: Props) {
+export default function ChatOverlay({ messages, input, setInput, loading, streamingId, isOnboarding, language, isMobile, onSend, onClose, onReset, onRetry }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const lang = (language === 'he' ? 'he' : 'en') as keyof typeof T
@@ -36,6 +37,13 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
   const mountTimeRef = useRef(Date.now())
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  // Escape closes the dialog
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   return (
     <>
@@ -55,6 +63,9 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
       {/* Panel */}
       <motion.div
         dir={isRTL ? 'rtl' : 'ltr'}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t.header}
         className="chat-panel-glass"
         initial={isMobile ? { y: '100%' } : { x: isRTL ? -420 : 420 }}
         animate={isMobile ? { y: 0 } : { x: 0 }}
@@ -95,12 +106,12 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             {messages.filter(m => m.role === 'user').length >= 1 && (
-              <button onClick={onReset} title={lang === 'he' ? 'שיחה חדשה' : 'New chat'}
+              <button onClick={onReset} title={lang === 'he' ? 'שיחה חדשה' : 'New chat'} aria-label={lang === 'he' ? 'שיחה חדשה' : 'New chat'}
                 style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border-hi)', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <RotateCcw size={13} />
               </button>
             )}
-            <button onClick={onClose}
+            <button onClick={onClose} title={lang === 'he' ? 'סגור' : 'Close'} aria-label={lang === 'he' ? 'סגור' : 'Close'}
               style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--border-hi)', background: 'transparent', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <X size={14} />
             </button>
@@ -109,7 +120,7 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
 
         {/* Messages */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {messages.map(msg => <Bubble key={msg.id} msg={msg} isRTL={isRTL} isStreaming={msg.id === streamingId} />)}
+          {messages.map(msg => <Bubble key={msg.id} msg={msg} isRTL={isRTL} isStreaming={msg.id === streamingId} lang={lang} onRetry={onRetry} />)}
           {loading && !streamingId && <TypingBubble />}
           <div ref={bottomRef} />
         </div>
@@ -150,6 +161,7 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
               <button
                 onClick={() => onSend(input)}
                 disabled={loading}
+                aria-label={lang === 'he' ? 'שלח' : 'Send'}
                 style={{
                   width: 42, height: 42, borderRadius: 13, border: 'none', cursor: 'pointer', flexShrink: 0,
                   background: 'linear-gradient(135deg,#3B7EF7,#6366F1)', color: '#fff',
@@ -170,7 +182,8 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
 
 // ─── Markdown renderer ──────────────────────────────────────────
 function renderInline(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`)/g)
+  // Emphasis content must not start/end with whitespace, so "5 * 3 * 2" isn't italicised
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\s][^*\n]*?\*|`[^`\n]+`)/g)
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4)
       return <strong key={i}>{part.slice(2, -2)}</strong>
@@ -200,7 +213,7 @@ function renderMarkdown(text: string, isUser: boolean): React.ReactNode {
   return isUser ? <span>{nodes}</span> : <>{nodes}</>
 }
 
-function Bubble({ msg, isRTL, isStreaming }: { msg: Message; isRTL: boolean; isStreaming?: boolean }) {
+function Bubble({ msg, isRTL, isStreaming, lang, onRetry }: { msg: Message; isRTL: boolean; isStreaming?: boolean; lang?: 'he' | 'en'; onRetry?: () => void }) {
   const isUser = msg.role === 'user'
   return (
     <div style={{ display: 'flex', flexDirection: isUser ? 'row-reverse' : 'row', gap: 10, alignItems: 'flex-end' }}>
@@ -209,16 +222,22 @@ function Bubble({ msg, isRTL, isStreaming }: { msg: Message; isRTL: boolean; isS
       )}
       <div style={{
         maxWidth: '78%', padding: '10px 14px', borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-        background: isUser ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'rgba(22,22,38,0.88)',
+        background: isUser ? 'linear-gradient(135deg,#3B7EF7,#6366F1)' : 'var(--bg-card)',
         backdropFilter: isUser ? undefined : 'blur(12px)',
         WebkitBackdropFilter: isUser ? undefined : 'blur(12px)',
         color: isUser ? '#fff' : 'var(--text)',
-        border: isUser ? 'none' : '1px solid rgba(255,255,255,0.09)',
+        border: isUser ? 'none' : '1px solid var(--border-hi)',
         fontSize: 13.5, lineHeight: 1.5, direction: isRTL ? 'rtl' : 'ltr',
         boxShadow: isUser ? '0 4px 20px rgba(59,126,247,0.45)' : '0 2px 12px rgba(0,0,0,0.3)',
       }}>
         {renderMarkdown(msg.content, isUser)}
         {isStreaming && <span style={{ display: 'inline-block', width: 7, height: 13, background: 'var(--blue)', borderRadius: 2, marginLeft: 3, verticalAlign: 'middle', animation: 'blink 0.8s step-end infinite' }} />}
+        {msg.isError && onRetry && (
+          <button onClick={onRetry}
+            style={{ display: 'block', marginTop: 8, padding: '5px 12px', borderRadius: 9, border: '1px solid var(--border-hi)', background: 'var(--bg-input)', color: 'var(--blue)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }}>
+            {lang === 'he' ? '↻ נסה שוב' : '↻ Retry'}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -228,7 +247,7 @@ function TypingBubble() {
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
       <div style={{ width: 28, height: 28, borderRadius: 9, background: 'linear-gradient(135deg,#3B7EF7,#6366F1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 900, color: '#fff', flexShrink: 0 }}>Z</div>
-      <div style={{ padding: '11px 15px', borderRadius: '16px 16px 16px 4px', background: 'rgba(22,22,38,0.88)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.09)', display: 'flex', gap: 5, alignItems: 'center' }}>
+      <div style={{ padding: '11px 15px', borderRadius: '16px 16px 16px 4px', background: 'var(--bg-card)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid var(--border-hi)', display: 'flex', gap: 5, alignItems: 'center' }}>
         <div className="typing-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--blue)' }} />
         <div className="typing-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--blue)' }} />
         <div className="typing-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--blue)' }} />

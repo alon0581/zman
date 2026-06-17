@@ -171,18 +171,24 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
     return counts
   }, [tasks, language])
 
-  // Map each task title → earliest upcoming calendar event (for "scheduled" badge)
+  // Map each task → earliest upcoming calendar event scheduled for it.
+  // Anchored match: the event title must equal the task title or begin with it
+  // (break_down_task names sessions "<task> — Session N"). Avoids the old
+  // bidirectional substring match that mislabelled short/common titles.
   const scheduledByTaskId = useMemo(() => {
     const now = new Date()
     const map: Record<string, Date> = {}
     for (const task of pending) {
-      const titleLower = task.title.toLowerCase()
+      const titleLower = task.title.toLowerCase().trim()
+      if (titleLower.length < 3) continue  // too short to match reliably
       const match = events
         .filter(e => {
           const start = new Date(e.start_time)
           if (start <= now) return false
-          const evLower = e.title.toLowerCase()
-          return evLower.includes(titleLower) || titleLower.includes(evLower)
+          const evLower = e.title.toLowerCase().trim()
+          return evLower === titleLower ||
+            evLower.startsWith(titleLower + ' ') ||
+            evLower.startsWith(titleLower + ' —')
         })
         .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
       if (match) map[task.id] = new Date(match.start_time)
@@ -348,6 +354,7 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                               {/* Checkbox */}
                               <button
                                 onClick={() => onTaskToggle(task.id, task.status === 'done' ? 'pending' : 'done')}
+                                aria-label={task.status === 'done' ? (language === 'he' ? 'סמן כלא הושלם' : 'Mark as not done') : (language === 'he' ? 'סמן כבוצע' : 'Mark as done')}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0, marginTop: 1, color: task.status === 'done' ? '#34D399' : 'var(--text-2)' }}
                               >
                                 {task.status === 'done'
@@ -411,6 +418,7 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
                                 <button
                                   onClick={() => onScheduleTask(task)}
                                   title="Schedule on calendar"
+                                  aria-label={language === 'he' ? 'קבע ביומן' : 'Schedule on calendar'}
                                   style={{
                                     background: 'var(--bg-input)', border: '1px solid var(--border)',
                                     borderRadius: 6, cursor: 'pointer', padding: '4px 8px',

@@ -15,6 +15,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
           description: { type: 'string', description: 'Optional description' },
           color: { type: 'string', description: 'Hex color by type: #3B7EF7=work/meetings/calls, #6366F1=study/exams/homework, #34D399=fitness/sport/gym, #FBBF24=personal/errands, #F97316=social/friends/fun' },
           status: { type: 'string', enum: ['confirmed', 'proposed'] },
+          is_all_day: { type: 'boolean', description: 'True for all-day events (holidays, birthdays, deadlines with no specific time). Default false.' },
           mobility_type: { type: 'string', enum: ['fixed', 'flexible', 'ask_first'], description: 'How movable this event is. fixed=never move (exams, flights), flexible=AI can move freely (study blocks, AI sessions), ask_first=ask user before moving (default)' },
           recurrence: {
             type: 'object',
@@ -77,7 +78,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
           title: { type: 'string' },
           delete_series: { type: 'boolean', description: 'If true, deletes ALL future instances of this recurring event. Use when user says "delete all", "מחק את כל", "stop recurring", "הסר את כל החזרות".' },
         },
-        required: ['event_id', 'title'],
+        required: ['event_id'],
       },
     },
   },
@@ -224,7 +225,7 @@ ALWAYS call save_memory after learning something new. This is your long-term bra
           task_id: { type: 'string', description: 'The task ID to delete' },
           title: { type: 'string', description: 'Task title (for confirmation message)' },
         },
-        required: ['task_id', 'title'],
+        required: ['task_id'],
       },
     },
   },
@@ -291,7 +292,7 @@ export const onboardingTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'complete_onboarding',
-      description: 'Call this ONCE when you have gathered enough information (all 6 topics covered) OR when user wants to skip. Saves everything and marks onboarding as complete. IMPORTANT: also gather persona (user type), challenge (their main time-management struggle), and day_structure (how their typical day looks) — these are used to assign the right scheduling methods automatically.',
+      description: 'Call this ONCE when you have gathered enough information (the key topics covered) OR when user wants to skip. Saves everything and marks onboarding as complete. REQUIRED: persona (user type), challenge (their main time-management struggle), and day_structure (how their typical day looks) — these are used to assign the right scheduling methods automatically. Always include them in profile_updates.',
       parameters: {
         type: 'object',
         properties: {
@@ -308,6 +309,7 @@ export const onboardingTools: OpenAI.ChatCompletionTool[] = [
               challenge: { type: 'string', enum: ['procrastination', 'overwhelmed', 'focus', 'scattered', 'goals'], description: 'Their biggest time-management challenge' },
               day_structure: { type: 'string', enum: ['fixed', 'variable', 'mixed', 'independent'], description: 'fixed=same schedule daily, variable=different every day, mixed=meetings+independent, independent=fully self-directed' },
             },
+            required: ['persona', 'challenge', 'day_structure'],
           },
           memory_entries: {
             type: 'array',
@@ -323,7 +325,7 @@ export const onboardingTools: OpenAI.ChatCompletionTool[] = [
           },
           summary: { type: 'string', description: 'One sentence summary of what you learned about this user' },
         },
-        required: ['memory_entries'],
+        required: ['profile_updates', 'memory_entries'],
       },
     },
   },

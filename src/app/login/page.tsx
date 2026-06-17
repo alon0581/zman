@@ -116,7 +116,8 @@ export default function LoginPage() {
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>סיסמה</label>
               <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                placeholder={mode === 'login' ? '••••••••' : 'לפחות 6 תווים'} required
+                placeholder={mode === 'login' ? '••••••••' : 'לפחות 12 תווים'} required
+                minLength={mode === 'register' ? 12 : undefined}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 style={INPUT_STYLE}
                 onFocus={e => (e.currentTarget.style.borderColor = '#3B7EF7')}

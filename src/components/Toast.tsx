@@ -48,7 +48,9 @@ export default function ToastContainer({ toasts, onDismiss, onTap, isRTL, isMobi
           <motion.div
             key={toast.id}
             initial={{ opacity: 0, x: isRTL ? -40 : 40, scale: 0.92 }}
-            animate={{ opacity: i > 1 ? 0.6 : 1, x: 0, scale: 1 }}
+            // Dim the OLDEST toast (lowest index), not the newest — column-reverse
+            // puts the newest at the top, so dimming by raw index hid the wrong one.
+            animate={{ opacity: i < toasts.length - 2 ? 0.6 : 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: isRTL ? -40 : 40, scale: 0.92 }}
             transition={{ type: 'spring', stiffness: 320, damping: 28 }}
             onClick={() => { onDismiss(toast.id); onTap() }}
@@ -58,10 +60,10 @@ export default function ToastContainer({ toasts, onDismiss, onTap, isRTL, isMobi
               gap: 10,
               padding: '12px 16px',
               borderRadius: 14,
-              background: 'rgba(13,13,24,0.92)',
+              background: 'var(--bg-card)',
               backdropFilter: 'blur(20px)',
               WebkitBackdropFilter: 'blur(20px)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid var(--border-hi)',
               boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
               cursor: 'pointer',
               direction: isRTL ? 'rtl' : 'ltr',

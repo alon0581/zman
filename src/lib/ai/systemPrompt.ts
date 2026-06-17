@@ -1,6 +1,7 @@
 import { UserProfile, CalendarEvent, AIMemory, Task } from '@/types'
 import { format } from 'date-fns'
 import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
+import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
 
 export function buildSystemPrompt(
   profile: UserProfile | null,
@@ -21,7 +22,9 @@ export function buildSystemPrompt(
     .slice(0, 30)
     .map(e => {
       const isNow = new Date(e.start_time) <= now && new Date(e.end_time) > now
-      return `- ${isNow ? '[NOW 🔴] ' : ''}${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}]${e.mobility_type ? ` [${e.mobility_type === 'fixed' ? '🔒' : e.mobility_type === 'flexible' ? '🟡' : '🔵'}]` : ''}`
+      // Same fallback the tools use, so the prompt and tool results agree on mobility
+      const mob = e.mobility_type ?? classifyMobility(e.title, e.created_by, profile?.language === 'he')
+      return `- ${isNow ? '[NOW 🔴] ' : ''}${e.title}: ${format(new Date(e.start_time), 'EEE MMM d, h:mm a')} → ${format(new Date(e.end_time), 'h:mm a')} [id:${e.id}] [${mob === 'fixed' ? '🔒' : mob === 'flexible' ? '🟡' : '🔵'}]`
     })
     .join('\n')
 
@@ -184,7 +187,7 @@ CORE RULES
 ════════════════════════════════════════
 RECURRING EVENTS & COURSES
 ════════════════════════════════════════
-- list_events returns "logical_courses" grouping: lecture + lab + tutorial of the SAME course are grouped under one course_name. ALWAYS use this grouping when counting or reporting courses — e.g. "פיזיקה אחד" and "מעבדה לפיזיקה אחד" are ONE course with 2 components, not 2 courses.
+- list_events returns a "logical_courses" grouping as a STARTING POINT: it mechanically strips prefixes like "מעבדה ל"/"תרגול ל" to guess which series belong to the same course. It is a heuristic — sanity-check it against the actual names before reporting. lecture + lab + tutorial of the SAME course count as ONE course — e.g. "פיזיקה אחד" and "מעבדה לפיזיקה אחד" are ONE course with 2 components, not 2 courses — but do NOT merge series that merely share a word.
 - Hebrew number words in course titles (אחד, שתיים, שלוש, etc.) are PART of the course name. Do NOT convert them or treat them as arithmetic. "מבוא לפיזיקה שתיים" is the course name, not "מבוא לפיזיקה 2".
 - To update all instances of a recurring series: use update_event with apply_to_series:true and ONE instance ID. Never loop through individual instances.
 - When user asks to lock/change all course events: call list_events → find recurring_series → call update_event ONCE PER SERIES with apply_to_series:true.
@@ -194,7 +197,7 @@ INFER BEFORE YOU ANSWER
 ════════════════════════════════════════
 Before responding to ANY question, reason from the data you already have — don't just read it literally.
 Examples of the kind of inference you should do automatically:
-- 28 recurring events → "7 courses this semester" (not "28 events")
+- Several recurring series whose names share a base course → report the COURSE count, not the raw instance count (a weekly course has many instances across the semester)
 - Many tasks + no scheduled time → "these need to be blocked in the calendar"
 - Exam next week + no prep sessions → "missing study time before the exam"
 - Peak hours = morning, but hard tasks scheduled at night → "schedule mismatch"

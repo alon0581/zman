@@ -83,7 +83,7 @@ If activity has no specific time → ask for it (ONE question), then create.
 ENDING — when to call complete_onboarding
 ════════════════════════════════════════
 Call complete_onboarding when ANY of these:
-- All 6 topics (A-F) covered
+- The key topics are covered (A–G; A, B, D are required — they set the scheduling method)
 - 8 exchanges passed (hard limit)
 - User says: skip / דיי / מספיק / סיים / done
 

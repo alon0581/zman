@@ -1,28 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import crypto from 'crypto'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { assertSafeUserId } from '@/lib/util/safeUserId'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { AIMemory } from '@/types'
-import fs from 'fs'
 import path from 'path'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 function memoryFile(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', userId, 'memory.json')
+  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'memory.json')
 }
 
 function readMemory(userId: string): AIMemory[] {
-  try {
-    const file = memoryFile(userId)
-    if (!fs.existsSync(file)) return []
-    return JSON.parse(fs.readFileSync(file, 'utf-8'))
-  } catch { return [] }
+  return readJsonFile<AIMemory[]>(memoryFile(userId), [])
 }
 
 function writeMemory(userId: string, memory: AIMemory[]) {
-  const dir = path.dirname(memoryFile(userId))
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(memoryFile(userId), JSON.stringify(memory, null, 2))
+  writeJsonFileAtomic(memoryFile(userId), memory)
 }
 
 async function getAuthUserId(req: NextRequest): Promise<string | null> {

@@ -219,7 +219,7 @@ export async function POST(req: NextRequest) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           messages: anthropicMessages as any,
           tools: anthropicTools,
-          max_tokens: 1024,
+          max_tokens: 2048,
         })
 
         if (response.stop_reason === 'tool_use') {
@@ -240,6 +240,7 @@ export async function POST(req: NextRequest) {
                 state,
                 freshProfile?.push_subscription,
                 freshProfile?.fcm_token,
+                userNow,
               )
               toolResults.push({
                 type: 'tool_result',
@@ -281,7 +282,7 @@ export async function POST(req: NextRequest) {
 
       // Reasoning models (MiniMax-M2.5, o1, etc.) need more tokens for thinking
       const isReasoningModel = model.includes('M2.5') || model.includes('M2-5') || model.startsWith('o1') || model.startsWith('o3')
-      const maxTokens = isReasoningModel ? 4096 : 1024
+      const maxTokens = isReasoningModel ? 4096 : 2048
 
       let iterations = 0
       const loopStart = Date.now()
@@ -306,12 +307,24 @@ export async function POST(req: NextRequest) {
           currentMessages.push(message)
           for (const toolCall of message.tool_calls) {
             const tc = toolCall as { id: string; function: { name: string; arguments: string } }
-            const input = JSON.parse(tc.function.arguments) as Record<string, unknown>
+            // Guard against truncated/invalid tool-call JSON (e.g. hit max_tokens mid-args)
+            let input: Record<string, unknown>
+            try {
+              input = JSON.parse(tc.function.arguments) as Record<string, unknown>
+            } catch {
+              currentMessages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify({ error: 'invalid_arguments', message: 'Tool arguments were not valid JSON (possibly truncated). Retry with shorter arguments or split into multiple calls.' }),
+              })
+              continue
+            }
             const result = await executeTool(
               tc.function.name, input, userId as string, events,
               createdEvents, updatedEvents, deletedEventIds, profile, state,
               freshProfile?.push_subscription,
               freshProfile?.fcm_token,
+              userNow,
             )
             currentMessages.push({
               role: 'tool',
@@ -328,16 +341,33 @@ export async function POST(req: NextRequest) {
           const xmlCalls = parseXmlToolCalls(message.content)
           if (xmlCalls.length > 0) {
             currentMessages.push(message)
+            const allowed = new Set(
+              (isOnboarding ? onboardingTools : calendarTools)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                .map(t => (t as any).function?.name as string)
+                .filter(Boolean)
+            )
+            let xmlIdx = 0
             for (const tc of xmlCalls) {
+              // Only execute recognized tool names — never run an arbitrary name parsed from content
+              if (!allowed.has(tc.name)) {
+                currentMessages.push({
+                  role: 'tool',
+                  tool_call_id: `xml-${xmlIdx++}`,
+                  content: JSON.stringify({ error: 'unknown_tool', message: `'${tc.name}' is not a valid tool` }),
+                })
+                continue
+              }
               const result = await executeTool(
                 tc.name, tc.args, userId as string, events,
                 createdEvents, updatedEvents, deletedEventIds, profile, state,
                 freshProfile?.push_subscription,
                 freshProfile?.fcm_token,
+                userNow,
               )
               currentMessages.push({
                 role: 'tool',
-                tool_call_id: `xml-${tc.name}-${Date.now()}`,
+                tool_call_id: `xml-${tc.name}-${xmlIdx++}`,
                 content: JSON.stringify(result),
               })
             }
@@ -367,7 +397,7 @@ export async function POST(req: NextRequest) {
           const retryResp = await openaiClient.chat.completions.create({
             model,
             messages: currentMessages,
-            max_tokens: isReasoningModel ? 4096 : 1024,
+            max_tokens: isReasoningModel ? 4096 : 2048,
           })
           const retryText = (retryResp.choices[0].message.content ?? '')
             .replace(/<think>[\s\S]*?<\/think>/g, '')
@@ -581,6 +611,7 @@ async function executeTool(
   state: { completedProfile: UserProfile | null; memoryUpdated: boolean; tasksUpdated: boolean } = { completedProfile: null, memoryUpdated: false, tasksUpdated: false },
   pushSubscription?: string,
   fcmToken?: string,
+  now: Date = new Date(),  // user-local "now" (Asia/Jerusalem), not server UTC — used for scheduling
 ): Promise<unknown> {
   // ── Input validation helpers ──────────────────────────────────────────────
   const str  = (v: unknown): string  => (typeof v === 'string' ? v : '')
@@ -676,7 +707,7 @@ async function executeTool(
         rangeStart.setHours(0, 0, 0, 0)
         const rangeEnd = addDays(rangeStart, 3)
         const alternatives = getFreeSlots(
-          allKnownEvents, rangeStart.toISOString(), rangeEnd.toISOString(), duration, profile
+          allKnownEvents, rangeStart.toISOString(), rangeEnd.toISOString(), duration, profile, false, now
         ).slice(0, 3)
         return {
           error: 'conflict',
@@ -756,7 +787,8 @@ async function executeTool(
         } else {
           const { createClient } = await import('@/lib/supabase/server')
           const supabase = await createClient()
-          await supabase.from('events').update(changes).eq('series_id', existing.series_id).eq('user_id', userId)
+          const { error } = await supabase.from('events').update(changes).eq('series_id', existing.series_id).eq('user_id', userId)
+          if (error) return { error: error.message }
         }
         const updatedSeries = seriesEvents.map(e => ({ ...e, ...changes } as CalendarEvent))
         updatedEvents.push(...updatedSeries)
@@ -769,12 +801,18 @@ async function executeTool(
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
-        await supabase.from('events').update(changes).eq('id', event_id).eq('user_id', userId)
+        const { error } = await supabase.from('events').update(changes).eq('id', event_id).eq('user_id', userId)
+        if (error) return { error: error.message }
       }
 
       const updated = { ...existing, ...changes }
       updatedEvents.push(updated as CalendarEvent)
-      return { success: true, event: updated }
+      return {
+        success: true,
+        event: updated,
+        // Signal the mismatch when the model asked for a series update but there's no series
+        ...(apply_to_series && !existing.series_id ? { warning: 'This event has no series_id — updated the single instance only.' } : {}),
+      }
     }
 
     case 'move_event': {
@@ -793,6 +831,27 @@ async function executeTool(
         return { error: 'fixed_event', message: `"${existing.title}" is marked as Fixed (🔒) and cannot be moved.` }
       }
 
+      // Overlap check — don't let a move stack this event on top of another
+      const moveStart = new Date(str(new_start_time))
+      const moveEnd = new Date(str(new_end_time))
+      const moveConflict = [...currentEvents, ...createdEvents].find(e => {
+        if (e.id === event_id) return false  // ignore the event being moved
+        return moveStart < new Date(e.end_time) && moveEnd > new Date(e.start_time)
+      })
+      if (moveConflict) {
+        const duration = (moveEnd.getTime() - moveStart.getTime()) / 60000
+        const rangeStart = new Date(moveStart); rangeStart.setHours(0, 0, 0, 0)
+        const alternatives = getFreeSlots(
+          currentEvents.filter(e => e.id !== event_id),
+          rangeStart.toISOString(), addDays(rangeStart, 3).toISOString(), duration, profile, false, now
+        ).slice(0, 3)
+        return {
+          error: 'conflict',
+          conflictingEvent: { id: moveConflict.id, title: moveConflict.title, start: moveConflict.start_time, end: moveConflict.end_time },
+          alternatives,
+        }
+      }
+
       const updated = { ...existing, start_time: new_start_time, end_time: new_end_time }
 
       if (DEMO_MODE) {
@@ -800,7 +859,8 @@ async function executeTool(
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
-        await supabase.from('events').update({ start_time: new_start_time, end_time: new_end_time }).eq('id', event_id).eq('user_id', userId)
+        const { error } = await supabase.from('events').update({ start_time: new_start_time, end_time: new_end_time }).eq('id', event_id).eq('user_id', userId)
+        if (error) return { error: error.message }
       }
 
       updatedEvents.push(updated)
@@ -823,7 +883,8 @@ async function executeTool(
           } else {
             const { createClient } = await import('@/lib/supabase/server')
             const supabase = await createClient()
-            await supabase.from('events').delete().eq('series_id', sid).eq('user_id', userId)
+            const { error } = await supabase.from('events').delete().eq('series_id', sid).eq('user_id', userId)
+            if (error) return { error: error.message }
           }
           deletedEventIds.push(...seriesIds)
           return { success: true, deleted_series_id: sid, instances_deleted: seriesIds.length }
@@ -836,7 +897,8 @@ async function executeTool(
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
-        await supabase.from('events').delete().eq('id', event_id).eq('user_id', userId)
+        const { error } = await supabase.from('events').delete().eq('id', event_id).eq('user_id', userId)
+        if (error) return { error: error.message }
       }
 
       deletedEventIds.push(event_id)
@@ -845,7 +907,7 @@ async function executeTool(
 
     case 'get_free_slots': {
       const { from_date, to_date, min_duration_minutes = 60, prefer_peak = false } = input as { from_date: string; to_date: string; min_duration_minutes?: number; prefer_peak?: boolean }
-      return { free_slots: getFreeSlots(currentEvents, from_date, to_date, min_duration_minutes as number, profile, prefer_peak as boolean) }
+      return { free_slots: getFreeSlots(currentEvents, from_date, to_date, min_duration_minutes as number, profile, prefer_peak as boolean, now) }
     }
 
     case 'break_down_task': {
@@ -899,8 +961,8 @@ async function executeTool(
         userMethod && ASK_FIRST_METHODS.has(userMethod) ? 'ask_first' :
         'flexible'
 
-      // Use peak-hour preferred slots for study/work tasks
-      const slots = getFreeSlots(currentEvents, new Date().toISOString(), deadline, effectiveSessionLength * 60, profile, true)
+      // Use peak-hour preferred slots for study/work tasks (from user-local now → deadline)
+      const slots = getFreeSlots(currentEvents, now.toISOString(), deadline, effectiveSessionLength * 60, profile, true, now)
       const sessionsNeeded = Math.ceil(total_hours / effectiveSessionLength)
       let created = 0
 
@@ -934,7 +996,15 @@ async function executeTool(
         created++
       }
 
-      return { success: true, sessions_created: created }
+      // Tell the model if we couldn't fit every session, so it can warn the user
+      const unscheduled = sessionsNeeded - created
+      return {
+        success: true,
+        sessions_created: created,
+        sessions_needed: sessionsNeeded,
+        sessions_unscheduled: unscheduled,
+        ...(unscheduled > 0 ? { warning: `Only ${created} of ${sessionsNeeded} sessions fit before the deadline — ${unscheduled} could not be scheduled. Tell the user and suggest extending the deadline or freeing time.` } : {}),
+      }
     }
 
     case 'list_events': {
@@ -961,7 +1031,7 @@ async function executeTool(
 
       // Helper: strip lab/tutorial prefixes to find the base course name
       const baseCourse = (title: string) =>
-        title.replace(/^(מעבדה ל|תרגול ל|תרגיל ל|חדווה ל|lab for |tutorial for |lab |recitation )/i, '').trim()
+        title.replace(/^(מעבדה ל|תרגול ל|תרגיל ל|lab for |tutorial for |lab |recitation )/i, '').trim()
 
       // Group series by base course name so AI understands lecture+lab+tutorial = one course
       const courseGroups: Record<string, string[]> = {}
@@ -1020,7 +1090,7 @@ async function executeTool(
       // Peak productivity hours from profile
       const peak = profile?.productivity_peak ?? 'morning'
       const peakStart = peak === 'morning' ? 6 : peak === 'afternoon' ? 12 : 18
-      const peakEnd   = peak === 'morning' ? 12 : peak === 'afternoon' ? 18 : 24
+      const peakEnd   = peak === 'morning' ? 12 : peak === 'afternoon' ? 18 : 23
       const sleepHour = parseHour(profile?.sleep_time, 23)
 
       const dayStats: Array<{
@@ -1314,6 +1384,14 @@ async function executeTool(
         } else {
           (input as Record<string, unknown>).memory_entries = extraEntries
         }
+      } else if (!pu.scheduling_method) {
+        // Fallback: never finish onboarding without a method, or MethodOnboardingModal
+        // re-triggers forever. Default to time_blocking (general-purpose).
+        pu.scheduling_method = 'time_blocking'
+        pu.secondary_methods = pu.secondary_methods ?? []
+        const fallbackEntry = { key: 'scheduling_method', value: 'time_blocking' }
+        if (memory_entries) memory_entries.push(fallbackEntry)
+        else (input as Record<string, unknown>).memory_entries = [fallbackEntry]
       }
 
       if (DEMO_MODE) {
@@ -1411,7 +1489,8 @@ function getFreeSlots(
   toDate: string,
   minMinutes: number,
   profile?: UserProfile | null,
-  preferPeak = false
+  preferPeak = false,
+  now: Date = new Date()  // user-local now, so "today" / past-slot floor match the user's timezone
 ) {
   const slots: Array<{ start: string; end: string; duration_minutes: number; is_peak?: boolean }> = []
   let cursor = parseISO(fromDate)
@@ -1440,7 +1519,7 @@ function getFreeSlots(
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
 
     // On the current day, never start a slot in the past — use now as the floor
-    const nowTs = new Date()
+    const nowTs = now
     let slotStart = (cursor.toDateString() === nowTs.toDateString() && nowTs > cursor)
       ? new Date(nowTs)
       : new Date(cursor)

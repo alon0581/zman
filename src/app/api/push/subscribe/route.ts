@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient as createServerClient } from '@/lib/supabase/server'
-import fs from 'fs'
 import path from 'path'
 import { getUserIdFromCookie } from '@/lib/auth'
+import { assertSafeUserId } from '@/lib/util/safeUserId'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
@@ -11,7 +12,7 @@ function getUserId(req: NextRequest): string | null {
 }
 
 function profilePath(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'profile.json')
 }
 
 export async function POST(req: NextRequest) {
@@ -28,11 +29,10 @@ export async function POST(req: NextRequest) {
     const userId = getUserId(req)
     if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const p = profilePath(userId)
-    try {
-      const profile = JSON.parse(fs.readFileSync(p, 'utf8'))
-      profile[field] = subscription
-      fs.writeFileSync(p, JSON.stringify(profile, null, 2))
-    } catch { return NextResponse.json({ error: 'profile not found' }, { status: 404 }) }
+    const profile = readJsonFile<Record<string, unknown> | null>(p, null)
+    if (!profile) return NextResponse.json({ error: 'profile not found' }, { status: 404 })
+    profile[field] = subscription
+    writeJsonFileAtomic(p, profile)
     return NextResponse.json({ ok: true })
   }
 
@@ -49,12 +49,12 @@ export async function DELETE(req: NextRequest) {
     const userId = getUserId(req)
     if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const p = profilePath(userId)
-    try {
-      const profile = JSON.parse(fs.readFileSync(p, 'utf8'))
+    const profile = readJsonFile<Record<string, unknown> | null>(p, null)
+    if (profile) {
       delete profile.push_subscription
       delete profile.fcm_token
-      fs.writeFileSync(p, JSON.stringify(profile, null, 2))
-    } catch {}
+      writeJsonFileAtomic(p, profile)
+    }
     return NextResponse.json({ ok: true })
   }
   const supabase = await createServerClient()

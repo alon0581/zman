@@ -132,8 +132,9 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
 
     const now = Date.now()
 
-    // ── Double-tap detected (600ms window) ──────────────────────────────────
-    if (now - lastTapRef.current < 600) {
+    // ── Double-tap detected (450ms window — equals the record delay below, so a
+    //    second tap always cancels the pending single-tap timer before it fires) ──
+    if (now - lastTapRef.current < 450) {
       lastTapRef.current = 0
       // Cancel any pending single-tap recording that hasn't started yet
       if (singleTapTimerRef.current) {
@@ -157,19 +158,20 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
       return
     }
 
-    // ── Delay recording start by 400ms — matches the 450ms double-tap window ─
-    pressStartRef.current = Date.now() + 400 // offset so hold timer is measured from actual start
+    // ── Delay recording start by 450ms so a double-tap (window above) always
+    //    cancels this timer before recording begins (no brief mic flash) ──
+    pressStartRef.current = Date.now() + 450 // placeholder; overwritten with the real start time when recording begins
     holdModeRef.current = false
     singleTapTimerRef.current = setTimeout(() => {
       singleTapTimerRef.current = null
       pressStartRef.current = Date.now()
       startRecording()
-    }, 400)
+    }, 450)
   }, [stopRecording, startRecording, onOpenChat])
 
   const handlePointerUp = useCallback(() => {
-    const elapsed = Date.now() - pressStartRef.current
-    if (activeRef.current && elapsed >= 400) {
+    // Treat as a "hold" (auto-send) only once recording actually started and was held ≥300ms.
+    if (activeRef.current && Date.now() - pressStartRef.current >= 300) {
       holdModeRef.current = true
       stopRecording()
     }
@@ -219,6 +221,11 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
   return (
     <motion.button
       className={fabClass}
+      aria-label={lang === 'he'
+        ? (recording ? 'מקליט — הקש לעצירה' : 'הקלטה קולית — הקש והחזק לשליחה, הקשה כפולה לצ׳אט')
+        : (recording ? 'Recording — tap to stop' : 'Voice input — hold to send, double-tap for chat')}
+      aria-pressed={recording}
+      aria-busy={isProcessing}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}

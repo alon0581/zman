@@ -49,14 +49,18 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
     setPos({ x: nx, y: ny })
   }, [x, y])
 
-  // Close on outside click
+  // Dismissing by clicking outside should PERSIST edits, not discard them.
+  // dismissRef is reassigned every render so the listener always sees fresh state.
+  const dismissRef = useRef<() => void>(() => {})
+
+  // Close on outside click (auto-saves if there are unsaved changes)
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (popupRef.current && !popupRef.current.contains(e.target as Node)) onClose()
+      if (popupRef.current && !popupRef.current.contains(e.target as Node)) dismissRef.current()
     }
     setTimeout(() => document.addEventListener('mousedown', handler), 0)
     return () => document.removeEventListener('mousedown', handler)
-  }, [onClose])
+  }, [])
 
   // Close on Escape
   useEffect(() => {
@@ -88,6 +92,14 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
       onClose()
     } catch { /* ignore */ }
   }
+
+  // Keep the outside-click handler pointed at the latest state every render
+  const isDirty =
+    title.trim() !== event.title ||
+    color !== (event.color ?? '#3B7EF7') ||
+    mobility !== autoMobility ||
+    mobilityManual !== !!event.mobility_type
+  dismissRef.current = () => { if (isDirty && title.trim() && !saving) handleSave(); else onClose() }
 
   const dfLocale = isHe ? heLocale : undefined
   const startDate = isHe
@@ -132,6 +144,8 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
           />
           <button
             onClick={onClose}
+            aria-label={isHe ? 'סגור' : 'Close'}
+            title={isHe ? 'סגור' : 'Close'}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
               color: 'var(--text-2)', padding: 2, borderRadius: 6,

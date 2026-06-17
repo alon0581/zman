@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { User } from '@supabase/supabase-js'
 import { UserProfile, CalendarEvent, Task } from '@/types'
 import CalendarPanel from './CalendarPanel'
@@ -38,6 +38,13 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   const language = profile?.language ?? 'en'
   const isRTL = language === 'he' || language === 'ar'
 
+  // Background pollers must not clobber an event/task the user or AI just changed.
+  // We pause polling briefly after any local mutation and while the chat is working.
+  const lastLocalMutationRef = useRef(0)
+  const chatBusyRef = useRef(false)
+  const markLocalMutation = () => { lastLocalMutationRef.current = Date.now() }
+  const pollAllowed = () => !chatBusyRef.current && Date.now() - lastLocalMutationRef.current > 12_000
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
@@ -71,11 +78,12 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
 
   useEffect(() => {
     fetchTasks()
-    const id = setInterval(fetchTasks, 30_000)
+    const id = setInterval(() => { if (pollAllowed()) fetchTasks() }, 30_000)
     return () => clearInterval(id)
   }, [])
 
   const handleEventsUpdate = (updatedEvents: CalendarEvent[], addedIds?: string[]) => {
+    markLocalMutation()
     setEvents(updatedEvents)
     if (addedIds?.length) {
       const ids = new Set(addedIds)
@@ -86,9 +94,10 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
 
   useEffect(() => {
     const poll = () => {
+      if (!pollAllowed()) return
       fetch('/api/events')
         .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data?.events) setEvents(data.events) })
+        .then(data => { if (data?.events && pollAllowed()) setEvents(data.events) })
         .catch(() => {})
     }
     const id = setInterval(poll, 30_000)
@@ -96,14 +105,17 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   }, [])
 
   const handleEventUpdate = (id: string, changes: Partial<CalendarEvent>) => {
+    markLocalMutation()
     setEvents(prev => prev.map(e => e.id === id ? { ...e, ...changes } : e))
   }
 
   const handleEventDelete = (id: string) => {
+    markLocalMutation()
     setEvents(prev => prev.filter(e => e.id !== id))
   }
 
   const handleTaskToggle = (id: string, newStatus: Task['status']) => {
+    markLocalMutation()
     const completedAt = newStatus === 'done' ? new Date().toISOString() : undefined
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus, ...(completedAt ? { completed_at: completedAt } : { completed_at: undefined }) } : t))
     fetch(`/api/tasks/${id}`, {
@@ -114,6 +126,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   }
 
   const handleDeleteTask = (id: string) => {
+    markLocalMutation()
     setTasks(prev => prev.filter(t => t.id !== id))
     fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => {})
   }
@@ -144,6 +157,12 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     isOnboarding: needsOnboarding,
     chatOverlayOpen,
   })
+
+  // Keep the poller guard in sync with chat activity (a chat turn may create/move events)
+  useEffect(() => {
+    chatBusyRef.current = chatEngine.loading
+    if (chatEngine.loading) markLocalMutation()
+  }, [chatEngine.loading])
 
   // Task scheduling: auto-send via chat engine
   const handleScheduleTask = useCallback((task: Task) => {
@@ -240,10 +259,10 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             <span style={{ fontWeight: 700, fontSize: 17, letterSpacing: '-0.03em', color: 'var(--text)' }}>Zman</span>
           </div>
           <div style={{ display: 'flex', gap: 2 }}>
-            <MobileIconBtn onClick={toggleTheme}>
+            <MobileIconBtn onClick={toggleTheme} label={language === 'he' ? 'החלף ערכת נושא' : 'Toggle theme'}>
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </MobileIconBtn>
-            <MobileIconBtn onClick={() => setShowSettings(true)}>
+            <MobileIconBtn onClick={() => setShowSettings(true)} label={language === 'he' ? 'הגדרות' : 'Settings'}>
               <SettingsIcon size={18} />
             </MobileIconBtn>
           </div>
@@ -282,7 +301,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         )}
       </div>
 
-      {/* ── Mobile bottom tab bar (3 tabs: Calendar | Chat | Tasks) ── */}
+      {/* ── Mobile bottom tab bar (2 tabs: Calendar | Tasks — chat opens via VoiceFAB double-tap) ── */}
       {isMobile && (
         <div style={{
           display: 'flex', flexShrink: 0,
@@ -348,6 +367,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             onSend={chatEngine.sendMessage}
             onClose={() => setChatOverlayOpen(false)}
             onReset={chatEngine.resetChat}
+            onRetry={chatEngine.retryLast}
           />
         )}
       </AnimatePresence>
@@ -377,9 +397,9 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
   )
 }
 
-function MobileIconBtn({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
+function MobileIconBtn({ children, onClick, label }: { children: React.ReactNode; onClick?: () => void; label?: string }) {
   return (
-    <button onClick={onClick} style={{
+    <button onClick={onClick} aria-label={label} title={label} style={{
       width: 38, height: 38, borderRadius: 10, border: 'none',
       background: 'transparent', color: 'var(--text-2)', cursor: 'pointer',
       display: 'flex', alignItems: 'center', justifyContent: 'center',

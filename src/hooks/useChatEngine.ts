@@ -121,6 +121,7 @@ export interface ChatEngineResult {
   isOnboarding: boolean
   sendMessage: (text: string) => Promise<void>
   resetChat: () => void
+  retryLast: () => void
   toasts: ToastItem[]
   dismissToast: (id: string) => void
 }
@@ -171,6 +172,7 @@ export function useChatEngine({
   const [loading, setLoading] = useState(false)
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
+  const lastUserTextRef = useRef('')  // last sent text, for retry-on-error
 
   // Auto-dismiss toasts
   useEffect(() => {
@@ -227,6 +229,7 @@ export function useChatEngine({
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return
+    lastUserTextRef.current = text.trim()
     const um: Message = { id: crypto.randomUUID(), role: 'user', content: text.trim(), timestamp: new Date() }
     setMessages(p => [...p, um])
     setInput('')
@@ -266,6 +269,7 @@ export function useChatEngine({
 
       let eventData: { createdEvents?: CalendarEvent[]; updatedEvents?: CalendarEvent[]; deletedEventIds?: string[] } = {}
       let streamingStarted = false
+      let streamErrored = false
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -293,6 +297,10 @@ export function useChatEngine({
               } else {
                 setMessages(p => p.map(m => m.id === assistantId ? { ...m, content: m.content + parsed.content } : m))
               }
+            } else if (parsed.type === 'error') {
+              // Server signalled a stream failure — flag it (can't throw here; the
+              // inner catch below swallows errors). Handled after the loop.
+              streamErrored = true
             } else if (parsed.type === 'tasks_updated') {
               onTasksUpdate?.()
             } else if (parsed.type === 'memory_updated') {
@@ -328,8 +336,12 @@ export function useChatEngine({
               }
             }
           } catch { /* ignore parse errors */ }
+          if (streamErrored) break
         }
+        if (streamErrored) break
       }
+
+      if (streamErrored) throw new Error('stream_error')
 
       if (!streamingStarted) {
         setMessages(p => [...p, { id: assistantId, role: 'assistant', content: 'Done!', timestamp: new Date() }])
@@ -349,7 +361,7 @@ export function useChatEngine({
 
     } catch {
       const errMsg = lang === 'he' ? T.he.error : T.en.error
-      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant', content: errMsg, timestamp: new Date() }])
+      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant', content: errMsg, timestamp: new Date(), isError: true }])
       addToast('error', errMsg)
     } finally {
       setLoading(false)
@@ -363,9 +375,17 @@ export function useChatEngine({
     setMessages([{ id: 'welcome', role: 'assistant', content: dynamic, timestamp: new Date() }])
   }, [events, memory, profile, language])
 
+  // Retry the last user message after a failure (drops the trailing error bubble)
+  const retryLast = useCallback(() => {
+    const text = lastUserTextRef.current
+    if (!text || loading) return
+    setMessages(p => p.filter(m => !m.isError))
+    void sendMessage(text)
+  }, [loading, sendMessage])
+
   return {
     messages, setMessages, input, setInput,
     loading, streamingId, memory, isOnboarding,
-    sendMessage, resetChat, toasts, dismissToast,
+    sendMessage, resetChat, retryLast, toasts, dismissToast,
   }
 }
