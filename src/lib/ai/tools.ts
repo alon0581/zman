@@ -151,10 +151,18 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'save_memory',
-      description: `Save facts learned about the user. Call this proactively whenever the user reveals ANYTHING about themselves.
-Save keys like: occupation, wake_time, sleep_time, university, year_of_study, study_field, work_hours, free_days, pref_study_time, pref_meeting_time, main_challenge, goal, hobby, location, commute_time, pattern_* (behavioral patterns), recurring_* (fixed commitments).
-Examples: { key: "occupation", value: "מהנדס תוכנה" }, { key: "wake_time", value: "07:00" }, { key: "pref_study_time", value: "ערב, אחרי 20:00" }
-ALWAYS call save_memory after learning something new. This is your long-term brain — use it aggressively.`,
+      description: `Save facts learned about the user — this is your long-term brain. Call it proactively whenever the user reveals ANYTHING about themselves, AND whenever you NOTICE a consistent behaviour.
+Use this key taxonomy so the profile stays organized (reuse the same key to update a fact):
+- Identity: occupation, study_field, university, year_of_study, role, location, name
+- Rhythm: wake_time, sleep_time, productivity_peak, energy_dip, commute_time
+- Fixed commitments: recurring_* (classes, work shifts, gym, volunteering), work_hours, free_days
+- Preferences: pref_study_time, pref_meeting_time, pref_session_length, prefers_buffers, main_challenge
+- Life: relationship, family_commitment, hobby, volunteering
+- Goals: current_goal, ongoing_task, upcoming_focus
+- Method fit: method_feedback (how the user reacts to their scheduling method — e.g. "fights deep_work, prefers shorter blocks")
+- Patterns: pattern_* (behaviours you OBSERVED, e.g. pattern_morning_study="always moves morning study to evening", pattern_reject_early="rejects slots before 9:00")
+Examples: { key: "occupation", value: "מהנדס תוכנה" }, { key: "pref_study_time", value: "ערב, אחרי 20:00" }, { key: "pattern_reject_early", value: "דוחה זמנים לפני 9:00" }
+ALWAYS save after learning something new OR after seeing the same behaviour 2-3 times. Use it aggressively — but keep values short.`,
       parameters: {
         type: 'object',
         properties: {

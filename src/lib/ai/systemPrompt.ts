@@ -3,13 +3,54 @@ import { format } from 'date-fns'
 import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
 import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
 
+// ── Person Profile — long-term memory, organized by a fixed taxonomy and
+// bounded so it stays cheap (it's injected on every request). ───────────────
+const PROFILE_CATEGORIES: { label: string; test: (key: string) => boolean }[] = [
+  { label: 'Identity',          test: k => /^(occupation|study_field|university|year_of_study|role|location|name|persona)/.test(k) },
+  { label: 'Rhythm',            test: k => /^(wake_time|sleep_time|productivity_peak|energy|commute)/.test(k) },
+  { label: 'Fixed commitments', test: k => /^(recurring_|work_hours|free_days|weekly_free)/.test(k) },
+  { label: 'Preferences',       test: k => /^(pref_|prefers_|main_challenge)/.test(k) },
+  { label: 'Life',              test: k => /^(relationship|family|hobby|hobbies|volunteer|social)/.test(k) },
+  { label: 'Goals',             test: k => /^(current_goal|goal|ongoing_|upcoming_focus)/.test(k) },
+  { label: 'Method fit',        test: k => /^(scheduling_method|secondary_methods|method_feedback)/.test(k) },
+  { label: 'Patterns',          test: k => /^pattern_/.test(k) },
+]
+const PROFILE_MAX = 40  // cap injected facts (cost guard)
+
+function buildPersonProfile(memory?: AIMemory[]): string {
+  if (!memory || memory.length === 0) return ''
+  const byKey = new Map<string, string>()      // dedupe by key, latest wins
+  for (const m of memory) if (m.key) byKey.set(m.key, m.value)
+  const buckets: Record<string, string[]> = {}
+  const general: string[] = []
+  for (const [key, value] of byKey) {
+    const cat = PROFILE_CATEGORIES.find(c => c.test(key))
+    const line = `${key}: ${value}`
+    if (cat) (buckets[cat.label] ??= []).push(line)
+    else general.push(line)
+  }
+  const lines: string[] = []
+  let count = 0
+  for (const c of PROFILE_CATEGORIES) {        // priority categories first
+    const items = buckets[c.label]
+    if (!items?.length || count >= PROFILE_MAX) continue
+    const take = items.slice(0, PROFILE_MAX - count)
+    count += take.length
+    lines.push(`[${c.label}] ${take.join(' | ')}`)
+  }
+  if (count < PROFILE_MAX && general.length) {  // low-signal bucket, truncated
+    lines.push(`[Other] ${general.slice(0, PROFILE_MAX - count).join(' | ')}`)
+  }
+  return `\n👤 PERSON PROFILE (what you've learned about this user — USE it, never ask for what you already know):\n${lines.join('\n')}`
+}
+
 export function buildSystemPrompt(
   profile: UserProfile | null,
   events: CalendarEvent[],
   now: Date,
   memory?: AIMemory[],
   tasks?: Task[]
-): string {
+): { staticPrefix: string; dynamicSuffix: string } {
   const nowStr = format(now, "EEEE, MMMM d, yyyy 'at' h:mm a")
   const currentHour = now.getHours()
   const isMorning = currentHour >= 5 && currentHour < 12
@@ -111,26 +152,12 @@ When the user mentions ANY task, deadline, project, or exam — apply this proto
 2. METHOD APPLICATION → Apply primary method (${profile?.scheduling_method ?? 'time_blocking'}) immediately:
    - Don't ask "when should I schedule this?" — PROPOSE a specific time slot using get_free_slots
    - Frame the proposal in method language (e.g. "פומודורו 1 ו-2" / "בלוק עמוק של 2 שעות")
-3. SECONDARY MENTION → After proposing, briefly mention 1 complementary method if highly relevant
-4. PEAK HOURS → Always place hard/creative tasks in peak hours (${peakStart}:00–${peakEnd}:00)
-5. AUTONOMY → ${profile?.autonomy_mode === 'auto' ? 'Auto mode: act immediately, don\'t ask' : profile?.autonomy_mode === 'suggest' ? 'Suggest mode: propose and wait for confirmation' : 'Hybrid mode: auto for small tasks, ask for big changes'}` : ''
+3. APPLY WHAT YOU KNOW → Before proposing a time, consult the PERSON PROFILE (CURRENT CONTEXT): honour pref_* (preferred times/session length), pattern_* (e.g. "rejects slots before 9:00" → don't propose them), and never schedule into known fixed commitments or sleep hours.
+4. SECONDARY MENTION → After proposing, briefly mention 1 complementary method if highly relevant
+5. PEAK HOURS → Always place hard/creative tasks in peak hours (${peakStart}:00–${peakEnd}:00)
+6. AUTONOMY → ${profile?.autonomy_mode === 'auto' ? 'Auto mode: act immediately, don\'t ask' : profile?.autonomy_mode === 'suggest' ? 'Suggest mode: propose and wait for confirmation' : 'Hybrid mode: auto for small tasks, ask for big changes'}` : ''
 
-  const memorySummary = (() => {
-    if (!memory || memory.length === 0) return ''
-    const categories: Record<string, AIMemory[]> = {}
-    for (const m of memory) {
-      const prefix = m.key.includes('_') ? m.key.split('_')[0] : 'general'
-      const cat = ['personal','schedule','study','work','pref','pattern','recurring','goal'].includes(prefix) ? prefix : 'general'
-      if (!categories[cat]) categories[cat] = []
-      categories[cat].push(m)
-    }
-    const lines: string[] = ['\n📌 Long-term memory about this user:']
-    for (const [cat, entries] of Object.entries(categories)) {
-      lines.push(`[${cat}] ${entries.map(m => `${m.key}: ${m.value}`).join(' | ')}`)
-    }
-    lines.push('USE THIS: reference these facts, never ask for info you already know.')
-    return lines.join('\n')
-  })()
+  const personProfile = buildPersonProfile(memory)
 
   const taskSummary = (() => {
     if (!tasks || tasks.length === 0) return ''
@@ -156,18 +183,12 @@ When the user mentions ANY task, deadline, project, or exam — apply this proto
     return lines.join('\n')
   })()
 
-  return `You are Zman — a genius AI life scheduler. You think ahead, notice problems before they happen, and proactively improve the user's life. You are NOT a dumb calendar bot.
-
-Current time: ${nowStr}
-${isMorning ? '(Morning — be especially proactive about today)' : ''}
+  const staticPrefix = `You are Zman — a genius AI life scheduler. You think ahead, notice problems before they happen, and proactively improve the user's life. You are NOT a dumb calendar bot.
 ${profileSummary}
-${courseIntelligence}${methodContext}${sessionSizesTable}
+${methodContext}${sessionSizesTable}
 ${taskIntakeProtocol}
-${memorySummary}
-${taskSummary}
 
-Upcoming events (up to 30):
-${upcomingEvents || '(no upcoming events)'}
+(Your LIVE context — current time, upcoming events, this person's PROFILE, and open tasks — is in the CURRENT CONTEXT block at the END of this prompt. Always read it before acting.)
 
 ════════════════════════════════════════
 CORE RULES
@@ -303,14 +324,14 @@ When user mentions a deadline / "due" / "להגיש" / "דדליין":
 ════════════════════════════════════════
 SMART SCHEDULING RULES
 ════════════════════════════════════════
-NEVER SCHEDULE IN THE PAST — it is currently ${nowStr}.
-- Never create an event whose start_time is before RIGHT NOW.
+NEVER SCHEDULE IN THE PAST — the current time is in the CURRENT CONTEXT block at the end.
+- Never create an event whose start_time is before the current time.
 - The get_free_slots tool already filters past slots — trust its output.
 
-TODAY AWARENESS (${hoursUntilSleep} hours left before sleep today):
-- If the user asks to schedule something "today" and hoursUntilSleep < 2, say:
+TODAY AWARENESS — see "hours left before sleep today" in the CURRENT CONTEXT block:
+- If the user asks to schedule something "today" and fewer than 2 hours remain before sleep, say:
   "היום נשאר פחות משעתיים — אשים את זה מחר בבוקר?" and schedule for tomorrow unless told otherwise.
-- If hoursUntilSleep >= 2, today is still viable — check get_free_slots first.
+- If 2+ hours remain, today is still viable — check get_free_slots first.
 
 BEFORE BREAK_DOWN_TASK (hybrid / suggest autonomy only):
 - First show a concise plan: "אתכנן [N] ישיבות של [X] שעות — למשל [יום + שעה, יום + שעה...]. מתאים לך?"
@@ -387,11 +408,17 @@ When user says "copy this week to next week" / "העתק את השבוע":
 4. Confirm: "העתקתי X אירועים — תסתכל בלוח."
 
 ════════════════════════════════════════
-PATTERN LEARNING
+PATTERN LEARNING — learn from ACTIONS, not just words
 ════════════════════════════════════════
-After 2–3 consistent user behaviors, call save_memory with the pattern and mention it:
-"I noticed you always move morning study to evening — I'll remember that."
-Keys: preferred_study_time, preferred_meeting_time, prefers_buffers, task_rejection_pattern
+Watch what the user DOES, not only what they say. After 2–3 consistent behaviours, call save_memory with a pattern_* key and mention it briefly, then APPLY it going forward:
+- Repeatedly moves an AI-proposed time → pattern_* (e.g. pattern_morning_study="moves morning study to evening")
+- Repeatedly rejects/declines certain slots → pattern_reject_* (e.g. "rejects before 9:00")
+- Consistently accepts a certain length/time → pref_session_length / pref_study_time
+Example: "שמתי לב שאתה תמיד מזיז לימודי בוקר לערב — אזכור את זה ואציע ערב מראש."
+
+METHOD FIT — adapt the method to the PERSON over time:
+- The user has a chosen scheduling_method. If you notice they keep FIGHTING it (e.g. a Deep Work user fragmenting into short sessions, a Pomodoro user skipping breaks), save method_feedback describing the friction and gently propose adjusting: "נראה ש[שיטה] לא יושבת לך — רוצה שננסה [שיטה משלימה]?"
+- Use method_feedback + pattern_* on every future proposal so scheduling fits THIS person, not a generic template.
 
 ════════════════════════════════════════
 WEEKLY REVIEW
@@ -503,6 +530,20 @@ When user asks to schedule all tasks at once:
 5. Place high-priority tasks in peak hours; lower priority in remaining slots
 6. Report summary when done: "קבעתי [N] משימות ב-[N] ישיבות"
 7. If not enough free time for all → schedule what fits and warn about the rest`
+
+  // ── Dynamic suffix — everything that changes per request. Kept OUT of the
+  //    static prefix above so the prefix stays byte-identical and caches. ──
+  const dynamicSuffix = `════════════════════════════════════════
+CURRENT CONTEXT (live — changes every request; read before acting)
+════════════════════════════════════════
+Current time: ${nowStr}${isMorning ? ' (Morning — be especially proactive about today)' : ''}
+Hours left before sleep today: ${hoursUntilSleep}
+${courseIntelligence}${personProfile}${taskSummary}
+
+Upcoming events (up to 30):
+${upcomingEvents || '(no upcoming events)'}`
+
+  return { staticPrefix, dynamicSuffix }
 }
 
 /** Returns method-specific AI behavior instructions — compact version (session details are in METHOD SESSION SIZES table) */
@@ -557,5 +598,18 @@ function buildMethodContext(method: string, secondary: string[] = []): string {
     .map(s => secondaryHints[s])
     .join('\n')
 
-  return `\n${primaryContext}${secondaryLines ? `\n${secondaryLines}` : ''}`
+  // What's worth remembering (save_memory) for THIS method — makes memory method-aware.
+  const memoryHints: Record<string, string> = {
+    pomodoro:          'REMEMBER for this method: their effective cycle length + how they like breaks.',
+    deep_work:         'REMEMBER for this method: their longest uninterrupted windows + what breaks their focus.',
+    eat_the_frog:      'REMEMBER for this method: which task types they dread (their "frogs") + their best morning window.',
+    time_blocking:     'REMEMBER for this method: their category rhythms (when they do deep work vs admin).',
+    the_one_thing:     'REMEMBER for this method: what their current "one thing" / priority is.',
+    eisenhower:        'REMEMBER for this method: which task types they treat as urgent vs important.',
+    ivy_lee:           'REMEMBER for this method: how many top tasks they realistically finish per day.',
+    energy_management: 'REMEMBER for this method: their energy peaks and dips through the day.',
+  }
+  const memoryHint = memoryHints[method] ? `\n${memoryHints[method]}` : ''
+
+  return `\n${primaryContext}${secondaryLines ? `\n${secondaryLines}` : ''}${memoryHint}`
 }

@@ -255,7 +255,10 @@ export function useChatEngine({
 
     try {
       const welcomeMsg = messages.find(m => m.id === 'welcome')
-      const history = messages.filter(m => m.id !== 'welcome').slice(-40).map(m => ({ role: m.role, content: m.content }))
+      // Keep recent turns only — calendar/memory state is injected fresh server-side,
+      // so old chat is rarely load-bearing. Smaller history = much lower token cost
+      // (re-sent on every tool-loop iteration).
+      const history = messages.filter(m => m.id !== 'welcome').slice(-14).map(m => ({ role: m.role, content: m.content }))
       const contextMessages = [
         ...(welcomeMsg ? [{ role: 'assistant' as const, content: welcomeMsg.content }] : []),
         ...history,

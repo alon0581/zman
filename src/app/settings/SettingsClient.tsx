@@ -562,10 +562,24 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                       day_structure: { he: 'מבנה יום', en: 'Day Structure' },
                       productivity_peak: { he: 'שיא פרודוקטיביות', en: 'Peak Hours' },
                       commute_time: { he: 'זמן נסיעה', en: 'Commute Time' },
+                      // Extended taxonomy
+                      role: { he: 'תפקיד', en: 'Role' },
+                      energy_dip: { he: 'נפילת אנרגיה', en: 'Energy Dip' },
+                      pref_session_length: { he: 'אורך ישיבה מועדף', en: 'Preferred Session Length' },
+                      prefers_buffers: { he: 'מרווחים בין אירועים', en: 'Prefers Buffers' },
+                      relationship: { he: 'זוגיות', en: 'Relationship' },
+                      family_commitment: { he: 'מחויבות משפחתית', en: 'Family' },
+                      volunteering: { he: 'התנדבות', en: 'Volunteering' },
+                      current_goal: { he: 'מטרה נוכחית', en: 'Current Goal' },
+                      ongoing_task: { he: 'משימה בתהליך', en: 'Ongoing Task' },
+                      upcoming_focus: { he: 'פוקוס קרוב', en: 'Upcoming Focus' },
+                      method_feedback: { he: 'התאמת שיטה', en: 'Method Fit' },
                     }
                     const label = KEY_LABELS[m.key]
                     const readableKey = label
                       ? (lang === 'he' ? label.he : label.en)
+                      : m.key.startsWith('pattern_') ? (lang === 'he' ? `דפוס: ${m.key.slice(8).replace(/_/g, ' ')}` : `Pattern: ${m.key.slice(8).replace(/_/g, ' ')}`)
+                      : m.key.startsWith('recurring_') ? (lang === 'he' ? `קבוע: ${m.key.slice(10).replace(/_/g, ' ')}` : `Recurring: ${m.key.slice(10).replace(/_/g, ' ')}`)
                       : m.key.replace(/_/g, ' ')
                     return (
                       <div key={m.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', borderRadius: 10, background: 'var(--bg)', border: '1px solid var(--border)' }}>

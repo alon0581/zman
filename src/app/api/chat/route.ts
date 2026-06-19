@@ -29,6 +29,16 @@ function memoryFile(userId: string) {
   return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'memory.json')
 }
 
+// Scheduling/task/calendar intent → use the smart (main) model. Otherwise plain
+// chit-chat can run on the cheaper model. Conservative: defaults to TRUE for
+// anything substantial, only short greetings/thanks fall through to the cheap model.
+const SMART_INTENT_RE = /\b(add|create|schedule|move|delete|remove|reschedule|event|meeting|exam|deadline|task|todo|calendar|free|busy|plan|analy|review|week|tomorrow|today|every|remind)\b|הוסף|צור|קבע|תזמן|תוסיף|תקבע|תזיז|הזז|מחק|תמחק|בטל|אירוע|פגיש|מבחן|בחינ|הגש|דדליין|משימ|לו"?ז|לוח|פנוי|תכנן|נתח|סקיר|שבוע|מחר|היום|כל יום|כל שבוע|תזכיר|נקבע|למחוק|להזיז/i
+function needsSmartModel(text: string): boolean {
+  if (!text) return false
+  if (text.length > 200) return true        // long message → likely complex
+  return SMART_INTENT_RE.test(text)
+}
+
 /** Parse an "HH:mm" string to an hour in [0,23], falling back on bad input. */
 function parseHour(value: string | undefined, fallback: number): number {
   if (!value) return fallback
@@ -141,26 +151,52 @@ export async function POST(req: NextRequest) {
       freshProfile = data as UserProfile | null
     }
 
-    let provider = freshProfile?.ai_provider ?? 'openai'
-    let model = freshProfile?.ai_model ?? 'gpt-4o-mini'
-
+    // Precedence: per-user Settings key > env-driven server default (AI_PROVIDER/AI_MODEL) > legacy fallbacks.
+    let provider = 'openai'
+    let model = 'gpt-4o-mini'
     let apiKey: string
+
+    const envKeyFor = (p?: string): string | undefined =>
+      p === 'anthropic'  ? process.env.ANTHROPIC_API_KEY :
+      p === 'minimax'    ? process.env.MINIMAX_API_KEY :
+      p === 'openrouter' ? process.env.OPENROUTER_API_KEY :
+      p === 'openai'     ? process.env.OPENAI_API_KEY :
+      undefined
+    const defaultModelFor = (p: string): string =>
+      p === 'anthropic'  ? 'claude-sonnet-4-6' :
+      p === 'minimax'    ? 'MiniMax-M2.5' :
+      'gpt-4o-mini'
+
     if (freshProfile?.ai_api_key_encrypted) {
+      // Per-user key from Settings
       apiKey = decryptApiKey(freshProfile.ai_api_key_encrypted)
+      provider = freshProfile.ai_provider ?? 'openai'
+      model = freshProfile.ai_model ?? 'gpt-4o-mini'
+    } else if (process.env.AI_PROVIDER && envKeyFor(process.env.AI_PROVIDER)) {
+      // Server-wide default — one key for everyone, model chosen via env (no code change to switch)
+      provider = process.env.AI_PROVIDER
+      model = process.env.AI_MODEL || defaultModelFor(provider)
+      apiKey = envKeyFor(provider)!
+    } else if (process.env.ANTHROPIC_API_KEY) {
+      provider = 'anthropic'; model = process.env.AI_MODEL || 'claude-sonnet-4-6'; apiKey = process.env.ANTHROPIC_API_KEY
     } else if (process.env.MINIMAX_API_KEY) {
-      // Server-wide MiniMax key — no per-user setup needed
-      apiKey = process.env.MINIMAX_API_KEY
-      provider = 'minimax'
-      model = 'MiniMax-M2.5'
+      provider = 'minimax'; model = 'MiniMax-M2.5'; apiKey = process.env.MINIMAX_API_KEY
     } else if (process.env.OPENAI_API_KEY) {
-      apiKey = process.env.OPENAI_API_KEY
-      provider = 'openai'
-      model = 'gpt-4o-mini'
+      provider = 'openai'; model = 'gpt-4o-mini'; apiKey = process.env.OPENAI_API_KEY
     } else {
       return buildErrorStream(
         '⚙️ No API key configured. Go to **Settings → AI Model** to add your API key.'
       )
     }
+
+    // ── Tiered routing: cheap model for simple chit-chat, main model for scheduling/tools ──
+    // simpleModel only defaults on Anthropic (Haiku); empty string disables routing.
+    const simpleModel = process.env.AI_MODEL_SIMPLE ?? (provider === 'anthropic' ? 'claude-haiku-4-5' : '')
+    if (!isOnboarding && simpleModel && simpleModel !== model) {
+      const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content ?? ''
+      if (!needsSmartModel(lastUser)) model = simpleModel
+    }
+    console.log('[chat] provider:', provider, 'model:', model)
     // ───────────────────────────────────────────────────────────────────────
 
     // Create "now" in the user's timezone (Railway runs UTC; user may be in Asia/Jerusalem etc.)
@@ -179,9 +215,12 @@ export async function POST(req: NextRequest) {
       } catch { return new Date() }
     })()
 
-    const systemPrompt = isOnboarding
-      ? buildOnboardingSystemPrompt(profile?.language ?? 'en', userNow)
+    // Split system prompt: stable `staticPrefix` (cacheable) + per-request `dynamicSuffix`.
+    const sys = isOnboarding
+      ? { staticPrefix: buildOnboardingSystemPrompt(profile?.language ?? 'en', userNow), dynamicSuffix: '' }
       : buildSystemPrompt(profile, events, userNow, memory as AIMemory[] | undefined, tasks)
+    // For OpenAI-compatible providers: one system string (stable prefix first → auto-caches).
+    const systemPrompt = sys.dynamicSuffix ? `${sys.staticPrefix}\n\n${sys.dynamicSuffix}` : sys.staticPrefix
 
     const createdEvents: CalendarEvent[] = []
     const updatedEvents: CalendarEvent[] = []
@@ -215,12 +254,21 @@ export async function POST(req: NextRequest) {
         iterations++
         const response = await anthropic.messages.create({
           model,
-          system: systemPrompt,
+          // Prompt caching: stable prefix cached (~10% on reads), volatile suffix not.
+          system: sys.dynamicSuffix
+            ? [
+                { type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } },
+                { type: 'text', text: sys.dynamicSuffix },
+              ]
+            : [{ type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } }],
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           messages: anthropicMessages as any,
           tools: anthropicTools,
           max_tokens: 2048,
         })
+
+        // Cache visibility: cache_read_input_tokens > 0 means the static prefix was reused.
+        if (response.usage) console.log('[chat] anthropic usage:', JSON.stringify(response.usage))
 
         if (response.stop_reason === 'tool_use') {
           anthropicMessages.push({ role: 'assistant', content: response.content as object[] })

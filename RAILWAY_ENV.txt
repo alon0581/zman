@@ -32,9 +32,16 @@ Node (anywhere):
 AUTH_SECRET=<fresh value from step 1 — unique to this project>
 ENCRYPTION_KEY=<fresh 64-hex value from step 1>
 
-# AI provider — set ONE of these:
-OPENAI_API_KEY=sk-...                 # or
-MINIMAX_API_KEY=sk-cp-...
+# AI provider + model (server-wide default — one key for everyone).
+# Recommended: Claude Sonnet for scheduling, Haiku auto-used for simple chat.
+AI_PROVIDER=anthropic
+AI_MODEL=claude-sonnet-4-6
+AI_MODEL_SIMPLE=claude-haiku-4-5        # cheap model for non-scheduling chit-chat; "" to disable routing
+ANTHROPIC_API_KEY=sk-ant-...
+#  — or use OpenAI / MiniMax instead (then drop the Anthropic vars):
+# AI_PROVIDER=openai   AI_MODEL=gpt-4o-mini   OPENAI_API_KEY=sk-...
+# MINIMAX_API_KEY=sk-cp-...   (legacy)
+# Precedence: a per-user key set in Settings → AI Model always overrides these.
 
 # Web push (browser PWA). Generate with: npx web-push generate-vapid-keys
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=<vapid public>
