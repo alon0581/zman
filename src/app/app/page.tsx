@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import AppShell from '@/components/AppShell'
 import { UserProfile } from '@/types'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import fs from 'fs'
 import path from 'path'
 
@@ -20,7 +21,7 @@ const DEFAULT_PROFILE = (userId: string): UserProfile => ({
 
 function loadUserProfile(userId: string): UserProfile {
   try {
-    const file = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+    const file = path.join(DATA_DIR, 'users', userId, 'profile.json')
     if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8'))
   } catch { /* use default */ }
   return DEFAULT_PROFILE(userId)
@@ -29,7 +30,7 @@ function loadUserProfile(userId: string): UserProfile {
 /** True if the user already has events or memory — proof they've used the app before */
 function userHasData(userId: string): boolean {
   try {
-    const dir = path.join(process.cwd(), 'data', 'users', userId)
+    const dir = path.join(DATA_DIR, 'users', userId)
     const evFile  = path.join(dir, 'events.json')
     const memFile = path.join(dir, 'memory.json')
     if (fs.existsSync(evFile)) {
@@ -60,7 +61,7 @@ export default async function AppPage() {
     if (!profile.onboarding_completed && userHasData(userId)) {
       profile = { ...profile, onboarding_completed: true }
       try {
-        const profFile = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+        const profFile = path.join(DATA_DIR, 'users', userId, 'profile.json')
         fs.writeFileSync(profFile, JSON.stringify(profile, null, 2))
       } catch { /* ignore write errors */ }
     }

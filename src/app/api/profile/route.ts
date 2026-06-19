@@ -5,6 +5,7 @@ import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { encryptApiKey, maskApiKey } from '@/lib/encryption'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import path from 'path'
 import { UserProfile, AIMemory } from '@/types'
 
@@ -21,7 +22,7 @@ const DEFAULT_PROFILE = (userId: string): UserProfile => ({
 })
 
 function profileFile(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'profile.json')
+  return path.join(DATA_DIR, 'users', assertSafeUserId(userId),'profile.json')
 }
 
 function readProfile(userId: string): UserProfile {
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
     if (profile.occupation)        memoryEntries.push({ key: 'occupation',          value: profile.occupation })
 
     if (memoryEntries.length > 0) {
-      const memFile = path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'memory.json')
+      const memFile = path.join(DATA_DIR, 'users', assertSafeUserId(userId),'memory.json')
       const existing2 = readJsonFile<AIMemory[]>(memFile, [])
       for (const entry of memoryEntries) {
         const idx = existing2.findIndex(m => m.key === entry.key)

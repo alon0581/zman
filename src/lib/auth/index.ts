@@ -11,6 +11,7 @@
 import crypto from 'crypto'
 import path from 'path'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { DATA_DIR } from '@/lib/util/dataDir'
 
 /** Constant-time string compare — avoids leaking match progress via timing. */
 function safeEqual(a: string, b: string): boolean {
@@ -51,7 +52,6 @@ export function checkRateLimit(key: string, max: number): { allowed: boolean; re
 
 export { RATE_MAX_LOGIN, RATE_MAX_REGISTER }
 
-const DATA_DIR   = path.join(process.cwd(), 'data')
 const USERS_FILE = path.join(DATA_DIR, 'auth', 'users.json')
 
 export const COOKIE_NAME    = 'zman_session'

@@ -2,8 +2,7 @@ import { CalendarEvent, Task } from '@/types'
 import path from 'path'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
-
-const DATA_DIR = path.join(process.cwd(), 'data')
+import { DATA_DIR } from '@/lib/util/dataDir'
 
 function userDir(userId: string) {
   return path.join(DATA_DIR, 'users', assertSafeUserId(userId))

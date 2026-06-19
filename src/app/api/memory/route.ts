@@ -4,13 +4,14 @@ import crypto from 'crypto'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import { AIMemory } from '@/types'
 import path from 'path'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 function memoryFile(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'memory.json')
+  return path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'memory.json')
 }
 
 function readMemory(userId: string): AIMemory[] {

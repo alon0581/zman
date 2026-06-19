@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import SettingsClient from './SettingsClient'
 import { UserProfile } from '@/types'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import fs from 'fs'
 import path from 'path'
 
@@ -20,7 +21,7 @@ const DEFAULT_PROFILE = (userId: string): UserProfile => ({
 
 function loadUserProfile(userId: string): UserProfile {
   try {
-    const file = path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+    const file = path.join(DATA_DIR, 'users', userId, 'profile.json')
     if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8'))
   } catch { /* use default */ }
   return DEFAULT_PROFILE(userId)

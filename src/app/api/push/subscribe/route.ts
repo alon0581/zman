@@ -4,6 +4,7 @@ import path from 'path'
 import { getUserIdFromCookie } from '@/lib/auth'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { DATA_DIR } from '@/lib/util/dataDir'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
@@ -12,7 +13,7 @@ function getUserId(req: NextRequest): string | null {
 }
 
 function profilePath(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'profile.json')
+  return path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'profile.json')
 }
 
 export async function POST(req: NextRequest) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { registerUser, checkRateLimit, RATE_MAX_REGISTER, COOKIE_NAME, COOKIE_MAX_AGE } from '@/lib/auth'
 import fs from 'fs'
 import path from 'path'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import { UserProfile } from '@/types'
 
 export async function POST(req: NextRequest) {
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Create default profile for new user
-    const profileDir = path.join(process.cwd(), 'data', 'users', result.userId)
+    const profileDir = path.join(DATA_DIR, 'users', result.userId)
     if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true })
     const profileFile = path.join(profileDir, 'profile.json')
     // Auto-detect language from browser's Accept-Language header

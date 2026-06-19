@@ -14,6 +14,7 @@ import { decryptApiKey } from '@/lib/encryption'
 import { sendPush, sendFcmPush } from '@/lib/push'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import crypto from 'crypto'
 import path from 'path'
 
@@ -26,7 +27,7 @@ const MEM_KEY_MAX = 100      // max length of a memory key
 const MEM_VALUE_MAX = 10000  // max length of a memory value
 
 function memoryFile(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'memory.json')
+  return path.join(DATA_DIR, 'users',assertSafeUserId(userId), 'memory.json')
 }
 
 // Scheduling/task/calendar intent → use the smart (main) model. Otherwise plain
@@ -71,7 +72,7 @@ function buildErrorStream(message: string): Response {
 
 function loadFreshProfile(userId: string): UserProfile | null {
   if (!DEMO_MODE) return null  // Supabase handled separately in POST
-  const file = path.join(process.cwd(), 'data', 'users', assertSafeUserId(userId), 'profile.json')
+  const file = path.join(DATA_DIR, 'users',assertSafeUserId(userId), 'profile.json')
   return readJsonFile<UserProfile | null>(file, null)
 }
 
@@ -1446,7 +1447,7 @@ async function executeTool(
         const safeId = assertSafeUserId(userId)
         // Save memory entries
         if (memory_entries?.length) {
-          const memFile = path.join(process.cwd(), 'data', 'users', safeId, 'memory.json')
+          const memFile = path.join(DATA_DIR, 'users',safeId, 'memory.json')
           const existing = readJsonFile<AIMemory[]>(memFile, [])
           for (const entry of memory_entries) {
             const idx = existing.findIndex(m => m.key === entry.key)
@@ -1462,7 +1463,7 @@ async function executeTool(
           writeJsonFileAtomic(memFile, existing)
         }
         // Update profile
-        const profFile = path.join(process.cwd(), 'data', 'users', safeId, 'profile.json')
+        const profFile = path.join(DATA_DIR, 'users',safeId, 'profile.json')
         const existing = readJsonFile<UserProfile>(profFile,
           { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' })
         const updated: UserProfile = { ...existing, ...(profile_updates ?? {}), onboarding_completed: true, user_id: userId }

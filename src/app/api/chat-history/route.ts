@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import fs from 'fs'
 import path from 'path'
 
@@ -27,11 +28,11 @@ async function getAuthUserId(): Promise<string | null> {
 }
 
 function chatFile(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', userId, 'chat-history.json')
+  return path.join(DATA_DIR, 'users', userId, 'chat-history.json')
 }
 
 function ensureUserDir(userId: string) {
-  const dir = path.join(process.cwd(), 'data', 'users', userId)
+  const dir = path.join(DATA_DIR, 'users', userId)
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 

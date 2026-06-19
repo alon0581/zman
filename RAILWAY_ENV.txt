@@ -54,11 +54,29 @@ CAPACITOR_SERVER_URL=https://<your-new-zman>.up.railway.app
 # Optional (native push): FIREBASE_SERVICE_ACCOUNT=<service-account JSON>
 
 ──────────────────────────────────────────────
-  3. VOLUME — required, or user data resets each deploy
+  3. VOLUME — ‼️ REQUIRED, or ALL user data resets every deploy ‼️
 ──────────────────────────────────────────────
+EVERYTHING the app remembers lives in files under one folder:
+  - login accounts (you get logged out without this)
+  - calendar events, tasks, profiles
+  - the AI's MEMORY about each user
+The container filesystem is ephemeral — it is wiped on every deploy/restart.
+A mounted Volume is the ONLY thing that makes it survive.
+
 New Zman project → Volumes → Add Volume → Mount Path: /app/data
-(This volume belongs to the Zman project only. Dad's data lives in dad's own
+(This volume belongs to the Zman project only. Dad's data lives in his own
 project/volume — they never mix.)
+
+If Railway can only mount the volume at a DIFFERENT path (e.g. /data), then set:
+  DATA_DIR=<the volume's mount path>
+and the app stores everything there instead. No need to match /app/data exactly.
+
+VERIFY IT WORKED — two ways:
+  1. Deploy logs show:  [storage] DATA_DIR=/app/data (writable)
+     (must be the SAME path as the volume mount)
+  2. Register an account → redeploy → if you're still logged in and your
+     events/memory are still there, the volume is correct. If you got logged
+     out, the volume is NOT mounted at the path the app uses.
 
 ──────────────────────────────────────────────
   4. STEPS

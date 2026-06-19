@@ -4,6 +4,7 @@ import { encryptApiKey, maskApiKey } from '@/lib/encryption'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { cookies } from 'next/headers'
 import { UserProfile } from '@/types'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import fs from 'fs'
 import path from 'path'
 
@@ -11,7 +12,7 @@ const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
 
 function profileFile(userId: string) {
-  return path.join(process.cwd(), 'data', 'users', userId, 'profile.json')
+  return path.join(DATA_DIR, 'users', userId, 'profile.json')
 }
 
 function readProfile(userId: string): UserProfile {

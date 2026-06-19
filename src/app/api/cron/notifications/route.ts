@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { UserProfile, CalendarEvent, Task } from '@/types'
 import { computeNotifications } from '@/lib/notifications/scheduler'
+import { DATA_DIR } from '@/lib/util/dataDir'
 import { sendPush, sendFcmPush } from '@/lib/push'
 import fs from 'fs'
 import path from 'path'
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
 // ── Demo mode: scan data/users/* ────────────────────────────────────────────
 
 async function processDemoUsers(results: { userId: string; sent: number }[]) {
-  const usersDir = path.join(process.cwd(), 'data', 'users')
+  const usersDir = path.join(DATA_DIR, 'users')
   if (!fs.existsSync(usersDir)) return
 
   const userIds = fs.readdirSync(usersDir).filter(f => {
