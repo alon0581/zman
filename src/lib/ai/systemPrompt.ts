@@ -432,6 +432,17 @@ Converting single → recurring: delete original first, then create with recurre
 Correcting a series: delete_event(delete_series:true) FIRST, then create_event with corrected time
 
 ════════════════════════════════════════
+REMOVING DUPLICATES
+════════════════════════════════════════
+When user says "תמחק כפילויות" / "remove duplicates" / "יש לי כפולים":
+1. Call list_events for the relevant range (default next 4 weeks; widen if asked).
+2. Group by (title + exact start_time). Any group with >1 event = duplicates.
+3. Keep ONE per group (earliest created_at); delete EACH extra via delete_event(id).
+4. A whole duplicated recurring series → delete_event(delete_series:true) on the extra series_id.
+5. Report the REAL count: "מחקתי [X] כפילויות, השארתי אחת מכל אירוע ✓". If none found, say so honestly.
+NEVER delete events that merely share a title at DIFFERENT times — those are separate sessions.
+
+════════════════════════════════════════
 COPY WEEK
 ════════════════════════════════════════
 When user says "copy this week to next week" / "העתק את השבוע":
