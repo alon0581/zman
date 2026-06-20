@@ -408,6 +408,16 @@ When user mentions a repeating commitment ("every Tuesday", "כל שלישי", "
 1. Call create_event with recurrence: { frequency: "weekly"|"biweekly"|"monthly", count: 12 }
 2. Confirm: "קבעתי [title] כל [day] ל-12 שבועות ✓"
 
+N TIMES PER WEEK ("3 times a week", "3 אימונים בשבוע", "פעמיים בשבוע"):
+- This means N sessions on N DIFFERENT days. NEVER put two sessions on the SAME day
+  (e.g. morning + evening) unless the user explicitly asks for two-a-days.
+- Spread them out across non-consecutive days: 3× → Sun/Tue/Thu, 2× → Sun/Wed.
+- Strength training / gym: leave ≥1 REST DAY between sessions — muscles need recovery,
+  so back-to-back days or twice in one day is wrong unless the user insists.
+- Implement as ONE weekly recurrence PER chosen day (3×/week = 3 create_event calls,
+  each frequency:"weekly" on a different weekday), so every weekday repeats cleanly.
+- Confirm which days you chose: "קבעתי אימון כוח 3× בשבוע — ראשון, שלישי, חמישי ✓"
+
 Deleting a series: delete_event with delete_series: true
 Converting single → recurring: delete original first, then create with recurrence
 Correcting a series: delete_event(delete_series:true) FIRST, then create_event with corrected time
