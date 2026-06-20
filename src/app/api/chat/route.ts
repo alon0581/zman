@@ -37,7 +37,7 @@ function memoryFile(userId: string) {
 // Scheduling/task/calendar intent → use the smart (main) model. Otherwise plain
 // chit-chat can run on the cheaper model. Conservative: defaults to TRUE for
 // anything substantial, only short greetings/thanks fall through to the cheap model.
-const SMART_INTENT_RE = /\b(add|create|schedule|move|delete|remove|reschedule|event|meeting|exam|deadline|task|todo|calendar|free|busy|plan|analy|review|week|tomorrow|today|every|remind)\b|הוסף|צור|קבע|תזמן|תוסיף|תקבע|תזיז|הזז|מחק|תמחק|בטל|אירוע|פגיש|מבחן|בחינ|הגש|דדליין|משימ|לו"?ז|לוח|פנוי|תכנן|נתח|סקיר|שבוע|מחר|היום|כל יום|כל שבוע|תזכיר|נקבע|למחוק|להזיז/i
+const SMART_INTENT_RE = /\b(add|create|schedule|move|delete|remove|reschedule|organi[sz]e|arrange|event|meeting|exam|deadline|task|todo|calendar|free|busy|plan|analy|review|week|tomorrow|today|every|remind)\b|הוסף|צור|קבע|תזמן|תוסיף|תקבע|תזיז|הזז|מחק|תמחק|בטל|אירוע|פגיש|מבחן|בחינ|הגש|דדליין|משימ|לו"?ז|לוח|פנוי|תכנן|תסדר|סדר לי|לסדר|תארגן|ארגן|לארגן|נתח|סקיר|שבוע|מחר|היום|כל יום|כל שבוע|תזכיר|נקבע|למחוק|להזיז/i
 // Self-description / personal facts → also use the smart model. The cheap model is
 // unreliable at calling save_memory, which is exactly how the user ends up feeling
 // "forgotten" next session. Keep anything that looks like the user telling us about
