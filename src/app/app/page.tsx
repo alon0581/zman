@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import AppShell from '@/components/AppShell'
-import { UserProfile } from '@/types'
+import { UserProfile, AIMemory } from '@/types'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { DATA_DIR } from '@/lib/util/dataDir'
+import { mapToMethod, SchedulingMethod } from '@/lib/scheduling/methodMapper'
 import fs from 'fs'
 import path from 'path'
 
@@ -25,6 +26,18 @@ function loadUserProfile(userId: string): UserProfile {
     if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8'))
   } catch { /* use default */ }
   return DEFAULT_PROFILE(userId)
+}
+
+function loadMemory(userId: string): AIMemory[] {
+  try {
+    const file = path.join(DATA_DIR, 'users', userId, 'memory.json')
+    if (fs.existsSync(file)) {
+      const raw = fs.readFileSync(file, 'utf-8').replace(/^﻿/, '')
+      const mem = JSON.parse(raw)
+      if (Array.isArray(mem)) return mem
+    }
+  } catch { /* ignore */ }
+  return []
 }
 
 /** True if the user already has events or memory — proof they've used the app before */
@@ -60,6 +73,34 @@ export default async function AppPage() {
     // they already completed onboarding — fix the flag and persist it so it never recurs.
     if (!profile.onboarding_completed && userHasData(userId)) {
       profile = { ...profile, onboarding_completed: true }
+      try {
+        const profFile = path.join(DATA_DIR, 'users', userId, 'profile.json')
+        fs.writeFileSync(profFile, JSON.stringify(profile, null, 2))
+      } catch { /* ignore write errors */ }
+    }
+
+    // Backfill a scheduling method so the method-selection modal stops appearing on
+    // EVERY login. The modal only clears when the AI reliably calls complete_onboarding;
+    // if that ever fails, scheduling_method stays empty and the user gets nagged forever.
+    // Derive a method from what we already learned (persona/challenge/day in memory),
+    // else fall back to a sensible default. The user can still change it in Settings.
+    if (profile.onboarding_completed && !profile.scheduling_method) {
+      const mem = loadMemory(userId)
+      const val = (k: string) => mem.find(m => m.key === k)?.value
+      const persona = val('persona_type')
+      const challenge = val('main_challenge')
+      const day = val('day_structure')
+      let primary: SchedulingMethod = 'time_blocking'
+      let secondary: SchedulingMethod[] = []
+      if (persona && challenge && day) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const r = mapToMethod(persona as any, challenge as any, day as any)
+          primary = r.primary
+          secondary = r.secondary
+        } catch { /* keep default */ }
+      }
+      profile = { ...profile, scheduling_method: primary, secondary_methods: secondary }
       try {
         const profFile = path.join(DATA_DIR, 'users', userId, 'profile.json')
         fs.writeFileSync(profFile, JSON.stringify(profile, null, 2))
