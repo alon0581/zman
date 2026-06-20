@@ -1,7 +1,20 @@
-import { UserProfile, CalendarEvent, AIMemory, Task } from '@/types'
+import { UserProfile, CalendarEvent, AIMemory, Task, FeedbackSignal } from '@/types'
 import { format } from 'date-fns'
 import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
 import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
+
+// Compact "learn from actions" block — the last few rejection/move signals.
+function buildFeedbackBlock(feedback?: FeedbackSignal[]): string {
+  if (!feedback || feedback.length === 0) return ''
+  const recent = feedback.slice(-8).reverse()
+  const h = (n?: number) => (n == null ? '?' : `${String(n).padStart(2, '0')}:00`)
+  const lines = recent.map(f => f.type === 'moved'
+    ? `- moved "${f.title}" ${h(f.fromHour)}→${h(f.toHour)}${f.day ? ` (${f.day})` : ''}`
+    : `- rejected "${f.title}" ~${h(f.fromHour)}${f.day ? ` (${f.day})` : ''}`)
+  return `\n🔁 RECENT FEEDBACK (the user's ACTIONS on your past proposals — learn from these NOW):
+${lines.join('\n')}
+If a signal repeats, honour it immediately (don't propose times the user keeps rejecting/moving away from) AND save_memory a pattern_* so it sticks.`
+}
 
 // ── Person Profile — long-term memory, organized by a fixed taxonomy and
 // bounded so it stays cheap (it's injected on every request). ───────────────
@@ -49,7 +62,8 @@ export function buildSystemPrompt(
   events: CalendarEvent[],
   now: Date,
   memory?: AIMemory[],
-  tasks?: Task[]
+  tasks?: Task[],
+  feedback?: FeedbackSignal[]
 ): { staticPrefix: string; dynamicSuffix: string } {
   const nowStr = format(now, "EEEE, MMMM d, yyyy 'at' h:mm a")
   const currentHour = now.getHours()
@@ -538,7 +552,7 @@ CURRENT CONTEXT (live — changes every request; read before acting)
 ════════════════════════════════════════
 Current time: ${nowStr}${isMorning ? ' (Morning — be especially proactive about today)' : ''}
 Hours left before sleep today: ${hoursUntilSleep}
-${courseIntelligence}${personProfile}${taskSummary}
+${courseIntelligence}${personProfile}${buildFeedbackBlock(feedback)}${taskSummary}
 
 Upcoming events (up to 30):
 ${upcomingEvents || '(no upcoming events)'}`

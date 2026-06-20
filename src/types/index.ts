@@ -80,6 +80,15 @@ export interface Message {
   isError?: boolean   // assistant error bubble — UI may offer a retry
 }
 
+export interface FeedbackSignal {
+  type: 'rejected' | 'moved'   // user deleted an AI event, or moved it to a different time
+  title: string
+  fromHour?: number            // original start hour (0-23)
+  toHour?: number              // new start hour (moved only)
+  day?: string                 // 'EEE' weekday of the original slot
+  at: string                   // ISO timestamp the signal was recorded
+}
+
 export interface AIMemory {
   id: string
   user_id: string

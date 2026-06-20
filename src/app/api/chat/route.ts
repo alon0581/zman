@@ -15,6 +15,7 @@ import { sendPush, sendFcmPush } from '@/lib/push'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { DATA_DIR } from '@/lib/util/dataDir'
+import { recordFeedback, readFeedback } from '@/lib/feedback/store'
 import crypto from 'crypto'
 import path from 'path'
 
@@ -216,10 +217,13 @@ export async function POST(req: NextRequest) {
       } catch { return new Date() }
     })()
 
+    // Deterministic learning signals (rejections/moves of AI events).
+    const feedback = DEMO_MODE ? readFeedback(userId) : []
+
     // Split system prompt: stable `staticPrefix` (cacheable) + per-request `dynamicSuffix`.
     const sys = isOnboarding
       ? { staticPrefix: buildOnboardingSystemPrompt(profile?.language ?? 'en', userNow), dynamicSuffix: '' }
-      : buildSystemPrompt(profile, events, userNow, memory as AIMemory[] | undefined, tasks)
+      : buildSystemPrompt(profile, events, userNow, memory as AIMemory[] | undefined, tasks, feedback)
     // For OpenAI-compatible providers: one system string (stable prefix first → auto-caches).
     const systemPrompt = sys.dynamicSuffix ? `${sys.staticPrefix}\n\n${sys.dynamicSuffix}` : sys.staticPrefix
 
@@ -902,6 +906,16 @@ async function executeTool(
       }
 
       const updated = { ...existing, start_time: new_start_time, end_time: new_end_time }
+
+      // Learning signal: moving an AI-created event = its proposed time wasn't right.
+      if (existing.created_by === 'ai') {
+        const oldStart = new Date(existing.start_time)
+        recordFeedback(userId, {
+          type: 'moved', title: existing.title,
+          fromHour: oldStart.getHours(), toHour: new Date(str(new_start_time)).getHours(),
+          day: format(oldStart, 'EEE'), at: new Date().toISOString(),
+        })
+      }
 
       if (DEMO_MODE) {
         demoStorage.updateEvent(event_id, { start_time: new_start_time, end_time: new_end_time }, userId)

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { demoStorage } from '@/lib/demo/storage'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { recordFeedback } from '@/lib/feedback/store'
+import { format } from 'date-fns'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
@@ -62,6 +64,12 @@ export async function DELETE(
   const { id } = await params
 
   if (DEMO_MODE) {
+    // Learning signal: deleting an AI-created event = the user rejecting that proposal.
+    const ev = demoStorage.getEvents(userId).find(e => e.id === id)
+    if (ev && ev.created_by === 'ai') {
+      const start = new Date(ev.start_time)
+      recordFeedback(userId, { type: 'rejected', title: ev.title, fromHour: start.getHours(), day: format(start, 'EEE'), at: new Date().toISOString() })
+    }
     demoStorage.deleteEvent(id, userId)
     return NextResponse.json({ success: true })
   }
