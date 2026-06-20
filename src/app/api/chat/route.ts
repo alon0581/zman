@@ -1130,12 +1130,18 @@ async function executeTool(
         userMethod && ASK_FIRST_METHODS.has(userMethod) ? 'ask_first' :
         'flexible'
 
-      // Use peak-hour preferred slots for study/work tasks (from user-local now → deadline)
-      const slots = getFreeSlots(currentEvents, now.toISOString(), deadline, effectiveSessionLength * 60, profile, true, now)
+      // Gather candidate slots chronologically (with is_peak flags) across the whole
+      // window, then SPREAD the sessions across non-consecutive days instead of
+      // stacking them — pickSpreadSlots prefers the peak slot within each chosen day.
       const sessionsNeeded = Math.ceil(total_hours / effectiveSessionLength)
+      const candidateSlots = getFreeSlots(
+        currentEvents, now.toISOString(), deadline, effectiveSessionLength * 60, profile, false, now,
+        Math.max(40, sessionsNeeded * 6)
+      )
+      const slots = pickSpreadSlots(candidateSlots, sessionsNeeded)
       let created = 0
 
-      for (let i = 0; i < Math.min(sessionsNeeded, slots.length); i++) {
+      for (let i = 0; i < slots.length; i++) {
         const slot = slots[i]
         const event: CalendarEvent = {
           id: crypto.randomUUID(),
@@ -1261,6 +1267,12 @@ async function executeTool(
       const peakStart = peak === 'morning' ? 6 : peak === 'afternoon' ? 12 : 18
       const peakEnd   = peak === 'morning' ? 12 : peak === 'afternoon' ? 18 : 23
       const sleepHour = parseHour(profile?.sleep_time, 23)
+      // Active-day bounds (same source as getFreeSlots) — used to avoid midday-lunch
+      // false positives for shift/night workers whose day doesn't span noon.
+      const dayStartHour = profile?.preferred_hours?.start ?? parseHour(profile?.wake_time, 9)
+      const dayEndHour = profile?.preferred_hours?.end ?? parseHour(profile?.sleep_time, 22)
+      const hasMiddayWindow = dayStartHour <= 12 && dayEndHour >= 14
+      const mob = (e: CalendarEvent) => e.mobility_type ?? classifyMobility(e.title, e.created_by, true)
 
       const dayStats: Array<{
         date: string
@@ -1283,16 +1295,19 @@ async function executeTool(
           events: dayEvs.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time, color: e.color, mobility_type: e.mobility_type ?? 'ask_first' })),
         })
 
-        // 1. Back-to-back events (< 15 min gap)
+        // 1. Back-to-back events (< 15 min gap) — only worth flagging if at least one
+        //    is movable. Two fixed events (lecture+lab) can't be spaced, so don't nag.
         for (let i = 0; i < dayEvs.length - 1; i++) {
           const gapMin = (new Date(dayEvs[i + 1].start_time).getTime() - new Date(dayEvs[i].end_time).getTime()) / 60000
-          if (gapMin >= 0 && gapMin < 15) {
+          const movable = mob(dayEvs[i]) !== 'fixed' || mob(dayEvs[i + 1]) !== 'fixed'
+          if (gapMin >= 0 && gapMin < 15 && movable) {
             issues.push(`BACK_TO_BACK: "${dayEvs[i].title}" and "${dayEvs[i + 1].title}" on ${day} — only ${Math.round(gapMin)} min gap, no buffer time`)
           }
         }
 
-        // 2. No lunch break on a busy day (3+ events, nothing free 12:00–13:30)
-        if (dayEvs.length >= 3) {
+        // 2. No lunch break on a busy day (3+ events, nothing free 12:00–13:30).
+        //    Skip entirely for shift/night schedules whose active window misses midday.
+        if (dayEvs.length >= 3 && hasMiddayWindow) {
           const lunchStart = new Date(`${day}T12:00:00`)
           const lunchEnd   = new Date(`${day}T13:30:00`)
           const blocksLunch = dayEvs.some(e =>
@@ -1318,16 +1333,19 @@ async function executeTool(
           }
         }
 
-        // 5. Important event (exam/presentation) with no prep the day before
+        // 5. Important event (exam/presentation) with no prep in the 3 days leading up.
+        //    Checking only the day-before caused false "no prep" alerts when the user
+        //    studied 2–3 days earlier.
         for (const ev of dayEvs) {
           const isImportant = /exam|test|presentation|מבחן|מצגת|הגשה|deadline/i.test(ev.title)
           if (isImportant) {
-            const dayBefore = format(addDays(new Date(day), -1), 'yyyy-MM-dd')
-            const hasPrep = byDay[dayBefore]?.some(pe =>
-              /study|prep|review|practice|לימוד|חזרה|תרגול/i.test(pe.title)
-            )
+            const prepRe = /study|prep|review|practice|לימוד|חזרה|תרגול|הכנה/i
+            const hasPrep = [1, 2, 3].some(d => {
+              const prepDay = format(addDays(new Date(day), -d), 'yyyy-MM-dd')
+              return byDay[prepDay]?.some(pe => prepRe.test(pe.title))
+            })
             if (!hasPrep) {
-              issues.push(`NO_PREP: "${ev.title}" on ${day} — no study/prep session found on ${dayBefore} (day before)`)
+              issues.push(`NO_PREP: "${ev.title}" on ${day} — no study/prep session found in the 3 days before`)
             }
           }
         }
@@ -1652,6 +1670,54 @@ async function executeTool(
 
 // ─── Free slot calculator ─────────────────────────────────────────────────────
 
+type FreeSlot = { start: string; end: string; duration_minutes: number; is_peak?: boolean }
+
+/**
+ * Pick `n` slots for a multi-session task, SPREAD across days instead of clustered.
+ * - One session per day first; prefer the peak slot within each day.
+ * - When there are more days than sessions, stride across them so sessions land on
+ *   non-consecutive days (rest gaps), e.g. 3 sessions over 2 weeks → Mon/Wed/Fri-ish.
+ * - Only stacks 2+ sessions on the same day when there aren't enough distinct days.
+ * Always returns the chosen slots in chronological order.
+ */
+function pickSpreadSlots(slots: FreeSlot[], n: number): FreeSlot[] {
+  if (n <= 0 || slots.length === 0) return []
+  const byDay = new Map<string, FreeSlot[]>()
+  for (const s of slots) {
+    const day = s.start.slice(0, 10)
+    if (!byDay.has(day)) byDay.set(day, [])
+    byDay.get(day)!.push(s)
+  }
+  // Within a day: best slot first (peak before non-peak, then earliest).
+  for (const arr of byDay.values()) {
+    arr.sort((a, b) => (Number(b.is_peak) - Number(a.is_peak)) || (a.start < b.start ? -1 : 1))
+  }
+  const days = [...byDay.keys()].sort()
+  const chosen: FreeSlot[] = []
+
+  if (n <= days.length) {
+    // Enough distinct days → one per day, strided for rest gaps.
+    const stride = Math.max(1, Math.floor(days.length / n))
+    const picked = new Set<number>()
+    for (let i = 0, d = 0; i < n && d < days.length; i++, d += stride) picked.add(d)
+    for (let d = 0; picked.size < n && d < days.length; d++) picked.add(d) // fill if rounding left gaps
+    for (const d of [...picked].sort((a, b) => a - b).slice(0, n)) chosen.push(byDay.get(days[d])![0])
+  } else {
+    // More sessions than days → one per day, then a 2nd/3rd pass on earliest days.
+    let r = 0
+    while (chosen.length < n) {
+      let added = false
+      for (const day of days) {
+        const slot = byDay.get(day)![r]
+        if (slot) { chosen.push(slot); added = true; if (chosen.length >= n) break }
+      }
+      if (!added) break
+      r++
+    }
+  }
+  return chosen.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+}
+
 function getFreeSlots(
   events: CalendarEvent[],
   fromDate: string,
@@ -1659,9 +1725,10 @@ function getFreeSlots(
   minMinutes: number,
   profile?: UserProfile | null,
   preferPeak = false,
-  now: Date = new Date()  // user-local now, so "today" / past-slot floor match the user's timezone
+  now: Date = new Date(),  // user-local now, so "today" / past-slot floor match the user's timezone
+  limit = 20               // max candidate slots to return (break_down_task asks for more, to spread)
 ) {
-  const slots: Array<{ start: string; end: string; duration_minutes: number; is_peak?: boolean }> = []
+  const slots: FreeSlot[] = []
   let cursor = parseISO(fromDate)
   const to = parseISO(toDate)
 
@@ -1727,9 +1794,10 @@ function getFreeSlots(
     cursor.setHours(dayStartHour, 0, 0, 0)
   }
 
-  const result = slots.slice(0, 20)
+  const result = slots.slice(0, limit)
 
-  // If preferPeak, sort so peak slots come first (preserving original order within each group)
+  // If preferPeak, surface peak slots first — but keep each group in chronological
+  // order so callers that take the first N don't get times out of sequence.
   if (preferPeak) {
     return [
       ...result.filter(s => s.is_peak),

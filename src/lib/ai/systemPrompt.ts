@@ -122,9 +122,12 @@ ${profile.secondary_methods && profile.secondary_methods.length > 0 ? `- Complem
 ${profile.challenge ? `- Main challenge: ${profile.challenge}` : ''}
 ${profile.persona ? `- Persona: ${profile.persona}` : ''}` : ''
 
-  const methodContext = profile?.scheduling_method
-    ? buildMethodContext(profile.scheduling_method, profile.secondary_methods ?? [])
-    : ''
+  // Always give method guidance — fall back to time_blocking so a user without a
+  // chosen method still gets the full "genius" behavior, not a passive bot.
+  const methodContext = buildMethodContext(
+    (profile?.scheduling_method ?? 'time_blocking') as SchedulingMethod,
+    profile?.secondary_methods ?? [],
+  )
 
   // Dynamic session sizes table — only include methods relevant to THIS user
   const METHOD_SESSION_TABLE: Record<string, string> = {
@@ -148,11 +151,13 @@ ${profile.persona ? `- Persona: ${profile.persona}` : ''}` : ''
     twelve_week_year:  '| 12_week_year | 1-2 hr | — | "[W{N}/12]: [task]" | flexible |',
   }
   const userMethods = [profile?.scheduling_method, ...(profile?.secondary_methods ?? [])].filter(Boolean) as string[]
-  const sessionSizesTable = userMethods.length > 0
-    ? `\nMETHOD SESSION SIZES (use these for break_down_task + create_event):\n| Method | Session | Break | Title Format | Mobility |\n|--------|---------|-------|-------------|----------|\n${userMethods.map(m => METHOD_SESSION_TABLE[m]).filter(Boolean).join('\n')}\n`
-    : ''
+  // Default to a sensible general toolkit so the table is ALWAYS present.
+  const tableMethods = userMethods.length > 0 ? userMethods : ['time_blocking', 'pomodoro', 'deep_work']
+  const sessionSizesTable = `\nMETHOD SESSION SIZES (use these for break_down_task + create_event):\n| Method | Session | Break | Title Format | Mobility |\n|--------|---------|-------|-------------|----------|\n${tableMethods.map(m => METHOD_SESSION_TABLE[m]).filter(Boolean).join('\n')}\n`
 
-  const taskIntakeProtocol = (profile?.scheduling_method || profile?.challenge) ? `
+  // Always on — even without a chosen method/challenge, every task gets the full
+  // propose-don't-ask protocol (defaults fill the gaps).
+  const taskIntakeProtocol = `
 ════════════════════════════════════════
 TASK INTAKE PROTOCOL
 ════════════════════════════════════════
@@ -169,7 +174,7 @@ When the user mentions ANY task, deadline, project, or exam — apply this proto
 3. APPLY WHAT YOU KNOW → Before proposing a time, consult the PERSON PROFILE (CURRENT CONTEXT): honour pref_* (preferred times/session length), pattern_* (e.g. "rejects slots before 9:00" → don't propose them), and never schedule into known fixed commitments or sleep hours.
 4. SECONDARY MENTION → After proposing, briefly mention 1 complementary method if highly relevant
 5. PEAK HOURS → Always place hard/creative tasks in peak hours (${peakStart}:00–${peakEnd}:00)
-6. AUTONOMY → ${profile?.autonomy_mode === 'auto' ? 'Auto mode: act immediately, don\'t ask' : profile?.autonomy_mode === 'suggest' ? 'Suggest mode: propose and wait for confirmation' : 'Hybrid mode: auto for small tasks, ask for big changes'}` : ''
+6. AUTONOMY → ${profile?.autonomy_mode === 'auto' ? 'Auto mode: act immediately, don\'t ask' : profile?.autonomy_mode === 'suggest' ? 'Suggest mode: propose and wait for confirmation' : 'Hybrid mode: auto for small tasks, ask for big changes'}`
 
   const personProfile = buildPersonProfile(memory)
 
