@@ -23,7 +23,10 @@ import path from 'path'
 export function readJsonFile<T>(file: string, fallback: T): T {
   try {
     if (!fs.existsSync(file)) return fallback
-    const raw = fs.readFileSync(file, 'utf-8')
+    // Strip a leading UTF-8 BOM — a file touched by a Windows editor can carry one,
+    // and JSON.parse throws on it, which would route a perfectly good profile to the
+    // corrupt-backup path and make the user look brand new.
+    const raw = fs.readFileSync(file, 'utf-8').replace(/^﻿/, '')
     if (raw.trim() === '') return fallback
     return JSON.parse(raw) as T
   } catch (err) {

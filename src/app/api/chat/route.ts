@@ -161,6 +161,35 @@ export async function POST(req: NextRequest) {
       freshProfile = data as UserProfile | null
     }
 
+    // Auto-heal a stale per-user MiniMax key. MiniMax is deprecated/unpaid; a leftover
+    // key from old Settings testing OVERRIDES the server Anthropic default for this user
+    // → every AI call 402s → onboarding modal can't complete, chat "forgets" the user.
+    // Drop it so the user falls back to the env provider, and persist the cleanup once.
+    if (freshProfile?.ai_provider === 'minimax' && freshProfile.ai_api_key_encrypted) {
+      freshProfile = {
+        ...freshProfile,
+        ai_provider: undefined,
+        ai_model: undefined,
+        ai_api_key_encrypted: undefined,
+        ai_api_key_masked: undefined,
+      }
+      try {
+        if (DEMO_MODE) {
+          const profFile = path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'profile.json')
+          writeJsonFileAtomic(profFile, freshProfile)
+        } else {
+          const { createClient } = await import('@/lib/supabase/server')
+          const supabase = await createClient()
+          await supabase.from('user_profiles').update({
+            ai_provider: null, ai_model: null, ai_api_key_encrypted: null, ai_api_key_masked: null,
+          }).eq('user_id', userId)
+        }
+        console.log('[chat] auto-healed stale MiniMax per-user key for', userId)
+      } catch (err) {
+        console.warn('[chat] failed to persist MiniMax key cleanup:', (err as Error)?.message)
+      }
+    }
+
     // Precedence: per-user Settings key > env-driven server default (AI_PROVIDER/AI_MODEL) > legacy fallbacks.
     let provider = 'openai'
     let model = 'gpt-4o-mini'
