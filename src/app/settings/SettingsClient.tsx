@@ -69,22 +69,8 @@ interface Props {
 const LANGS: Record<string, Record<string, string>> = {
   en: {
     title: 'Settings', subtitle: 'Customize your experience',
-    aiModelSection: 'AI Model',
-    connectBtn: 'Connect →', connectedLabel: 'Connected',
-    disconnectBtn: 'Disconnect',
-    openrouterDesc: 'One account · access GPT-4o, Claude, MiniMax & 100+ models',
-    openaiDesc: 'Paste your API key from platform.openai.com',
-    anthropicDesc: 'Paste your API key from console.anthropic.com',
-    minimaxDesc: 'Log in with your MiniMax account',
-    modelLabel: 'Model', modelDesc: 'Active language model',
-    wizardTitle: 'Connect', wizardStep1: 'Step 1 — Open your API keys page:',
-    wizardStep2: 'Step 2 — Create a key and paste it here:',
-    wizardKeyPlaceholder: 'Paste API key…',
-    verifyBtn: 'Verify', verifyingBtn: 'Verifying…',
-    cancelBtn: 'Cancel', saveConnectBtn: 'Save & Connect',
     aiSection: 'AI Behavior', autonomyLabel: 'Autonomy Mode',
     autonomyDesc: 'How independently should Zman act?',
-    voiceLabel: 'Voice Responses', voiceDesc: 'Read AI replies aloud',
     langLabel: 'Language', langDesc: 'AI response language',
     appearSection: 'Appearance', themeLabel: 'Theme',
     micSideLabel: 'Mic Button Side', micSideLeft: '← Left', micSideRight: 'Right →',
@@ -100,29 +86,15 @@ const LANGS: Record<string, Record<string, string>> = {
     notifEvening: 'Evening Review', notifEveningDesc: 'Tomorrow preview before sleep',
     notifNudge: 'Task Nudge', notifNudgeDesc: 'Suggest tasks during free time',
     accountSection: 'Account', signOutBtn: 'Sign Out',
-    saveBtn: 'Save Settings', savedBtn: 'Saved!', savingBtn: 'Saving…',
+    saveBtn: 'Save Settings', savedBtn: 'Saved!', savingBtn: 'Saving…', doneBtn: 'Done',
     memorySection: 'AI Memory', memoryDesc: 'What the AI remembers about you',
     memoryEmpty: 'Nothing saved yet — the AI will learn as you chat.',
     memoryClearAll: 'Clear all', memoryClearConfirm: 'Clear all memory? This cannot be undone.',
   },
   he: {
     title: 'הגדרות', subtitle: 'התאם אישית את החוויה שלך',
-    aiModelSection: 'מודל AI',
-    connectBtn: '← חבר', connectedLabel: 'מחובר',
-    disconnectBtn: 'נתק',
-    openrouterDesc: 'חשבון אחד · גישה ל-GPT-4o, Claude, MiniMax ו-100+ מודלים',
-    openaiDesc: 'הדבק מפתח API מ-platform.openai.com',
-    anthropicDesc: 'הדבק מפתח API מ-console.anthropic.com',
-    minimaxDesc: 'התחבר עם חשבון MiniMax שלך',
-    modelLabel: 'מודל', modelDesc: 'מודל השפה הפעיל',
-    wizardTitle: 'חבר', wizardStep1: 'שלב 1 — פתח את עמוד מפתחות ה-API שלך:',
-    wizardStep2: 'שלב 2 — צור מפתח והדבק אותו כאן:',
-    wizardKeyPlaceholder: 'הדבק מפתח API…',
-    verifyBtn: 'אמת', verifyingBtn: '…מאמת',
-    cancelBtn: 'ביטול', saveConnectBtn: 'שמור וחבר',
     aiSection: 'התנהגות AI', autonomyLabel: 'מצב אוטונומיה',
     autonomyDesc: 'כמה עצמאי יפעל זמן?',
-    voiceLabel: 'תגובות קוליות', voiceDesc: 'קרא תגובות AI בקול רם',
     langLabel: 'שפה', langDesc: 'שפת תגובות ה-AI',
     appearSection: 'מראה', themeLabel: 'ערכת נושא',
     micSideLabel: 'צד כפתור מיק', micSideLeft: '← שמאל', micSideRight: 'ימין →',
@@ -138,16 +110,11 @@ const LANGS: Record<string, Record<string, string>> = {
     notifEvening: 'סיכום ערב', notifEveningDesc: 'תצוגה מקדימה למחר לפני השינה',
     notifNudge: 'נאדג׳ משימות', notifNudgeDesc: 'הצע משימות בזמן פנוי',
     accountSection: 'חשבון', signOutBtn: 'יציאה',
-    saveBtn: 'שמור הגדרות', savedBtn: '!נשמר', savingBtn: '…שומר',
+    saveBtn: 'שמור הגדרות', savedBtn: '✓ נשמר', savingBtn: '…שומר', doneBtn: 'סיום',
     memorySection: 'זיכרון AI', memoryDesc: 'מה ה-AI זוכר עליך',
     memoryEmpty: 'עדיין לא נשמר כלום — ה-AI ילמד תוך כדי שיחה.',
     memoryClearAll: 'נקה הכל', memoryClearConfirm: 'למחוק את כל הזיכרון? לא ניתן לשחזר.',
   },
-}
-
-const MEMORY_SOURCE_LABELS: Record<string, Record<string, string>> = {
-  en: { onboarding: 'setup', behavior: 'learned', explicit: 'told' },
-  he: { onboarding: 'הגדרות', behavior: 'למד', explicit: 'נאמר' },
 }
 
 function t(lang: string, key: string) { return (LANGS[lang] ?? LANGS.en)[key] ?? key }
@@ -160,7 +127,6 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     voice_response_enabled: false, language: 'en', onboarding_completed: false,
   })
   const [saved, setSaved] = useState(false)
-  const [saving, setSaving] = useState(false)
 
 
   // Memory state
@@ -173,31 +139,9 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
   const isRTL = lang === 'he' || lang === 'ar'
   const set = (k: keyof UserProfile, v: unknown) => setP(prev => ({ ...prev, [k]: v }))
 
-  const handleMethodClick = (key: SchedulingMethod) => {
-    const isPrimary = p.scheduling_method === key
-    const secondary = p.secondary_methods ?? []
-    const isSecondary = secondary.includes(key)
-
-    if (isPrimary) {
-      // Deactivate primary — promote first secondary if exists
-      const [next, ...rest] = secondary
-      setP(prev => ({ ...prev, scheduling_method: next as SchedulingMethod | undefined, secondary_methods: rest }))
-    } else if (isSecondary) {
-      // Remove from secondary
-      setP(prev => ({ ...prev, secondary_methods: secondary.filter(m => m !== key) }))
-    } else if (!p.scheduling_method) {
-      // No primary yet — set as primary
-      set('scheduling_method', key)
-    } else {
-      // Add as secondary (max 4)
-      if (secondary.length < 4) {
-        setP(prev => ({ ...prev, secondary_methods: [...secondary, key] }))
-      }
-    }
-  }
   const isLocalMode = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
-  // Auto-save a single field immediately (used for notification toggles)
+  // Auto-save a single field immediately (merged server-side into the profile)
   const saveField = async (key: keyof UserProfile, value: unknown) => {
     const patch = { [key]: value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
     if (isLocalMode) {
@@ -205,6 +149,48 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     } else {
       await supabase.from('user_profiles').upsert({ ...patch, user_id: user.id })
     }
+  }
+
+  // Brief "✓ saved" feedback after any change
+  const flashSaved = () => { setSaved(true); setTimeout(() => setSaved(false), 1200) }
+
+  // Single source of change: update local state, apply LIVE to the app (theme,
+  // language, mic), persist to the profile, and flash feedback. No Save button.
+  const update = (k: keyof UserProfile, v: unknown) => {
+    const next = { ...p, [k]: v } as UserProfile
+    setP(next)
+    onProfileUpdate?.(next)
+    saveField(k, v)
+    flashSaved()
+  }
+
+  const handleMethodClick = (key: SchedulingMethod) => {
+    const isPrimary = p.scheduling_method === key
+    const secondary = p.secondary_methods ?? []
+    const isSecondary = secondary.includes(key)
+
+    let scheduling_method = p.scheduling_method
+    let secondary_methods = secondary
+    if (isPrimary) {
+      const [nextPrimary, ...rest] = secondary    // promote first complement
+      scheduling_method = nextPrimary as SchedulingMethod | undefined
+      secondary_methods = rest
+    } else if (isSecondary) {
+      secondary_methods = secondary.filter(m => m !== key)
+    } else if (!p.scheduling_method) {
+      scheduling_method = key
+    } else if (secondary.length < 4) {
+      secondary_methods = [...secondary, key]
+    } else {
+      return  // max complements reached
+    }
+
+    const next = { ...p, scheduling_method, secondary_methods } as UserProfile
+    setP(next)
+    onProfileUpdate?.(next)
+    saveField('scheduling_method', scheduling_method)
+    saveField('secondary_methods', secondary_methods)
+    flashSaved()
   }
 
   const handleNotificationsToggle = useCallback(async (v: boolean) => {
@@ -233,27 +219,10 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     }).catch(() => {/* ignore */})
   }, [])
 
-  const save = async () => {
-    setSaving(true)
-    // Always capture timezone for cron notifications
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-    const toSave = { ...p, timezone: tz }
-    if (isLocalMode) {
-      await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toSave),
-      })
-    } else {
-      await supabase.from('user_profiles').upsert({ ...toSave, user_id: user.id })
-    }
-    setSaving(false)
-    if (onClose) {
-      onProfileUpdate?.(p as UserProfile)
-      onClose()
-    } else {
-      window.location.replace('/')
-    }
+  // Every control auto-saves on change, so this just closes.
+  const done = () => {
+    if (onClose) onClose()
+    else window.location.replace('/')
   }
 
   const selectStyle: React.CSSProperties = {
@@ -295,14 +264,11 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                 { value: 'auto',    label: lang === 'he' ? 'אוטו' : 'Auto' },
               ]}
               value={p.autonomy_mode}
-              onChange={v => set('autonomy_mode', v)}
+              onChange={v => update('autonomy_mode', v)}
             />
           </Row>
-          <Row label={t(lang, 'voiceLabel')} desc={t(lang, 'voiceDesc')}>
-            <Toggle value={p.voice_response_enabled} onChange={v => set('voice_response_enabled', v)} />
-          </Row>
           <Row label={t(lang, 'langLabel')} desc={t(lang, 'langDesc')}>
-            <select value={p.language} onChange={e => set('language', e.target.value)} style={selectStyle}>
+            <select value={p.language} onChange={e => update('language', e.target.value)} style={selectStyle}>
               <option value="en">English</option>
               <option value="he">עברית (Hebrew)</option>
               <option value="es">Español</option>
@@ -322,7 +288,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                 { value: 'light', label: lang === 'he' ? '☀️ בהיר' : '☀️ Light' },
               ]}
               value={p.theme}
-              onChange={v => set('theme', v)}
+              onChange={v => update('theme', v)}
             />
           </Row>
           <Row label={t(lang, 'micSideLabel')} desc="">
@@ -332,7 +298,7 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                 { value: 'left',  label: t(lang, 'micSideLeft') },
               ]}
               value={p.mic_position ?? 'right'}
-              onChange={v => set('mic_position', v)}
+              onChange={v => update('mic_position', v)}
             />
           </Row>
         </Card>
@@ -347,15 +313,15 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                 { value: 'evening',   label: lang === 'he' ? 'ערב'     : '🌆 Evening' },
               ]}
               value={p.productivity_peak ?? 'morning'}
-              onChange={v => set('productivity_peak', v)}
+              onChange={v => update('productivity_peak', v)}
             />
           </Row>
           <Row label={t(lang, 'wakeLabel')} desc="">
-            <input type="time" value={p.wake_time ?? '07:00'} onChange={e => set('wake_time', e.target.value)}
+            <input type="time" value={p.wake_time ?? '07:00'} onChange={e => update('wake_time', e.target.value)}
               style={{ ...selectStyle }} />
           </Row>
           <Row label={t(lang, 'sleepLabel')} desc="">
-            <input type="time" value={p.sleep_time ?? '23:00'} onChange={e => set('sleep_time', e.target.value)}
+            <input type="time" value={p.sleep_time ?? '23:00'} onChange={e => update('sleep_time', e.target.value)}
               style={{ ...selectStyle }} />
           </Row>
         </Card>
@@ -371,16 +337,16 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
           {p.notifications_enabled && (
             <>
               <Row label={`⏰ ${t(lang, 'notifPreEvent')}`} desc={t(lang, 'notifPreEventDesc')}>
-                <Toggle value={p.notify_pre_event ?? true} onChange={v => { set('notify_pre_event', v); saveField('notify_pre_event', v) }} />
+                <Toggle value={p.notify_pre_event ?? true} onChange={v => update('notify_pre_event', v)} />
               </Row>
               <Row label={`🌅 ${t(lang, 'notifMorning')}`} desc={t(lang, 'notifMorningDesc')}>
-                <Toggle value={p.notify_morning_briefing ?? true} onChange={v => { set('notify_morning_briefing', v); saveField('notify_morning_briefing', v) }} />
+                <Toggle value={p.notify_morning_briefing ?? true} onChange={v => update('notify_morning_briefing', v)} />
               </Row>
               <Row label={`🌙 ${t(lang, 'notifEvening')}`} desc={t(lang, 'notifEveningDesc')}>
-                <Toggle value={p.notify_evening_review ?? true} onChange={v => { set('notify_evening_review', v); saveField('notify_evening_review', v) }} />
+                <Toggle value={p.notify_evening_review ?? true} onChange={v => update('notify_evening_review', v)} />
               </Row>
               <Row label={`💡 ${t(lang, 'notifNudge')}`} desc={t(lang, 'notifNudgeDesc')}>
-                <Toggle value={p.notify_task_nudge ?? true} onChange={v => { set('notify_task_nudge', v); saveField('notify_task_nudge', v) }} />
+                <Toggle value={p.notify_task_nudge ?? true} onChange={v => update('notify_task_nudge', v)} />
               </Row>
             </>
           )}
@@ -644,20 +610,19 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
         {/* ── SAVE ── */}
         <button
-          onClick={save}
-          disabled={saving}
+          onClick={done}
           style={{
             width: '100%', padding: '14px', borderRadius: 14, border: 'none',
             background: saved ? 'rgba(52,211,153,0.15)' : 'linear-gradient(135deg, #3B7EF7, #6366F1)',
             color: saved ? '#34D399' : '#fff',
-            fontSize: 15, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
+            fontSize: 15, fontWeight: 700, cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             boxShadow: saved ? 'none' : '0 4px 20px rgba(59,126,247,0.4)',
-            opacity: saving ? 0.7 : 1,
             outline: saved ? '1px solid rgba(52,211,153,0.3)' : 'none',
+            transition: 'background 0.2s, color 0.2s',
           }}
         >
-          {saved ? <><Check size={16} /> {t(lang, 'savedBtn')}</> : saving ? t(lang, 'savingBtn') : t(lang, 'saveBtn')}
+          {saved ? <><Check size={16} /> {t(lang, 'savedBtn')}</> : t(lang, 'doneBtn')}
         </button>
       </div>
 
