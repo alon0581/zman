@@ -38,10 +38,15 @@ function memoryFile(userId: string) {
 // chit-chat can run on the cheaper model. Conservative: defaults to TRUE for
 // anything substantial, only short greetings/thanks fall through to the cheap model.
 const SMART_INTENT_RE = /\b(add|create|schedule|move|delete|remove|reschedule|event|meeting|exam|deadline|task|todo|calendar|free|busy|plan|analy|review|week|tomorrow|today|every|remind)\b|הוסף|צור|קבע|תזמן|תוסיף|תקבע|תזיז|הזז|מחק|תמחק|בטל|אירוע|פגיש|מבחן|בחינ|הגש|דדליין|משימ|לו"?ז|לוח|פנוי|תכנן|נתח|סקיר|שבוע|מחר|היום|כל יום|כל שבוע|תזכיר|נקבע|למחוק|להזיז/i
+// Self-description / personal facts → also use the smart model. The cheap model is
+// unreliable at calling save_memory, which is exactly how the user ends up feeling
+// "forgotten" next session. Keep anything that looks like the user telling us about
+// themselves (name, occupation, habits, preferences, "remember…") on the smart model.
+const PERSONAL_INTENT_RE = /\b(i am|i'?m|my name|call me|i like|i love|i prefer|i hate|i work|i study|i live|i have|remember (that|this)?|don'?t forget|fyi|about me)\b|אני |שמי|קוראים לי|תקרא לי|אני לומד|אני עובד|אני גר|אני אוהב|אני מעדיף|אני שונא|יש לי|תזכור|אל תשכח|שתדע|כדאי שתדע|לידיעתך|עליי|עלי /i
 function needsSmartModel(text: string): boolean {
   if (!text) return false
   if (text.length > 200) return true        // long message → likely complex
-  return SMART_INTENT_RE.test(text)
+  return SMART_INTENT_RE.test(text) || PERSONAL_INTENT_RE.test(text)
 }
 
 /** Parse an "HH:mm" string to an hour in [0,23], falling back on bad input. */
@@ -223,10 +228,21 @@ export async function POST(req: NextRequest) {
     // Deterministic learning signals (rejections/moves of AI events).
     const feedback = DEMO_MODE ? readFeedback(userId) : []
 
+    // Memory recall must NOT depend on the client sending it. The client loads
+    // memory async on mount, so a fast first message can POST an empty array and
+    // the AI "forgets" the user across sessions. In demo mode we always read the
+    // file server-side as the source of truth; fall back to the client body only
+    // if the file is empty (e.g. a brand-new user mid-onboarding).
+    const serverMemory = DEMO_MODE ? readJsonFile<AIMemory[]>(memoryFile(userId), []) : undefined
+    const effectiveMemory: AIMemory[] | undefined =
+      serverMemory && serverMemory.length > 0
+        ? serverMemory
+        : (memory as AIMemory[] | undefined)
+
     // Split system prompt: stable `staticPrefix` (cacheable) + per-request `dynamicSuffix`.
     const sys = isOnboarding
       ? { staticPrefix: buildOnboardingSystemPrompt(profile?.language ?? 'en', userNow), dynamicSuffix: '' }
-      : buildSystemPrompt(profile, events, userNow, memory as AIMemory[] | undefined, tasks, feedback)
+      : buildSystemPrompt(profile, events, userNow, effectiveMemory, tasks, feedback)
     // For OpenAI-compatible providers: one system string (stable prefix first → auto-caches).
     const systemPrompt = sys.dynamicSuffix ? `${sys.staticPrefix}\n\n${sys.dynamicSuffix}` : sys.staticPrefix
 
