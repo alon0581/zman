@@ -784,6 +784,7 @@ async function executeTool(
         const recTitleLower = str(input.title).toLowerCase().trim()
         let created = 0
         let skipped = 0
+        let recWriteErrors = 0
 
         for (let i = 0; i < maxCount; i++) {
           const instanceStart = addDays(baseStart, i * daysStep)
@@ -824,18 +825,31 @@ async function executeTool(
             recurrence_rule: freq,
           }
 
-          if (DEMO_MODE) {
-            demoStorage.addEvent(instance, userId)
-          } else {
-            const { createClient } = await import('@/lib/supabase/server')
-            const supabase = await createClient()
-            await supabase.from('events').insert(instance)
+          try {
+            if (DEMO_MODE) {
+              demoStorage.addEvent(instance, userId)
+            } else {
+              const { createClient } = await import('@/lib/supabase/server')
+              const supabase = await createClient()
+              const { error } = await supabase.from('events').insert(instance)
+              if (error) throw new Error(error.message)
+            }
+          } catch (err) {
+            recWriteErrors++
+            console.warn('[chat] recurring instance write failed:', (err as Error)?.message)
+            continue  // don't count an instance that didn't save
           }
 
           createdEvents.push(instance)
           created++
         }
-        return { success: true, series_id: seriesId, instances_created: created, skipped }
+        return {
+          success: recWriteErrors === 0,
+          series_id: seriesId,
+          instances_created: created,
+          skipped,
+          ...(recWriteErrors > 0 ? { error: 'write_failed', message: `${recWriteErrors} instance(s) failed to save — do NOT claim those were created.` } : {}),
+        }
       }
 
       const allKnownEvents = [...currentEvents, ...createdEvents]
@@ -911,7 +925,11 @@ async function executeTool(
       }
 
       if (DEMO_MODE) {
-        demoStorage.addEvent(event, userId)
+        try {
+          demoStorage.addEvent(event, userId)
+        } catch (err) {
+          return { error: 'write_failed', message: `Could not save the event: ${(err as Error)?.message}. Do NOT tell the user it was created.` }
+        }
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1140,6 +1158,7 @@ async function executeTool(
       )
       const slots = pickSpreadSlots(candidateSlots, sessionsNeeded)
       let created = 0
+      let writeErrors = 0
 
       for (let i = 0; i < slots.length; i++) {
         const slot = slots[i]
@@ -1158,27 +1177,36 @@ async function executeTool(
           mobility_type: defaultMobility,
         }
 
-        if (DEMO_MODE) {
-          demoStorage.addEvent(event, userId)
-        } else {
-          const { createClient } = await import('@/lib/supabase/server')
-          const supabase = await createClient()
-          const { data } = await supabase.from('events').insert(event).select().single()
-          if (data) Object.assign(event, data)
+        try {
+          if (DEMO_MODE) {
+            demoStorage.addEvent(event, userId)
+          } else {
+            const { createClient } = await import('@/lib/supabase/server')
+            const supabase = await createClient()
+            const { data, error } = await supabase.from('events').insert(event).select().single()
+            if (error) throw new Error(error.message)
+            if (data) Object.assign(event, data)
+          }
+        } catch (err) {
+          writeErrors++
+          console.warn('[chat] break_down_task write failed:', (err as Error)?.message)
+          continue  // don't count or surface a session that didn't actually save
         }
 
         createdEvents.push(event)
         created++
       }
 
-      // Tell the model if we couldn't fit every session, so it can warn the user
-      const unscheduled = sessionsNeeded - created
+      // Distinguish "couldn't fit before the deadline" (normal) from "write failed" (error)
+      // so the AI reports honestly instead of claiming sessions that don't exist.
+      const noRoom = Math.max(0, sessionsNeeded - slots.length)
       return {
-        success: true,
+        success: writeErrors === 0,
         sessions_created: created,
         sessions_needed: sessionsNeeded,
-        sessions_unscheduled: unscheduled,
-        ...(unscheduled > 0 ? { warning: `Only ${created} of ${sessionsNeeded} sessions fit before the deadline — ${unscheduled} could not be scheduled. Tell the user and suggest extending the deadline or freeing time.` } : {}),
+        sessions_unscheduled: sessionsNeeded - created,
+        ...(noRoom > 0 ? { warning: `Only ${slots.length} of ${sessionsNeeded} sessions fit before the deadline — ${noRoom} could not be placed. Tell the user and suggest extending the deadline or freeing time.` } : {}),
+        ...(writeErrors > 0 ? { error: 'write_failed', message: `${writeErrors} session(s) failed to save. Do NOT claim those were scheduled.` } : {}),
       }
     }
 

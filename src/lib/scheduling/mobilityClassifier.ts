@@ -6,24 +6,29 @@
  * 🔵 ask_first — ask user before moving (default for user-created events)
  */
 
-/** Keywords that indicate a fixed event (Hebrew + English) */
+/** Keywords that indicate a fixed event (Hebrew + English).
+ *  Kept SPECIFIC — broad words like "דיון"/"discussion" were dropped because they
+ *  also match flexible group work; "הגנת" (thesis defense) is matched as a prefix. */
 const FIXED_KEYWORDS = [
   // Hebrew
-  'בחינה', 'מבחן', 'טיסה', 'ראיון', 'משמרת', 'ניתוח', 'דיון', 'הגנה',
+  'בחינה', 'מבחן', 'טיסה', 'ראיון', 'משמרת', 'ניתוח', 'הגנת תזה', 'הגנת פרויקט',
   'הרצאה', 'סמינריון', 'מעבדה', 'קליניקה', 'בית משפט', 'חתונה', 'ברית',
-  'בר מצווה', 'בת מצווה', 'לוויה', 'טקס',
+  'בר מצווה', 'בת מצווה', 'לוויה', 'טקס', 'דיון משפטי',
   // English
   'exam', 'test', 'flight', 'interview', 'shift', 'surgery', 'hearing',
-  'defense', 'lecture', 'seminar', 'lab', 'clinic', 'court', 'wedding',
+  'thesis defense', 'lecture', 'seminar', 'lab', 'clinic', 'court', 'wedding',
   'ceremony', 'funeral',
 ]
 
-/** Keywords that indicate AI-created flexible blocks */
+/** Keywords that indicate flexible blocks — AI-created OR common user-typed study work
+ *  the AI may reschedule (homework/practice/reading), so they don't get stuck ask_first. */
 const FLEXIBLE_KEYWORDS = [
   // Hebrew
   'ישיבה', 'פומודורו', 'בלוק עבודה', 'זמן לימוד', 'הכנה ל',
+  'תרגול', 'תרגיל', 'מטלה', 'שיעורי בית', 'קריאה', 'חזרה',
   // English
   'session', 'pomodoro', 'work block', 'study block', 'prep for', 'deep work',
+  'homework', 'practice', 'reading', 'assignment', 'revision', 'study session',
 ]
 
 export function classifyMobility(
