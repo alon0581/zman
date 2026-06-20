@@ -218,11 +218,12 @@ export async function POST(req: NextRequest) {
       apiKey = envKeyFor(provider)!
     } else if (process.env.ANTHROPIC_API_KEY) {
       provider = 'anthropic'; model = process.env.AI_MODEL || 'claude-sonnet-4-6'; apiKey = process.env.ANTHROPIC_API_KEY
-    } else if (process.env.MINIMAX_API_KEY) {
-      provider = 'minimax'; model = 'MiniMax-M2.5'; apiKey = process.env.MINIMAX_API_KEY
     } else if (process.env.OPENAI_API_KEY) {
       provider = 'openai'; model = 'gpt-4o-mini'; apiKey = process.env.OPENAI_API_KEY
     } else {
+      // NOTE: MiniMax is intentionally NOT an auto-fallback. It is deprecated/unpaid,
+      // and a stale MINIMAX_API_KEY lingering in env used to silently brick users.
+      // It is still honored ONLY when explicitly chosen via AI_PROVIDER=minimax above.
       return buildErrorStream(
         '⚙️ No API key configured. Go to **Settings → AI Model** to add your API key.'
       )
