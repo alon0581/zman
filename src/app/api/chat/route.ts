@@ -23,7 +23,10 @@ const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 // Shared constants
 const BUFFER_MIN = 15        // minutes of breathing room between events
-const MAX_LOOP_MS = 25000    // hard ceiling on the tool-call loop (avoid hangs)
+// Wall-clock ceiling on the tool-call loop. Sonnet does several tool round-trips
+// per scheduling request (each a few seconds), so 25s cut real work off mid-flow.
+// 90s gives genuine multi-tool scheduling room to finish; env-overridable.
+const MAX_LOOP_MS = Number(process.env.MAX_LOOP_MS) || 90000
 const MEM_KEY_MAX = 100      // max length of a memory key
 const MEM_VALUE_MAX = 10000  // max length of a memory value
 
