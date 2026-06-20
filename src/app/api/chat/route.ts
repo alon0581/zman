@@ -360,6 +360,31 @@ export async function POST(req: NextRequest) {
         break
       }
 
+      // Anthropic (especially Haiku) often ends a tool turn with NO text block, so the
+      // user sees events created but gets no reply ("it disconnected"). Force one final
+      // no-tools call to produce a short confirmation. `anthropicMessages` already holds
+      // the tool results, so the model just summarizes what it did.
+      if (!lastContent) {
+        try {
+          const followup = await anthropic.messages.create({
+            model,
+            system: sys.dynamicSuffix
+              ? [
+                  { type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } },
+                  { type: 'text', text: sys.dynamicSuffix },
+                ]
+              : [{ type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } }],
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            messages: anthropicMessages as any,
+            max_tokens: 512,
+          })
+          const tb = followup.content.find(b => b.type === 'text')
+          lastContent = (tb as { type: 'text'; text: string } | undefined)?.text ?? ''
+        } catch (err) {
+          console.warn('[chat] follow-up summary failed:', (err as Error)?.message)
+        }
+      }
+
       if (state.completedProfile) completedProfile = state.completedProfile
 
     } else {
@@ -669,6 +694,20 @@ export async function POST(req: NextRequest) {
                 ))
               }
             }
+          } else {
+            // Last-resort backstop: never end a turn silently. If actions happened,
+            // confirm them; otherwise send a soft ack so the UI isn't left blank.
+            const isHe = (profile?.language ?? 'he') === 'he'
+            const parts: string[] = []
+            if (createdEvents.length) parts.push(isHe ? `נוספו ${createdEvents.length} אירועים` : `added ${createdEvents.length} event(s)`)
+            if (updatedEvents.length) parts.push(isHe ? `עודכנו ${updatedEvents.length}` : `updated ${updatedEvents.length}`)
+            if (deletedEventIds.length) parts.push(isHe ? `נמחקו ${deletedEventIds.length}` : `deleted ${deletedEventIds.length}`)
+            const msg = parts.length
+              ? `✓ ${parts.join(isHe ? ', ' : ', ')}`
+              : (isHe ? '✓ בוצע' : '✓ Done')
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ type: 'text', content: msg })}\n\n`
+            ))
           }
 
           controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
@@ -742,12 +781,31 @@ async function executeTool(
         const daysStep = freq === 'monthly' ? 30 : freq === 'biweekly' ? 14 : 7
         const maxCount = recurrence.count ?? (freq === 'monthly' ? 6 : 12)
         const endDate  = recurrence.end_date ? new Date(recurrence.end_date) : null
+        const recTitleLower = str(input.title).toLowerCase().trim()
         let created = 0
+        let skipped = 0
 
         for (let i = 0; i < maxCount; i++) {
           const instanceStart = addDays(baseStart, i * daysStep)
           if (endDate && instanceStart > endDate) break
           const instanceEnd = new Date(instanceStart.getTime() + durationMs)
+
+          const known = [...currentEvents, ...createdEvents]
+          // Dedupe: identical title at this exact start already exists (e.g. the series
+          // was created once already in a retry) — don't pile on duplicates.
+          const isDup = known.some(e =>
+            e.title.toLowerCase().trim() === recTitleLower &&
+            new Date(e.start_time).getTime() === instanceStart.getTime()
+          )
+          if (isDup) { skipped++; continue }
+          // Never drop a recurring (usually flexible) instance on top of a FIXED
+          // commitment (exam/lecture/flight). Skip that instance instead of stomping it.
+          const clashesFixed = known.some(e => {
+            const mob = e.mobility_type ?? classifyMobility(e.title, e.created_by, true)
+            if (mob !== 'fixed') return false
+            return instanceStart < new Date(e.end_time) && instanceEnd > new Date(e.start_time)
+          })
+          if (clashesFixed) { skipped++; continue }
 
           const instance: CalendarEvent = {
             id: crypto.randomUUID(),
@@ -777,7 +835,7 @@ async function executeTool(
           createdEvents.push(instance)
           created++
         }
-        return { success: true, series_id: seriesId, instances_created: created }
+        return { success: true, series_id: seriesId, instances_created: created, skipped }
       }
 
       const allKnownEvents = [...currentEvents, ...createdEvents]
