@@ -65,6 +65,9 @@ interface StoredUser {
   passwordHash: string
   salt: string
   createdAt: string
+  /** Bumped on logout to revoke every token already issued. Absent on records
+   *  written before revocation existed — read it as 0, never as undefined. */
+  tokenVersion?: number
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -81,9 +84,20 @@ function hashPassword(password: string, salt: string): string {
   return crypto.scryptSync(password, salt, 64).toString('hex')
 }
 
-function makeToken(userId: string): string {
+/** Current revocation counter for a user. A record with no `tokenVersion` — and
+ *  a user we can't find at all — reads as 0, so pre-revocation tokens keep working. */
+function currentTokenVersion(userId: string): number {
+  const user = readUsers().find(u => u.id === userId)
+  return user?.tokenVersion ?? 0
+}
+
+// Marks a payload that carries a tokenVersion. Tokens minted before revocation
+// existed have no prefix and are read as version 0 (see verifyToken).
+const TOKEN_PREFIX = 'v2'
+
+function makeToken(userId: string, tokenVersion: number): string {
   const expiry  = Date.now() + COOKIE_MAX_AGE * 1000
-  const payload = `${userId}:${expiry}`
+  const payload = `${TOKEN_PREFIX}:${userId}:${expiry}:${tokenVersion}`
   const sig     = crypto.createHmac('sha256', SECRET).update(payload).digest('hex')
   return Buffer.from(`${payload}:${sig}`).toString('base64url')
 }
@@ -97,10 +111,20 @@ function verifyToken(token: string): string | null {
     const sig     = decoded.slice(lastColon + 1)
     const expected = crypto.createHmac('sha256', SECRET).update(payload).digest('hex')
     if (!safeEqual(sig, expected)) return null
-    const parts  = payload.split(':')
+    // v2 payload: `v2:{userId}:{expiry}:{tokenVersion}`. Legacy: `{userId}:{expiry}`.
+    // The prefix is inside the signed payload, so it can't be added or stripped.
+    const isVersioned = payload.startsWith(`${TOKEN_PREFIX}:`)
+    const parts = (isVersioned ? payload.slice(TOKEN_PREFIX.length + 1) : payload).split(':')
+    const tokenVersion = isVersioned ? parseInt(parts.pop() ?? '') : 0
+    if (isNaN(tokenVersion)) return null
     const expiry = parseInt(parts[parts.length - 1])
     if (isNaN(expiry) || Date.now() > expiry) return null
-    return parts.slice(0, -1).join(':') // userId (may contain colons for UUID)
+    const userId = parts.slice(0, -1).join(':') // userId (may contain colons for UUID)
+    if (userId === '') return null
+    // Stale version = the user logged out after this token was minted → revoked.
+    // Checked last so a junk token never costs a users.json read.
+    if (tokenVersion !== currentTokenVersion(userId)) return null
+    return userId
   } catch {
     return null
   }
@@ -120,10 +144,10 @@ export function registerUser(
   const passwordHash = hashPassword(password, salt)
   const id           = crypto.randomUUID()
 
-  users.push({ id, email: email.toLowerCase().trim(), passwordHash, salt, createdAt: new Date().toISOString() })
+  users.push({ id, email: email.toLowerCase().trim(), passwordHash, salt, createdAt: new Date().toISOString(), tokenVersion: 0 })
   writeUsers(users)
 
-  return { success: true, userId: id, token: makeToken(id) }
+  return { success: true, userId: id, token: makeToken(id, 0) }
 }
 
 export function loginUser(
@@ -137,7 +161,27 @@ export function loginUser(
   const hash = hashPassword(password, user.salt)
   if (!safeEqual(hash, user.passwordHash)) return { success: false, error: 'אימייל או סיסמה שגויים' }
 
-  return { success: true, userId: user.id, token: makeToken(user.id) }
+  return { success: true, userId: user.id, token: makeToken(user.id, user.tokenVersion ?? 0) }
+}
+
+/**
+ * Revoke every token already issued to a user by bumping their `tokenVersion`.
+ * Called on logout: clearing the cookie only drops this browser's copy, while the
+ * signed token itself stays valid until its 30-day expiry unless the version moves.
+ * Never throws — logout must succeed even when the store is unwritable.
+ */
+export function revokeUserSessions(userId: string): { success: true } | { success: false; error: string } {
+  try {
+    const users = readUsers()
+    const idx   = users.findIndex(u => u.id === userId)
+    if (idx === -1) return { success: false, error: 'משתמש לא נמצא' }
+
+    users[idx] = { ...users[idx], tokenVersion: (users[idx].tokenVersion ?? 0) + 1 }
+    writeUsers(users)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: (err as Error)?.message ?? 'שגיאה בכתיבת קובץ המשתמשים' }
+  }
 }
 
 /** Change password — requires an authenticated userId (session must already be valid) */
@@ -157,7 +201,7 @@ export function resetPassword(
   return { success: true }
 }
 
-/** Extract userId from cookie value — returns null if invalid/expired */
+/** Extract userId from cookie value — returns null if invalid/expired/revoked */
 export function getUserIdFromCookie(cookieValue: string | undefined): string | null {
   if (!cookieValue) return null
   return verifyToken(cookieValue)
