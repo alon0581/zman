@@ -1,15 +1,13 @@
 'use client'
 
-import { User } from '@supabase/supabase-js'
-import { UserProfile } from '@/types'
-import { createClient } from '@/lib/supabase/client'
+import { UserProfile, AppUser } from '@/types'
 import { Settings, Sun, Moon, LogOut, Bell, BellOff } from 'lucide-react'
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import { subscribePushNotifications, unsubscribePushNotifications } from '@/lib/push-client'
 
 interface Props {
-  user: User
+  user: AppUser
   profile: UserProfile | null
   language: string
   onToggleTheme: () => void
@@ -17,7 +15,6 @@ interface Props {
 }
 
 export default function Header({ user, profile, language, onToggleTheme, onOpenSettings }: Props) {
-  const supabase = createClient()
   const isDark = profile?.theme !== 'light'
   const isHe = language === 'he'
 
@@ -131,8 +128,6 @@ export default function Header({ user, profile, language, onToggleTheme, onOpenS
             try { sessionStorage.removeItem('zman_chat') } catch { /* ignore */ }
             // Always clear the file-based session cookie
             await fetch('/api/auth/logout', { method: 'POST' })
-            // Also sign out from Supabase if configured
-            try { await supabase.auth.signOut() } catch { /* demo mode — no supabase */ }
             window.location.href = '/login'
           }}
           title={isHe ? 'יציאה' : 'Sign out'}

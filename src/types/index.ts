@@ -49,7 +49,12 @@ export interface UserProfile {
   language: string
   onboarding_completed: boolean
   occupation?: string
-  ai_provider?: 'openai' | 'anthropic' | 'minimax' | 'openrouter'
+  // Anthropic is the only provider now, so the type narrows to that. The field stays
+  // present + optional (not removed) because real profiles on the production volume
+  // still contain values written by earlier, now-deleted providers — a required-shape
+  // change would break reads. Those old string values just won't type-check as this
+  // literal anymore; nothing reads or branches on this field at runtime any more.
+  ai_provider?: 'anthropic'
   ai_model?: string
   ai_api_key_masked?: string       // shown in UI: "sk-****abcd" — never the raw key
   ai_api_key_encrypted?: string    // AES-256-GCM encrypted — NEVER sent to frontend
@@ -76,6 +81,16 @@ export interface UserProfile {
   secondary_methods?: string[]
   challenge?: 'procrastination' | 'overwhelmed' | 'focus' | 'scattered' | 'goals'
   day_structure?: 'fixed' | 'variable' | 'mixed' | 'independent'
+}
+
+/**
+ * Minimal logged-in-user shape for the UI. Auth is file-based (see `src/lib/auth`);
+ * this is just what the UI components (Header, AppShell, SettingsClient) read.
+ */
+export interface AppUser {
+  id: string
+  email?: string
+  user_metadata?: { avatar_url?: string; full_name?: string }
 }
 
 export interface Message {

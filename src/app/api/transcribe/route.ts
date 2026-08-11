@@ -3,8 +3,6 @@ import { cookies } from 'next/headers'
 import OpenAI from 'openai'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
-
 function getOpenAI() {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) throw new Error('OPENAI_API_KEY not set')
@@ -12,15 +10,9 @@ function getOpenAI() {
 }
 
 async function getAuthUserId(): Promise<string | null> {
-  if (DEMO_MODE) {
-    const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
-    return getUserIdFromCookie(token)
-  }
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  return user?.id ?? null
+  const cookieStore = await cookies()
+  const token = cookieStore.get(COOKIE_NAME)?.value
+  return getUserIdFromCookie(token)
 }
 
 export async function POST(req: NextRequest) {

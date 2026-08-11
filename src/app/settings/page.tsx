@@ -1,13 +1,11 @@
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import SettingsClient from './SettingsClient'
-import { UserProfile } from '@/types'
+import { UserProfile, AppUser } from '@/types'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { DATA_DIR } from '@/lib/util/dataDir'
 import fs from 'fs'
 import path from 'path'
-
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 const DEFAULT_PROFILE = (userId: string): UserProfile => ({
   user_id: userId,
@@ -28,31 +26,14 @@ function loadUserProfile(userId: string): UserProfile {
 }
 
 export default async function SettingsPage() {
-  if (DEMO_MODE) {
-    const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
-    const userId = getUserIdFromCookie(token)
-    if (!userId) redirect('/login')
+  const cookieStore = await cookies()
+  const token = cookieStore.get(COOKIE_NAME)?.value
+  const userId = getUserIdFromCookie(token)
+  if (!userId) redirect('/login')
 
-    const rawProfile = loadUserProfile(userId)
-    // Never pass the encrypted key to the client component
-    const { ai_api_key_encrypted: _demo, ...profile } = rawProfile
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const user = { id: userId, email: '', user_metadata: {}, app_metadata: {}, aud: 'authenticated', created_at: '', updated_at: '', role: '' } as any
-    return <SettingsClient user={user} profile={profile} />
-  }
-
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
-
-  const { data: rawProfileSupabase } = await supabase
-    .from('user_profiles').select('*').eq('user_id', user.id).single()
-
+  const rawProfile = loadUserProfile(userId)
   // Never pass the encrypted key to the client component
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { ai_api_key_encrypted: _sb, ...profileSb } = (rawProfileSupabase ?? {}) as import('@/types').UserProfile
-
-  return <SettingsClient user={user} profile={profileSb as import('@/types').UserProfile} />
+  const { ai_api_key_encrypted: _demo, ...profile } = rawProfile
+  const user: AppUser = { id: userId, email: '', user_metadata: {} }
+  return <SettingsClient user={user} profile={profile} />
 }

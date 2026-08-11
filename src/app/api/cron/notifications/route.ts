@@ -16,8 +16,6 @@ import { sendNtfy, defaultTopicFor, isNtfyConfigured } from '@/lib/notifications
 import fs from 'fs'
 import path from 'path'
 
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
-
 export async function GET(req: NextRequest) {
   // Verify cron secret
   const secret = req.nextUrl.searchParams.get('secret')
@@ -28,11 +26,7 @@ export async function GET(req: NextRequest) {
   const results: { userId: string; sent: number }[] = []
 
   try {
-    if (DEMO_MODE) {
-      await processDemoUsers(results)
-    } else {
-      await processSupabaseUsers(results)
-    }
+    await processDemoUsers(results)
   } catch (err) {
     console.error('[CRON] notification error:', err)
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
@@ -96,65 +90,6 @@ async function processDemoUsers(results: { userId: string; sent: number }[]) {
     }
 
     results.push({ userId, sent })
-  }
-}
-
-// ── Supabase mode ───────────────────────────────────────────────────────────
-
-async function processSupabaseUsers(results: { userId: string; sent: number }[]) {
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-
-  // Fetch all users with notifications enabled and a push token
-  const { data: profiles } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('notifications_enabled', true)
-
-  if (!profiles) return
-
-  for (const profile of profiles as UserProfile[]) {
-    // A user with no FCM token and no browser subscription is still reachable via
-    // ntfy, so the old "no token, skip" gate silently excluded everyone on this
-    // deployment — which is precisely why nothing has ever been delivered.
-    if (!profile.fcm_token && !profile.push_subscription && !isNtfyConfigured()) continue
-
-    // Load events (today ± 1 day)
-    const now = new Date()
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
-    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString()
-
-    const { data: events } = await supabase
-      .from('events')
-      .select('*')
-      .eq('user_id', profile.user_id)
-      .gte('start_time', dayStart)
-      .lte('start_time', dayEnd)
-
-    const { data: tasks } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', profile.user_id)
-      .neq('status', 'done')
-
-    const { notifications, profileUpdates } = computeNotifications(
-      profile,
-      (events ?? []) as CalendarEvent[],
-      (tasks ?? []) as Task[],
-      profile.timezone,
-    )
-
-    let sent = 0
-    for (const n of notifications) {
-      await sendToUser(profile, n)
-      sent++
-    }
-
-    if (Object.keys(profileUpdates).length > 0) {
-      await supabase.from('user_profiles').update(profileUpdates).eq('user_id', profile.user_id)
-    }
-
-    results.push({ userId: profile.user_id, sent })
   }
 }
 

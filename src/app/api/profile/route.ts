@@ -2,15 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import crypto from 'crypto'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
-import { encryptApiKey, maskApiKey } from '@/lib/encryption'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { withUserLock } from '@/lib/store/lock'
 import { DATA_DIR } from '@/lib/util/dataDir'
 import path from 'path'
 import { UserProfile, AIMemory } from '@/types'
-
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 const DEFAULT_PROFILE = (userId: string): UserProfile => ({
   user_id: userId,
@@ -35,15 +32,9 @@ function writeProfile(userId: string, profile: UserProfile) {
 }
 
 async function getAuthUserId(req: NextRequest): Promise<string | null> {
-  if (DEMO_MODE) {
-    const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
-    return getUserIdFromCookie(token) // null if not logged in
-  }
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  return user?.id ?? null
+  const cookieStore = await cookies()
+  const token = cookieStore.get(COOKIE_NAME)?.value
+  return getUserIdFromCookie(token) // null if not logged in
 }
 
 export async function GET(req: NextRequest) {
@@ -61,15 +52,8 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json() as Record<string, unknown>
 
-  // Handle raw API key: encrypt and mask it, never store plaintext
-  if (body.ai_api_key && typeof body.ai_api_key === 'string') {
-    const raw = body.ai_api_key
-    body.ai_api_key_encrypted = encryptApiKey(raw)
-    body.ai_api_key_masked = maskApiKey(raw)
-    delete body.ai_api_key
-  }
-
-  // Handle disconnect: clear all AI credentials
+  // Handle disconnect: clear all AI credentials (legacy fields — per-user API
+  // keys were removed; Settings never shipped a UI to set one)
   if (body.ai_api_key_clear) {
     delete body.ai_api_key_clear
     body.ai_api_key_encrypted = undefined

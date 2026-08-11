@@ -3,18 +3,10 @@ import { cookies } from 'next/headers'
 import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
-
 async function getAuthUserId(): Promise<string | null> {
-  if (DEMO_MODE) {
-    const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
-    return getUserIdFromCookie(token)
-  }
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  return user?.id ?? null
+  const cookieStore = await cookies()
+  const token = cookieStore.get(COOKIE_NAME)?.value
+  return getUserIdFromCookie(token)
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -24,15 +16,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params
   const updates = await req.json()
 
-  if (DEMO_MODE) {
-    userStore.updateTask(id, updates, userId)
-    return NextResponse.json({ success: true })
-  }
-
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { error } = await supabase.from('tasks').update(updates).eq('id', id).eq('user_id', userId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  userStore.updateTask(id, updates, userId)
   return NextResponse.json({ success: true })
 }
 
@@ -42,21 +26,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const { id } = await params
 
-  if (DEMO_MODE) {
-    // Cascade: delete child tasks first
-    const allTasks = userStore.getTasks(userId)
-    for (const t of allTasks) {
-      if (t.parent_task_id === id) userStore.deleteTask(t.id, userId)
-    }
-    userStore.deleteTask(id, userId)
-    return NextResponse.json({ success: true })
-  }
-
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
   // Cascade: delete child tasks first
-  await supabase.from('tasks').delete().eq('parent_task_id', id).eq('user_id', userId)
-  const { error } = await supabase.from('tasks').delete().eq('id', id).eq('user_id', userId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const allTasks = userStore.getTasks(userId)
+  for (const t of allTasks) {
+    if (t.parent_task_id === id) userStore.deleteTask(t.id, userId)
+  }
+  userStore.deleteTask(id, userId)
   return NextResponse.json({ success: true })
 }

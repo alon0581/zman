@@ -4,36 +4,18 @@ import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { Task } from '@/types'
 
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
-
 async function getAuthUserId(): Promise<string | null> {
-  if (DEMO_MODE) {
-    const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
-    return getUserIdFromCookie(token)
-  }
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  return user?.id ?? null
+  const cookieStore = await cookies()
+  const token = cookieStore.get(COOKIE_NAME)?.value
+  return getUserIdFromCookie(token)
 }
 
 export async function GET() {
   const userId = await getAuthUserId()
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  if (DEMO_MODE) {
-    const tasks = userStore.getTasks(userId)
-    return NextResponse.json({ tasks })
-  }
-
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('tasks').select('*').eq('user_id', userId)
-    .order('created_at', { ascending: false })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ tasks: data })
+  const tasks = userStore.getTasks(userId)
+  return NextResponse.json({ tasks })
 }
 
 export async function POST(req: NextRequest) {
@@ -60,14 +42,6 @@ export async function POST(req: NextRequest) {
     created_at: new Date().toISOString(),
   }
 
-  if (DEMO_MODE) {
-    userStore.addTask(task, userId)
-    return NextResponse.json({ task })
-  }
-
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data, error } = await supabase.from('tasks').insert(task).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ task: data })
+  userStore.addTask(task, userId)
+  return NextResponse.json({ task })
 }

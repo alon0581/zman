@@ -1,8 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { User } from '@supabase/supabase-js'
-import { UserProfile, CalendarEvent, Task } from '@/types'
+import { UserProfile, CalendarEvent, Task, AppUser } from '@/types'
 import CalendarPanel from './CalendarPanel'
 import TasksPanel from './TasksPanel'
 import Header from './Header'
@@ -17,7 +16,7 @@ import { AnimatePresence } from 'motion/react'
 import { registerCapacitorPush } from '@/lib/capacitor-push'
 
 interface Props {
-  user: User
+  user: AppUser
   profile: UserProfile | null
   needsOnboarding: boolean
 }

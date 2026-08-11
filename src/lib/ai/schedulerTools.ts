@@ -3,7 +3,7 @@
  *
  * The split here is deliberate: everything in this file decides *what* should
  * happen and returns plain data, while the chat route keeps the parts that
- * touch storage (userStore, Supabase). That is what makes the interesting
+ * touch storage (userStore). That is what makes the interesting
  * behaviour — which request the model's arguments become, which instances of a
  * recurring series clash, what the assistant is told when nothing fits —
  * testable without booting Next.js or mocking a database.

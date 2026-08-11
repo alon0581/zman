@@ -11,7 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@anthropic-ai/sdk": "^0.116.0",
     "@capacitor/android": "^8.2.0",
     "@capacitor/cli": "^8.2.0",
     "@capacitor/core": "^8.2.0",
@@ -24,8 +24,6 @@
     "@fullcalendar/list": "^6.1.20",
     "@fullcalendar/react": "^6.1.20",
     "@fullcalendar/timegrid": "^6.1.20",
-    "@supabase/ssr": "^0.9.0",
-    "@supabase/supabase-js": "^2.99.1",
     "date-fns": "^4.1.0",
     "firebase-admin": "^13.7.0",
     "lucide-react": "^0.577.0",

@@ -8,8 +8,6 @@ import { DATA_DIR } from '@/lib/util/dataDir'
 import { AIMemory } from '@/types'
 import path from 'path'
 
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
-
 function memoryFile(userId: string) {
   return path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'memory.json')
 }
@@ -23,15 +21,9 @@ function writeMemory(userId: string, memory: AIMemory[]) {
 }
 
 async function getAuthUserId(req: NextRequest): Promise<string | null> {
-  if (DEMO_MODE) {
-    const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
-    return getUserIdFromCookie(token)
-  }
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  return user?.id ?? null
+  const cookieStore = await cookies()
+  const token = cookieStore.get(COOKIE_NAME)?.value
+  return getUserIdFromCookie(token)
 }
 
 export async function GET(req: NextRequest) {

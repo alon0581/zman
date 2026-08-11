@@ -30,7 +30,8 @@ Node (anywhere):
   2. VARIABLES — paste into the NEW Zman project → Variables
 ──────────────────────────────────────────────
 AUTH_SECRET=<fresh value from step 1 — unique to this project>
-ENCRYPTION_KEY=<fresh 64-hex value from step 1>
+# NOTE: AUTH_SECRET also signs session tokens, which now carry a tokenVersion.
+# Changing it logs everyone out — that is expected, not a bug.
 
 # Comma-separated user IDs allowed to hit /api/admin/*. Leaving this unset
 # disables the admin routes entirely (they fail closed — 403 for everyone).
@@ -54,16 +55,23 @@ ANTHROPIC_API_KEY=sk-ant-...
 #   thinking PLUS the visible reply. The old 2048 was sized for a non-thinking
 #   model and truncates answers here. The code now sends 8192; override with
 #   ANTHROPIC_MAX_TOKENS if a workload needs more.
-# • Chat turns are sent with output_config: { effort: "low" } so thinking does
-#   not eat the whole budget. Effort is only sent to models known to accept it.
+# • Chat turns send output_config.effort. It defaults to "medium" and NOT "low",
+#   because effort has to match who is doing the thinking: while SCHEDULER_V2 is
+#   off the model still works out slot placement itself, and "low" is meant for
+#   short, scoped, non-intelligence-sensitive turns. Once the engine owns
+#   placement the model only has to understand Hebrew and paraphrase reasons it
+#   was handed — then AI_EFFORT=low is the honest setting and saves real money.
 # • temperature / top_p / top_k are REJECTED by Sonnet 5 (400). None are sent —
 #   do not add them.
 # ANTHROPIC_MAX_TOKENS=8192               # optional override
+# AI_EFFORT=medium                        # low | medium | high | xhigh | max
 #
-#  — or use OpenAI / MiniMax instead (then drop the Anthropic vars):
-# AI_PROVIDER=openai   AI_MODEL=gpt-4o-mini   OPENAI_API_KEY=sk-...
-# MINIMAX_API_KEY=sk-cp-...   (legacy)
-# Precedence: a per-user key set in Settings → AI Model always overrides these.
+# ‼️ MiniMax, OpenRouter, the OpenAI *chat* path, and per-user API keys have all
+#    been deleted from the code. MINIMAX_API_KEY / OPENROUTER_API_KEY are read by
+#    nothing — delete them from Railway. OPENAI_API_KEY is still REQUIRED, but
+#    only for voice transcription (see below), never for chat.
+#    ENCRYPTION_KEY is likewise no longer read: it existed to encrypt per-user
+#    API keys, and there are none. Safe to delete.
 
 # ── SCHEDULER_V2 (OFF by default — leave it unset in production for now) ────
 # Routes scheduling through the deterministic engine in src/lib/scheduling
@@ -77,7 +85,34 @@ ANTHROPIC_API_KEY=sk-ant-...
 # a redeploy between a proposal and its confirmation makes the user re-ask.
 # SCHEDULER_V2=1
 
-# Web push (browser PWA). Generate with: npx web-push generate-vapid-keys
+# ── Voice transcription (OpenAI — this is the ONLY thing OPENAI_API_KEY is for)
+OPENAI_API_KEY=sk-...
+# Defaults to gpt-4o-transcribe, which is markedly better on Hebrew than the old
+# whisper-1. Falls back to whisper-1 automatically if the model is unavailable.
+# TRANSCRIBE_MODEL=gpt-4o-transcribe
+
+# ── NOTIFICATIONS ‼️ Without the two below, NOTHING is ever delivered ─────────
+# The notification feature has never actually fired: the cron endpoint is only
+# reachable with CRON_SECRET, and nothing was calling it at all. Both are needed.
+#
+# 1. The secret the cron caller must present:
+CRON_SECRET=<any long random string>
+#
+# 2. Then point a scheduler at it every 5 minutes (cron-job.org, or a Railway
+#    cron service) — the app does NOT schedule itself:
+#      GET https://<your-zman>.up.railway.app/api/cron/notifications?secret=<CRON_SECRET>
+#
+# 3. Delivery channel. ntfy needs no account and no keys: install the ntfy app,
+#    subscribe to your topic, done. The topic is derived per-user by HMAC so it
+#    is unguessable — anyone who learns a topic can publish to it, which is why
+#    it is never derived from anything human-readable. With this unset, delivery
+#    falls back to FCM (needs FIREBASE_SERVICE_ACCOUNT) or browser web-push.
+NTFY_TOPIC_SECRET=<any long random string — changing it changes every topic>
+# NTFY_SERVER=https://ntfy.sh          # override for a self-hosted ntfy
+
+# Web push (browser PWA). Optional — only reaches a browser tab the user has
+# open, so it is not a substitute for ntfy. Generate with:
+#   npx web-push generate-vapid-keys
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=<vapid public>
 VAPID_PRIVATE_KEY=<vapid private>
 

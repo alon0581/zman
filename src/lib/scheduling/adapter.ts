@@ -2,7 +2,7 @@
  * adapter.ts — the translation layer between the app and the scheduling engine.
  *
  * The engine (plan.ts and friends) is pure and deliberately knows nothing about
- * `UserProfile`, `CalendarEvent`, Supabase, or the chat route. That purity is
+ * `UserProfile`, `CalendarEvent`, or the chat route. That purity is
  * what makes it testable, and it is exactly why something has to stand between
  * the two. This file is that something, and it has two jobs:
  *

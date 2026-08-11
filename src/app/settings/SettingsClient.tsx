@@ -2,9 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { subscribePushNotifications, unsubscribePushNotifications } from '@/lib/push-client'
-import { User } from '@supabase/supabase-js'
-import { UserProfile, AIMemory } from '@/types'
-import { createClient } from '@/lib/supabase/client'
+import { UserProfile, AIMemory, AppUser } from '@/types'
 import { ArrowLeft, X, Check } from 'lucide-react'
 import Link from 'next/link'
 import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
@@ -58,7 +56,7 @@ const METHOD_GROUPS: Array<{
 ]
 
 interface Props {
-  user: User
+  user: AppUser
   profile: UserProfile | null
   onClose?: () => void
   onProfileUpdate?: (p: UserProfile) => void
@@ -140,12 +138,9 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
   const [deletingMemKey, setDeletingMemKey] = useState<string | null>(null)
   const [memoryExpanded, setMemoryExpanded] = useState(false)
 
-  const supabase = createClient()
   const lang = p.language ?? 'en'
   const isRTL = lang === 'he' || lang === 'ar'
   const set = (k: keyof UserProfile, v: unknown) => setP(prev => ({ ...prev, [k]: v }))
-
-  const isLocalMode = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
   // Auto-save a single field immediately (merged server-side into the profile).
   // Reports whether it actually landed — there is no Save button here, so the
@@ -154,12 +149,8 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
   const saveField = async (key: keyof UserProfile, value: unknown): Promise<boolean> => {
     const patch = { [key]: value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
     try {
-      if (isLocalMode) {
-        const res = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
-        return res.ok
-      }
-      const { error } = await supabase.from('user_profiles').upsert({ ...patch, user_id: user.id })
-      return !error
+      const res = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+      return res.ok
     } catch {
       return false
     }
@@ -628,7 +619,6 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
           <button
             onClick={async () => {
               await fetch('/api/auth/logout', { method: 'POST' })
-              try { await supabase.auth.signOut() } catch { /* local mode */ }
               window.location.href = '/login'
             }}
             style={{ width: '100%', padding: '11px 16px', borderRadius: 12, background: 'var(--bg-input)', border: '1px solid var(--border-hi)', color: 'var(--text)', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginBottom: 8 }}

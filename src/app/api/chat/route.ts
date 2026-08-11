@@ -17,16 +17,14 @@ import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
 import { mapToMethod } from '@/lib/scheduling/methodMapper'
-import { decryptApiKey } from '@/lib/encryption'
 import { sendPush, sendFcmPush } from '@/lib/push'
+import { sendNtfy, defaultTopicFor, isNtfyConfigured } from '@/lib/notifications/channels/ntfy'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { DATA_DIR } from '@/lib/util/dataDir'
 import { recordFeedback, readFeedback } from '@/lib/feedback/store'
 import crypto from 'crypto'
 import path from 'path'
-
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 // Shared constants
 const BUFFER_MIN = 15        // minutes of breathing room between events
@@ -74,10 +72,8 @@ const ANTHROPIC_FOLLOWUP_MAX_TOKENS = 4096
  * non-default sampling parameters outright. None were ever sent; keep it that way.
  */
 const EFFORT_CAPABLE = /^claude-(opus-5|sonnet-5|fable-5|mythos-5|opus-4-[5678]|sonnet-4-6)/
-// `xhigh` exists on the API but not in the installed SDK's types (0.78 predates
-// it). Left out deliberately rather than cast around — add it when the SDK is
-// upgraded, so the compiler keeps telling us what the client actually supports.
-const EFFORT_LEVELS = ['low', 'medium', 'high', 'max'] as const
+// SDK upgraded to 0.116 — `xhigh` is now in `output_config.effort`'s type, so it's back.
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 type EffortLevel = typeof EFFORT_LEVELS[number]
 
 function chatEffort(): EffortLevel {
@@ -142,7 +138,6 @@ function buildErrorStream(message: string): Response {
 }
 
 function loadFreshProfile(userId: string): UserProfile | null {
-  if (!DEMO_MODE) return null  // Supabase handled separately in POST
   const file = path.join(DATA_DIR, 'users',assertSafeUserId(userId), 'profile.json')
   return readJsonFile<UserProfile | null>(file, null)
 }
@@ -161,42 +156,15 @@ function toAnthropicTools(tools: OpenAI.ChatCompletionTool[]) {
   })
 }
 
-function parseXmlToolCalls(content: string): { name: string; args: Record<string, unknown> }[] {
-  const calls: { name: string; args: Record<string, unknown> }[] = []
-  const invokeRe = /<invoke name="([^"]+)">([\s\S]*?)<\/invoke>/g
-  let m
-  while ((m = invokeRe.exec(content)) !== null) {
-    const args: Record<string, unknown> = {}
-    const paramRe = /<parameter name="([^"]+)">([\s\S]*?)<\/parameter>/g
-    let pm
-    while ((pm = paramRe.exec(m[2])) !== null) {
-      let val: unknown = pm[2].trim()
-      try { val = JSON.parse(val as string) } catch { /* keep as string */ }
-      args[pm[1]] = val
-    }
-    calls.push({ name: m[1], args })
-  }
-  return calls
-}
-
 // ─── Main handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   const encoder = new TextEncoder()
 
   try {
-    let userId: string | null = null
-
-    if (DEMO_MODE) {
-      const cookieStore = await cookies()
-      const token = cookieStore.get(COOKIE_NAME)?.value
-      userId = getUserIdFromCookie(token)
-    } else {
-      const { createClient } = await import('@/lib/supabase/server')
-      const supabase = await createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      userId = user?.id ?? null
-    }
+    const cookieStore = await cookies()
+    const token = cookieStore.get(COOKIE_NAME)?.value
+    const userId = getUserIdFromCookie(token)
 
     if (!userId) return new Response('Unauthorized', { status: 401 })
 
@@ -211,89 +179,21 @@ export async function POST(req: NextRequest) {
       timezone?: string
     }
 
-    // ── Resolve AI provider + key ───────────────────────────────────────────
     // Always load from server-side profile (never trust the client-sent profile for secrets)
-    let freshProfile: UserProfile | null = null
-    if (DEMO_MODE) {
-      freshProfile = loadFreshProfile(userId)
-    } else {
-      const { createClient } = await import('@/lib/supabase/server')
-      const supabase = await createClient()
-      const { data } = await supabase.from('user_profiles').select('*').eq('user_id', userId).single()
-      freshProfile = data as UserProfile | null
+    const freshProfile: UserProfile | null = loadFreshProfile(userId)
+
+    // Anthropic is the only provider — one server-wide key, model chosen via env
+    // (no code change to switch). Per-user API keys were removed: Settings never
+    // shipped a UI to enter one, so the encrypted-key precedence was dead code.
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    if (!apiKey) {
+      return buildErrorStream('⚙️ No Anthropic API key configured on the server.')
     }
-
-    // Auto-heal a stale per-user MiniMax key. MiniMax is deprecated/unpaid; a leftover
-    // key from old Settings testing OVERRIDES the server Anthropic default for this user
-    // → every AI call 402s → onboarding modal can't complete, chat "forgets" the user.
-    // Drop it so the user falls back to the env provider, and persist the cleanup once.
-    if (freshProfile?.ai_provider === 'minimax' && freshProfile.ai_api_key_encrypted) {
-      freshProfile = {
-        ...freshProfile,
-        ai_provider: undefined,
-        ai_model: undefined,
-        ai_api_key_encrypted: undefined,
-        ai_api_key_masked: undefined,
-      }
-      try {
-        if (DEMO_MODE) {
-          const profFile = path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'profile.json')
-          writeJsonFileAtomic(profFile, freshProfile)
-        } else {
-          const { createClient } = await import('@/lib/supabase/server')
-          const supabase = await createClient()
-          await supabase.from('user_profiles').update({
-            ai_provider: null, ai_model: null, ai_api_key_encrypted: null, ai_api_key_masked: null,
-          }).eq('user_id', userId)
-        }
-        console.log('[chat] auto-healed stale MiniMax per-user key for', userId)
-      } catch (err) {
-        console.warn('[chat] failed to persist MiniMax key cleanup:', (err as Error)?.message)
-      }
-    }
-
-    // Precedence: per-user Settings key > env-driven server default (AI_PROVIDER/AI_MODEL) > legacy fallbacks.
-    let provider = 'openai'
-    let model = 'gpt-4o-mini'
-    let apiKey: string
-
-    const envKeyFor = (p?: string): string | undefined =>
-      p === 'anthropic'  ? process.env.ANTHROPIC_API_KEY :
-      p === 'minimax'    ? process.env.MINIMAX_API_KEY :
-      p === 'openrouter' ? process.env.OPENROUTER_API_KEY :
-      p === 'openai'     ? process.env.OPENAI_API_KEY :
-      undefined
-    const defaultModelFor = (p: string): string =>
-      p === 'anthropic'  ? DEFAULT_ANTHROPIC_MODEL :
-      p === 'minimax'    ? 'MiniMax-M2.5' :
-      'gpt-4o-mini'
-
-    if (freshProfile?.ai_api_key_encrypted) {
-      // Per-user key from Settings
-      apiKey = decryptApiKey(freshProfile.ai_api_key_encrypted)
-      provider = freshProfile.ai_provider ?? 'openai'
-      model = freshProfile.ai_model ?? 'gpt-4o-mini'
-    } else if (process.env.AI_PROVIDER && envKeyFor(process.env.AI_PROVIDER)) {
-      // Server-wide default — one key for everyone, model chosen via env (no code change to switch)
-      provider = process.env.AI_PROVIDER
-      model = process.env.AI_MODEL || defaultModelFor(provider)
-      apiKey = envKeyFor(provider)!
-    } else if (process.env.ANTHROPIC_API_KEY) {
-      provider = 'anthropic'; model = process.env.AI_MODEL || DEFAULT_ANTHROPIC_MODEL; apiKey = process.env.ANTHROPIC_API_KEY
-    } else if (process.env.OPENAI_API_KEY) {
-      provider = 'openai'; model = 'gpt-4o-mini'; apiKey = process.env.OPENAI_API_KEY
-    } else {
-      // NOTE: MiniMax is intentionally NOT an auto-fallback. It is deprecated/unpaid,
-      // and a stale MINIMAX_API_KEY lingering in env used to silently brick users.
-      // It is still honored ONLY when explicitly chosen via AI_PROVIDER=minimax above.
-      return buildErrorStream(
-        '⚙️ No API key configured. Go to **Settings → AI Model** to add your API key.'
-      )
-    }
+    const model = process.env.AI_MODEL || DEFAULT_ANTHROPIC_MODEL
 
     // One model, pinned for the whole conversation — see DEFAULT_ANTHROPIC_MODEL.
     const v2 = schedulerV2Enabled()
-    console.log('[chat] provider:', provider, 'model:', model, 'scheduler_v2:', v2)
+    console.log('[chat] model:', model, 'scheduler_v2:', v2)
     // ───────────────────────────────────────────────────────────────────────
 
     // Create "now" in the user's timezone (Railway runs UTC; user may be in Asia/Jerusalem etc.)
@@ -313,14 +213,14 @@ export async function POST(req: NextRequest) {
     })()
 
     // Deterministic learning signals (rejections/moves of AI events).
-    const feedback = DEMO_MODE ? readFeedback(userId) : []
+    const feedback = readFeedback(userId)
 
     // Memory recall must NOT depend on the client sending it. The client loads
     // memory async on mount, so a fast first message can POST an empty array and
-    // the AI "forgets" the user across sessions. In demo mode we always read the
-    // file server-side as the source of truth; fall back to the client body only
+    // the AI "forgets" the user across sessions. We always read the file
+    // server-side as the source of truth; fall back to the client body only
     // if the file is empty (e.g. a brand-new user mid-onboarding).
-    const serverMemory = DEMO_MODE ? readJsonFile<AIMemory[]>(memoryFile(userId), []) : undefined
+    const serverMemory = readJsonFile<AIMemory[]>(memoryFile(userId), [])
     const effectiveMemory: AIMemory[] | undefined =
       serverMemory && serverMemory.length > 0
         ? serverMemory
@@ -337,8 +237,6 @@ export async function POST(req: NextRequest) {
     const sys = v2
       ? { ...rawSys, dynamicSuffix: `${rawSys.dynamicSuffix}\n\n${SCHEDULER_V2_GUIDANCE}`.trim() }
       : rawSys
-    // For OpenAI-compatible providers: one system string (stable prefix first → auto-caches).
-    const systemPrompt = sys.dynamicSuffix ? `${sys.staticPrefix}\n\n${sys.dynamicSuffix}` : sys.staticPrefix
 
     const createdEvents: CalendarEvent[] = []
     const updatedEvents: CalendarEvent[] = []
@@ -362,7 +260,7 @@ export async function POST(req: NextRequest) {
 
     // ── Tool-call loop ──────────────────────────────────────────────────────
 
-    if (provider === 'anthropic') {
+    {
       // Anthropic tool-call loop
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const anthropic = new Anthropic({ apiKey })
@@ -484,288 +382,6 @@ export async function POST(req: NextRequest) {
 
       if (state.completedProfile) completedProfile = state.completedProfile
 
-    } else {
-      // OpenAI-compatible loop (OpenAI + MiniMax + OpenRouter)
-      const openaiClient = new OpenAI({
-        apiKey,
-        baseURL:
-          provider === 'minimax'    ? 'https://api.minimaxi.chat/v1' :
-          provider === 'openrouter' ? 'https://openrouter.ai/api/v1' :
-          undefined,
-        defaultHeaders: provider === 'openrouter' ? {
-          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
-          'X-Title': 'Zman AI Scheduler',
-        } : undefined,
-      })
-
-      const currentMessages: OpenAI.ChatCompletionMessageParam[] = [
-        { role: 'system', content: systemPrompt },
-        ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      ]
-
-      // Reasoning models (MiniMax-M2.5, o1, etc.) need more tokens for thinking
-      const isReasoningModel = model.includes('M2.5') || model.includes('M2-5') || model.startsWith('o1') || model.startsWith('o3')
-      const maxTokens = isReasoningModel ? 4096 : 2048
-
-      // Same shape as the Anthropic branch: the loop owns its failures so the
-      // stream below always gets to run and always terminates with `done`.
-      try {
-        let iterations = 0
-        const loopStart = Date.now()
-        while (iterations < 10) {
-          if (Date.now() - loopStart > MAX_LOOP_MS) {
-            console.warn('[chat] OpenAI tool-loop timeout after', iterations, 'iterations')
-            if (!lastContent) lastContent = '⏱️ This took too long to process. Please try again.'
-            break
-          }
-          iterations++
-          const response = await openaiClient.chat.completions.create({
-            model,
-            messages: currentMessages,
-            tools: activeTools,
-            tool_choice: 'auto',
-            max_tokens: maxTokens,
-          })
-
-          const message = response.choices[0].message
-
-          if (message.tool_calls?.length) {
-            currentMessages.push(message)
-            for (const toolCall of message.tool_calls) {
-              const tc = toolCall as { id: string; function: { name: string; arguments: string } }
-              // Guard against truncated/invalid tool-call JSON (e.g. hit max_tokens mid-args)
-              let input: Record<string, unknown>
-              try {
-                input = JSON.parse(tc.function.arguments) as Record<string, unknown>
-              } catch {
-                currentMessages.push({
-                  role: 'tool',
-                  tool_call_id: tc.id,
-                  content: JSON.stringify({ error: 'invalid_arguments', message: 'Tool arguments were not valid JSON (possibly truncated). Retry with shorter arguments or split into multiple calls.' }),
-                })
-                continue
-              }
-              toolCallsMade++
-              const result = await executeTool(
-                tc.function.name, input, userId as string, events,
-                createdEvents, updatedEvents, deletedEventIds, profile, state,
-                freshProfile?.push_subscription,
-                freshProfile?.fcm_token,
-                userNow,
-                schedCtx,
-              )
-              currentMessages.push({
-                role: 'tool',
-                tool_call_id: tc.id,
-                content: JSON.stringify(result),
-              })
-            }
-            if (state.completedProfile) completedProfile = state.completedProfile
-            continue
-          }
-
-          // Fallback: MiniMax M2.5 sometimes outputs XML tool calls in content
-          if (!message.tool_calls?.length && message.content?.includes('<invoke name=')) {
-            const xmlCalls = parseXmlToolCalls(message.content)
-            if (xmlCalls.length > 0) {
-              currentMessages.push(message)
-              const allowed = new Set(
-                activeTools
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  .map(t => (t as any).function?.name as string)
-                  .filter(Boolean)
-              )
-              let xmlIdx = 0
-              for (const tc of xmlCalls) {
-                // Only execute recognized tool names — never run an arbitrary name parsed from content
-                if (!allowed.has(tc.name)) {
-                  currentMessages.push({
-                    role: 'tool',
-                    tool_call_id: `xml-${xmlIdx++}`,
-                    content: JSON.stringify({ error: 'unknown_tool', message: `'${tc.name}' is not a valid tool` }),
-                  })
-                  continue
-                }
-                toolCallsMade++
-                const result = await executeTool(
-                  tc.name, tc.args, userId as string, events,
-                  createdEvents, updatedEvents, deletedEventIds, profile, state,
-                  freshProfile?.push_subscription,
-                  freshProfile?.fcm_token,
-                  userNow,
-                  schedCtx,
-                )
-                currentMessages.push({
-                  role: 'tool',
-                  tool_call_id: `xml-${tc.name}-${xmlIdx++}`,
-                  content: JSON.stringify(result),
-                })
-              }
-              continue
-            }
-          }
-
-          // No more tool calls — capture final text (strip reasoning + XML blocks)
-          lastContent = (message.content ?? '')
-            .replace(/<think>[\s\S]*?<\/think>/g, '')
-            .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
-            .trim()
-          break
-        }
-
-        // Same rule as the Anthropic branch, from the same function — see lib/ai/followup.ts.
-        if (needsFollowup(lastContent, toolCallsMade)) {
-          try {
-            if (lastContent.trim()) currentMessages.push({ role: 'assistant', content: lastContent })
-            currentMessages.push({ role: 'user', content: followupPrompt(schedCtx.isHe) })
-            const retryResp = await openaiClient.chat.completions.create({
-              model,
-              messages: currentMessages,
-              max_tokens: maxTokens,
-            })
-            const retryText = (retryResp.choices[0].message.content ?? '')
-              .replace(/<think>[\s\S]*?<\/think>/g, '')
-              .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
-              .trim()
-            if (retryText.length > lastContent.trim().length) {
-              lastContent = retryText
-            }
-          } catch { /* keep original lastContent */ }
-        }
-      } catch (err) {
-        console.error('[chat] OpenAI provider loop failed:', err)
-        if (!lastContent) {
-          lastContent = schedCtx.isHe
-            ? '⚠️ הייתה תקלה מול מנוע ה-AI. נסה שוב בעוד רגע.'
-            : '⚠️ The AI provider failed on this request. Please try again in a moment.'
-        }
-      }
-
-      if (state.completedProfile) completedProfile = state.completedProfile
-
-      // Send push notification when AI creates events (FCM for native, VAPID for browser)
-      if (createdEvents.length > 0 && freshProfile && (freshProfile.fcm_token || freshProfile.push_subscription)) {
-        const lang = freshProfile.language ?? 'en'
-        const titles = createdEvents.slice(0, 2).map(e => e.title).join(', ')
-        const more = createdEvents.length > 2 ? (lang === 'he' ? ` ועוד ${createdEvents.length - 2}` : ` +${createdEvents.length - 2} more`) : ''
-        const pushPayload = {
-          title: lang === 'he' ? '📅 זמן הוסיף לוח שנה' : '📅 Zman added to calendar',
-          body: titles + more,
-          url: '/app',
-        }
-        if (freshProfile.fcm_token) {
-          sendFcmPush(freshProfile.fcm_token, pushPayload).catch(err => console.warn('[chat] FCM push failed:', err?.message))
-        } else if (freshProfile.push_subscription) {
-          sendPush(freshProfile.push_subscription, { ...pushPayload, tag: 'zman-events' }).catch(err => console.warn('[chat] VAPID push failed:', err?.message))
-        }
-      }
-
-      // Stream final response
-      const readableStream = new ReadableStream({
-        async start(controller) {
-          try {
-            controller.enqueue(encoder.encode(
-              `data: ${JSON.stringify({ type: 'events', createdEvents, updatedEvents, deletedEventIds })}\n\n`
-            ))
-
-            if (completedProfile) {
-              controller.enqueue(encoder.encode(
-                `data: ${JSON.stringify({ type: 'onboarding_complete', profile: completedProfile })}\n\n`
-              ))
-            }
-
-            // Notify client to re-fetch memory if any save_memory calls were made
-            if (state.memoryUpdated) {
-              controller.enqueue(encoder.encode(
-                `data: ${JSON.stringify({ type: 'memory_updated' })}\n\n`
-              ))
-            }
-
-            // Notify client to re-fetch tasks if any task tool calls were made
-            if (state.tasksUpdated) {
-              controller.enqueue(encoder.encode(
-                `data: ${JSON.stringify({ type: 'tasks_updated' })}\n\n`
-              ))
-            }
-
-            if (lastContent) {
-              // Stream content word-by-word so the client shows progressive rendering
-              const words = lastContent.split(/(?<=\s)|(?=\s)/)
-              for (const word of words) {
-                if (word) {
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({ type: 'text', content: word })}\n\n`
-                  ))
-                }
-              }
-            } else {
-              // No text yet — stream a fresh response
-              const currentMsgs: OpenAI.ChatCompletionMessageParam[] = [
-                { role: 'system', content: systemPrompt },
-                ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-              ]
-              const streamResp = await openaiClient.chat.completions.create({
-                model,
-                messages: currentMsgs,
-                max_tokens: maxTokens,
-                stream: true,
-              })
-
-              let streamBuffer = ''
-              let thinkingDone = false
-              for await (const chunk of streamResp) {
-                const delta = chunk.choices[0]?.delta?.content
-                if (!delta) continue
-                if (!thinkingDone) {
-                  streamBuffer += delta
-                  // Once we see the closing </think> tag, emit everything after it
-                  const closeIdx = streamBuffer.indexOf('</think>')
-                  if (closeIdx !== -1) {
-                    thinkingDone = true
-                    const afterThink = streamBuffer.slice(closeIdx + 8).trimStart()
-                    if (afterThink) {
-                      controller.enqueue(encoder.encode(
-                        `data: ${JSON.stringify({ type: 'text', content: afterThink })}\n\n`
-                      ))
-                    }
-                    streamBuffer = ''
-                  } else if (!streamBuffer.startsWith('<think>') && !streamBuffer.startsWith('<')) {
-                    // No thinking block — emit directly
-                    thinkingDone = true
-                    controller.enqueue(encoder.encode(
-                      `data: ${JSON.stringify({ type: 'text', content: streamBuffer })}\n\n`
-                    ))
-                    streamBuffer = ''
-                  }
-                } else {
-                  controller.enqueue(encoder.encode(
-                    `data: ${JSON.stringify({ type: 'text', content: delta })}\n\n`
-                  ))
-                }
-              }
-            }
-
-          } catch (err) {
-            console.error('Stream error:', err)
-            const message = err instanceof Error ? err.message : 'stream_failed'
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message })}\n\n`))
-          } finally {
-            // `done` is what ends the client's read loop. Emitting it only on the
-            // happy path meant any mid-stream throw left the UI spinning forever
-            // on a turn that was already over, so it lives in `finally`.
-            controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
-            controller.close()
-          }
-        }
-      })
-
-      return new Response(readableStream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'X-Accel-Buffering': 'no',
-        },
-      })
     }
 
     // ── Anthropic / shared SSE stream ───────────────────────────────────────
@@ -823,8 +439,8 @@ export async function POST(req: NextRequest) {
           console.error('Stream error:', err)
           controller.enqueue(encoder.encode('data: {"type":"error"}\n\n'))
         } finally {
-          // See the note on the OpenAI stream: `done` must be unconditional, or
-          // an error frame leaves the client waiting on a stream that has closed.
+          // `done` must be unconditional, or an error frame leaves the client
+          // waiting on a stream that has closed.
           controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
           controller.close()
         }
@@ -960,14 +576,7 @@ async function executeTool(
           }
 
           try {
-            if (DEMO_MODE) {
-              userStore.addEvent(instance, userId)
-            } else {
-              const { createClient } = await import('@/lib/supabase/server')
-              const supabase = await createClient()
-              const { error } = await supabase.from('events').insert(instance)
-              if (error) throw new Error(error.message)
-            }
+            userStore.addEvent(instance, userId)
           } catch (err) {
             recWriteErrors++
             console.warn('[chat] recurring instance write failed:', (err as Error)?.message)
@@ -1058,18 +667,10 @@ async function executeTool(
           : classifyMobility(str(input.title), 'ai', true),
       }
 
-      if (DEMO_MODE) {
-        try {
-          userStore.addEvent(event, userId)
-        } catch (err) {
-          return { error: 'write_failed', message: `Could not save the event: ${(err as Error)?.message}. Do NOT tell the user it was created.` }
-        }
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        const { data, error } = await supabase.from('events').insert(event).select().single()
-        if (error) return { error: error.message }
-        Object.assign(event, data)
+      try {
+        userStore.addEvent(event, userId)
+      } catch (err) {
+        return { error: 'write_failed', message: `Could not save the event: ${(err as Error)?.message}. Do NOT tell the user it was created.` }
       }
 
       createdEvents.push(event)
@@ -1093,28 +694,14 @@ async function executeTool(
       // Apply to entire recurring series
       if (apply_to_series && existing.series_id) {
         const seriesEvents = currentEvents.filter(e => e.series_id === existing.series_id)
-        if (DEMO_MODE) {
-          for (const e of seriesEvents) userStore.updateEvent(e.id, changes as Partial<CalendarEvent>, userId)
-        } else {
-          const { createClient } = await import('@/lib/supabase/server')
-          const supabase = await createClient()
-          const { error } = await supabase.from('events').update(changes).eq('series_id', existing.series_id).eq('user_id', userId)
-          if (error) return { error: error.message }
-        }
+        for (const e of seriesEvents) userStore.updateEvent(e.id, changes as Partial<CalendarEvent>, userId)
         const updatedSeries = seriesEvents.map(e => ({ ...e, ...changes } as CalendarEvent))
         updatedEvents.push(...updatedSeries)
         return { success: true, updated_count: seriesEvents.length, series_id: existing.series_id }
       }
 
       // Single event update
-      if (DEMO_MODE) {
-        userStore.updateEvent(event_id, changes as Partial<CalendarEvent>, userId)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        const { error } = await supabase.from('events').update(changes).eq('id', event_id).eq('user_id', userId)
-        if (error) return { error: error.message }
-      }
+      userStore.updateEvent(event_id, changes as Partial<CalendarEvent>, userId)
 
       const updated = { ...existing, ...changes }
       updatedEvents.push(updated as CalendarEvent)
@@ -1186,14 +773,7 @@ async function executeTool(
         })
       }
 
-      if (DEMO_MODE) {
-        userStore.updateEvent(event_id, { start_time: new_start_time, end_time: new_end_time }, userId)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        const { error } = await supabase.from('events').update({ start_time: new_start_time, end_time: new_end_time }).eq('id', event_id).eq('user_id', userId)
-        if (error) return { error: error.message }
-      }
+      userStore.updateEvent(event_id, { start_time: new_start_time, end_time: new_end_time }, userId)
 
       updatedEvents.push(updated)
       return { success: true, event: updated }
@@ -1210,28 +790,14 @@ async function executeTool(
 
         if (sid) {
           const seriesIds = currentEvents.filter(e => e.series_id === sid).map(e => e.id)
-          if (DEMO_MODE) {
-            for (const id of seriesIds) userStore.deleteEvent(id, userId)
-          } else {
-            const { createClient } = await import('@/lib/supabase/server')
-            const supabase = await createClient()
-            const { error } = await supabase.from('events').delete().eq('series_id', sid).eq('user_id', userId)
-            if (error) return { error: error.message }
-          }
+          for (const id of seriesIds) userStore.deleteEvent(id, userId)
           deletedEventIds.push(...seriesIds)
           return { success: true, deleted_series_id: sid, instances_deleted: seriesIds.length }
         }
         // No series_id — fall through to single delete
       }
 
-      if (DEMO_MODE) {
-        userStore.deleteEvent(event_id, userId)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        const { error } = await supabase.from('events').delete().eq('id', event_id).eq('user_id', userId)
-        if (error) return { error: error.message }
-      }
+      userStore.deleteEvent(event_id, userId)
 
       deletedEventIds.push(event_id)
       return { success: true }
@@ -1366,15 +932,7 @@ async function executeTool(
         }
 
         try {
-          if (DEMO_MODE) {
-            userStore.addEvent(event, userId)
-          } else {
-            const { createClient } = await import('@/lib/supabase/server')
-            const supabase = await createClient()
-            const { data, error } = await supabase.from('events').insert(event).select().single()
-            if (error) throw new Error(error.message)
-            if (data) Object.assign(event, data)
-          }
+          userStore.addEvent(event, userId)
         } catch (err) {
           writeErrors++
           console.warn('[chat] break_down_task write failed:', (err as Error)?.message)
@@ -1646,38 +1204,18 @@ async function executeTool(
         }
         return existing
       }
-      if (DEMO_MODE) {
-        const memFile = memoryFile(userId)
-        const updated = memHelper(readJsonFile<AIMemory[]>(memFile, []))
-        writeJsonFileAtomic(memFile, updated)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        for (const entry of entries) {
-          const { error } = await supabase.from('ai_memory').upsert({
-            user_id: userId, key: entry.key, value: entry.value, learned_from: 'behavior',
-          }, { onConflict: 'user_id,key' })
-          if (error) {
-            console.error('[chat] save_memory upsert failed:', error.message)
-            return { error: 'memory_save_failed', message: error.message }
-          }
-        }
-      }
+      const memFile = memoryFile(userId)
+      const updated = memHelper(readJsonFile<AIMemory[]>(memFile, []))
+      writeJsonFileAtomic(memFile, updated)
       state.memoryUpdated = true
       return { success: true, saved: entries.length }
     }
 
     case 'delete_memory': {
       const { keys } = input as { keys: string[] }
-      if (DEMO_MODE) {
-        const memFile = memoryFile(userId)
-        const filtered = readJsonFile<AIMemory[]>(memFile, []).filter(m => !keys.includes(m.key))
-        writeJsonFileAtomic(memFile, filtered)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        await supabase.from('ai_memory').delete().eq('user_id', userId).in('key', keys)
-      }
+      const memFile = memoryFile(userId)
+      const filtered = readJsonFile<AIMemory[]>(memFile, []).filter(m => !keys.includes(m.key))
+      writeJsonFileAtomic(memFile, filtered)
       return { success: true, deleted: keys.length }
     }
 
@@ -1695,14 +1233,7 @@ async function executeTool(
         parent_task_id: input.parent_task_id ? str(input.parent_task_id) : undefined,
         created_at: new Date().toISOString(),
       }
-      if (DEMO_MODE) {
-        userStore.addTask(task, userId)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        const { error } = await supabase.from('tasks').insert(task)
-        if (error) return { error: error.message }
-      }
+      userStore.addTask(task, userId)
       state.tasksUpdated = true
       return { success: true, task }
     }
@@ -1717,49 +1248,24 @@ async function executeTool(
       if (input.deadline) updates.deadline = str(input.deadline)
       if (input.estimated_hours) updates.estimated_hours = num(input.estimated_hours)
 
-      if (DEMO_MODE) {
-        userStore.updateTask(taskId, updates, userId)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        const { error } = await supabase.from('tasks').update(updates).eq('id', taskId).eq('user_id', userId)
-        if (error) return { error: error.message }
-      }
+      userStore.updateTask(taskId, updates, userId)
       state.tasksUpdated = true
       return { success: true }
     }
 
     case 'delete_task': {
       const taskId = str(input.task_id)
-      if (DEMO_MODE) {
-        userStore.deleteTask(taskId, userId)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        const { error } = await supabase.from('tasks').delete().eq('id', taskId).eq('user_id', userId)
-        if (error) return { error: error.message }
-      }
+      userStore.deleteTask(taskId, userId)
       state.tasksUpdated = true
       return { success: true }
     }
 
     case 'list_tasks': {
       const { status, topic } = input as { status?: string; topic?: string }
-      if (DEMO_MODE) {
-        let tasks = userStore.getTasks(userId)
-        if (status) tasks = tasks.filter(t => t.status === status)
-        if (topic) tasks = tasks.filter(t => t.topic === topic)
-        return { tasks }
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        let query = supabase.from('tasks').select('*').eq('user_id', userId)
-        if (status) query = query.eq('status', status)
-        if (topic) query = query.eq('topic', topic)
-        const { data, error } = await query.order('created_at', { ascending: false })
-        if (error) return { error: error.message }
-        return { tasks: data }
-      }
+      let tasks = userStore.getTasks(userId)
+      if (status) tasks = tasks.filter(t => t.status === status)
+      if (topic) tasks = tasks.filter(t => t.topic === topic)
+      return { tasks }
     }
 
     case 'complete_onboarding': {
@@ -1797,56 +1303,31 @@ async function executeTool(
         else (input as Record<string, unknown>).memory_entries = [fallbackEntry]
       }
 
-      if (DEMO_MODE) {
-        const safeId = assertSafeUserId(userId)
-        // Save memory entries
-        if (memory_entries?.length) {
-          const memFile = path.join(DATA_DIR, 'users',safeId, 'memory.json')
-          const existing = readJsonFile<AIMemory[]>(memFile, [])
-          for (const entry of memory_entries) {
-            const idx = existing.findIndex(m => m.key === entry.key)
-            const item: AIMemory = {
-              id: idx >= 0 ? existing[idx].id : crypto.randomUUID(),
-              user_id: userId, key: entry.key, value: entry.value,
-              learned_from: 'onboarding',
-              created_at: idx >= 0 ? existing[idx].created_at : new Date().toISOString(),
-            }
-            if (idx >= 0) existing[idx] = item
-            else existing.push(item)
+      const safeId = assertSafeUserId(userId)
+      // Save memory entries
+      if (memory_entries?.length) {
+        const memFile = path.join(DATA_DIR, 'users',safeId, 'memory.json')
+        const existing = readJsonFile<AIMemory[]>(memFile, [])
+        for (const entry of memory_entries) {
+          const idx = existing.findIndex(m => m.key === entry.key)
+          const item: AIMemory = {
+            id: idx >= 0 ? existing[idx].id : crypto.randomUUID(),
+            user_id: userId, key: entry.key, value: entry.value,
+            learned_from: 'onboarding',
+            created_at: idx >= 0 ? existing[idx].created_at : new Date().toISOString(),
           }
-          writeJsonFileAtomic(memFile, existing)
+          if (idx >= 0) existing[idx] = item
+          else existing.push(item)
         }
-        // Update profile
-        const profFile = path.join(DATA_DIR, 'users',safeId, 'profile.json')
-        const existing = readJsonFile<UserProfile>(profFile,
-          { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' })
-        const updated: UserProfile = { ...existing, ...(profile_updates ?? {}), onboarding_completed: true, user_id: userId }
-        writeJsonFileAtomic(profFile, updated)
-        state.completedProfile = updated
-      } else {
-        // Supabase mode
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        // Save memory entries
-        if (memory_entries?.length) {
-          for (const entry of memory_entries) {
-            await supabase.from('ai_memory').upsert({
-              user_id: userId, key: entry.key, value: entry.value, learned_from: 'onboarding',
-            }, { onConflict: 'user_id,key' })
-          }
-        }
-        // Update profile
-        const { data: existing } = await supabase
-          .from('user_profiles').select('*').eq('user_id', userId).single()
-        const updated: UserProfile = {
-          ...(existing ?? { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' }),
-          ...(profile_updates ?? {}),
-          onboarding_completed: true,
-          user_id: userId,
-        } as UserProfile
-        await supabase.from('user_profiles').upsert(updated)
-        state.completedProfile = updated
+        writeJsonFileAtomic(memFile, existing)
       }
+      // Update profile
+      const profFile = path.join(DATA_DIR, 'users',safeId, 'profile.json')
+      const existing = readJsonFile<UserProfile>(profFile,
+        { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' })
+      const updated: UserProfile = { ...existing, ...(profile_updates ?? {}), onboarding_completed: true, user_id: userId }
+      writeJsonFileAtomic(profFile, updated)
+      state.completedProfile = updated
 
       if (memory_entries?.length) state.memoryUpdated = true
       return { success: true }
@@ -1854,27 +1335,35 @@ async function executeTool(
 
     case 'send_notification': {
       const { title, body } = input as { title: string; body: string }
-      if (!fcmToken && !pushSubscription) {
-        return { success: false, reason: 'no_push_subscription', message: 'User has no push subscription. Ask them to enable notifications in Settings.' }
+      const payload = { title, body, url: '/app', tag: 'zman-message' }
+
+      // Same channel order as the cron job (see api/cron/notifications). ntfy
+      // leads because it is the only one that reaches a phone on this deployment.
+      const topic = profile?.ntfy_topic || defaultTopicFor(userId)
+      if (topic && isNtfyConfigured()) {
+        // Unlike the two below, this one reports whether it landed — so the model
+        // is told the truth instead of being handed success unconditionally.
+        const delivered = await sendNtfy(topic, payload)
+        return delivered
+          ? { success: true, channel: 'ntfy' }
+          : { success: false, reason: 'delivery_failed', message: 'The notification service rejected the message. Tell the user it did not go through.' }
       }
-      // Try FCM (native Capacitor) first, then fall back to VAPID (browser PWA)
+
       if (fcmToken) {
-        await sendFcmPush(fcmToken, { title, body, url: '/app' })
-      } else if (pushSubscription) {
-        await sendPush(pushSubscription, { title, body, url: '/app', tag: 'zman-message' })
+        await sendFcmPush(fcmToken, payload)
+        return { success: true, channel: 'fcm' }
       }
-      return { success: true }
+      if (pushSubscription) {
+        await sendPush(pushSubscription, payload)
+        return { success: true, channel: 'web-push' }
+      }
+
+      return { success: false, reason: 'no_delivery_channel', message: 'No notification channel is configured for this user, so nothing was sent. Say so plainly — do not claim a reminder was set.' }
     }
 
     case 'delete_all_events': {
       const allIds = currentEvents.map(e => e.id)
-      if (DEMO_MODE) {
-        for (const id of allIds) userStore.deleteEvent(id, userId)
-      } else {
-        const { createClient } = await import('@/lib/supabase/server')
-        const supabase = await createClient()
-        await supabase.from('events').delete().eq('user_id', userId)
-      }
+      for (const id of allIds) userStore.deleteEvent(id, userId)
       deletedEventIds.push(...allIds)
       return { success: true, deleted_count: allIds.length }
     }
@@ -1890,17 +1379,9 @@ async function executeTool(
 // stays here is the part that touches storage: writing events, updating one, and
 // recording the learning signal. Only reachable from a `sched?.enabled` branch.
 
-/** One write path for engine-created events, so demo and Supabase can't drift. */
+/** One write path for engine-created events. */
 async function persistEvent(event: CalendarEvent, userId: string): Promise<void> {
-  if (DEMO_MODE) {
-    userStore.addEvent(event, userId)
-    return
-  }
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data, error } = await supabase.from('events').insert(event).select().single()
-  if (error) throw new Error(error.message)
-  if (data) Object.assign(event, data)
+  userStore.addEvent(event, userId)
 }
 
 /** Applies the slot `planMove` chose, and records that the AI's original time was wrong. */
@@ -1922,16 +1403,7 @@ async function applyEngineMove(
 
   const existing = known.find(e => e.id === eventId)!
 
-  if (DEMO_MODE) {
-    userStore.updateEvent(eventId, { start_time: decision.start, end_time: decision.end }, userId)
-  } else {
-    const { createClient } = await import('@/lib/supabase/server')
-    const supabase = await createClient()
-    const { error } = await supabase.from('events')
-      .update({ start_time: decision.start, end_time: decision.end })
-      .eq('id', eventId).eq('user_id', userId)
-    if (error) return { error: error.message }
-  }
+  userStore.updateEvent(eventId, { start_time: decision.start, end_time: decision.end }, userId)
 
   if (existing.created_by === 'ai') {
     try {

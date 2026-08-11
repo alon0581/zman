@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServerClient } from '@/lib/supabase/server'
 import path from 'path'
 import { getUserIdFromCookie } from '@/lib/auth'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { DATA_DIR } from '@/lib/util/dataDir'
-
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
 function getUserId(req: NextRequest): string | null {
   return getUserIdFromCookie(req.cookies.get('zman_session')?.value)
@@ -26,41 +23,25 @@ export async function POST(req: NextRequest) {
   const isFcm = type === 'fcm'
   const field = isFcm ? 'fcm_token' : 'push_subscription'
 
-  if (DEMO_MODE) {
-    const userId = getUserId(req)
-    if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-    const p = profilePath(userId)
-    const profile = readJsonFile<Record<string, unknown> | null>(p, null)
-    if (!profile) return NextResponse.json({ error: 'profile not found' }, { status: 404 })
-    profile[field] = subscription
-    writeJsonFileAtomic(p, profile)
-    return NextResponse.json({ ok: true })
-  }
-
-  // Supabase mode
-  const supabase = await createServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  await supabase.from('user_profiles').upsert({ user_id: user.id, [field]: subscription })
+  const userId = getUserId(req)
+  if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const p = profilePath(userId)
+  const profile = readJsonFile<Record<string, unknown> | null>(p, null)
+  if (!profile) return NextResponse.json({ error: 'profile not found' }, { status: 404 })
+  profile[field] = subscription
+  writeJsonFileAtomic(p, profile)
   return NextResponse.json({ ok: true })
 }
 
 export async function DELETE(req: NextRequest) {
-  if (DEMO_MODE) {
-    const userId = getUserId(req)
-    if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-    const p = profilePath(userId)
-    const profile = readJsonFile<Record<string, unknown> | null>(p, null)
-    if (profile) {
-      delete profile.push_subscription
-      delete profile.fcm_token
-      writeJsonFileAtomic(p, profile)
-    }
-    return NextResponse.json({ ok: true })
+  const userId = getUserId(req)
+  if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const p = profilePath(userId)
+  const profile = readJsonFile<Record<string, unknown> | null>(p, null)
+  if (profile) {
+    delete profile.push_subscription
+    delete profile.fcm_token
+    writeJsonFileAtomic(p, profile)
   }
-  const supabase = await createServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  await supabase.from('user_profiles').upsert({ user_id: user.id, push_subscription: null, fcm_token: null })
   return NextResponse.json({ ok: true })
 }

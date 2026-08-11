@@ -6,7 +6,6 @@ import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import path from 'path'
 
-const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 const MAX_MESSAGES = 100
 
 interface StoredMessage {
@@ -17,15 +16,9 @@ interface StoredMessage {
 }
 
 async function getAuthUserId(): Promise<string | null> {
-  if (DEMO_MODE) {
-    const cookieStore = await cookies()
-    const token = cookieStore.get(COOKIE_NAME)?.value
-    return getUserIdFromCookie(token)
-  }
-  const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  return user?.id ?? null
+  const cookieStore = await cookies()
+  const token = cookieStore.get(COOKIE_NAME)?.value
+  return getUserIdFromCookie(token)
 }
 
 function chatFile(userId: string) {
@@ -41,7 +34,7 @@ export async function GET(req: NextRequest) {
   const userId = await getAuthUserId()
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const messages = DEMO_MODE ? readMessages(userId) : []
+  const messages = readMessages(userId)
 
   const { searchParams } = new URL(req.url)
   const since = searchParams.get('since')
@@ -59,10 +52,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json() as { messages: StoredMessage[] }
   if (!Array.isArray(body.messages)) return NextResponse.json({ error: 'Invalid' }, { status: 400 })
 
-  if (DEMO_MODE) {
-    // Whole-file overwrite — nothing is read first, so no lock is needed.
-    writeJsonFileAtomic(chatFile(userId), body.messages.slice(-MAX_MESSAGES))
-  }
-  // Supabase: no chat schema — no-op for now
+  // Whole-file overwrite — nothing is read first, so no lock is needed.
+  writeJsonFileAtomic(chatFile(userId), body.messages.slice(-MAX_MESSAGES))
   return NextResponse.json({ ok: true })
 }
