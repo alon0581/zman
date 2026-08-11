@@ -29,7 +29,7 @@ import { buildPriors, emptyPriors } from './priors'
 import { toBusyBlocks } from './timeline'
 import {
   BusyBlock, PlacementRequest, PlanOutcome, RelaxationCode, SchedulingContext,
-  SchedulingProfile, UnplacedCode,
+  SchedulingProfile, UnplacedCode, Weekday,
 } from './types'
 
 /** Breathing room around existing commitments. Matches BUFFER_MIN in the chat route. */
@@ -135,6 +135,27 @@ export function buildSchedulingProfile(profile: UserProfile | null | undefined, 
     peakStartHour: usable ? clampedStart : rawPeakStart,
     peakEndHour: usable ? clampedEnd : rawPeakEnd,
     bufferMinutes: DEFAULT_BUFFER_MINUTES,
+    weekendDays: weekendDaysFor(profile),
+  }
+}
+
+/**
+ * Which days to keep clear, from the user's own answer.
+ *
+ * This matters more than it looks: in the acceptance-gate week, holding Friday
+ * back costs sixteen study sessions. For a student with an exam coming up that
+ * is not a rounding error — it is the difference between the plan fitting and
+ * the plan needing an explanation. So it is the user's call, not a constant.
+ *
+ * Defaults to Friday *and* Saturday because that is the pre-existing behaviour;
+ * a `schedule_weekend` of `'friday'` frees Friday and keeps only Shabbat.
+ */
+function weekendDaysFor(profile: UserProfile | null | undefined): Weekday[] {
+  switch (profile?.schedule_weekend) {
+    case 'both':    return []      // schedule any day, nothing held back
+    case 'friday':  return [6]     // Friday is a study day; Shabbat stays clear
+    case 'none':
+    default:        return [5, 6]
   }
 }
 

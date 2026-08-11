@@ -201,6 +201,7 @@ export const STUDENT_WEEK_PROFILE: SchedulingProfile = {
   peakStartHour: 9,
   peakEndHour: 13,
   bufferMinutes: 15,
+  weekendDays: [5, 6],
 }
 
 /** Matches mapToMethod('student', 'procrastination', 'fixed') in methodMapper.ts. */

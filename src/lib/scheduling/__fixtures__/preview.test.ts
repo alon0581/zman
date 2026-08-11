@@ -2,7 +2,7 @@ import { describe, it } from 'vitest'
 import { planSchedule } from '../plan'
 import { explainReasons } from '../explain'
 import { buildStudentWeekContext, STUDENT_WEEK_BUSY } from './student-week'
-import { PlacementRequest } from '../types'
+import { PlacementRequest, Weekday } from '../types'
 import { localDateKey, parseLocal } from '../clock'
 
 /**
@@ -111,5 +111,43 @@ describe('שבוע לדוגמה — פלט לאישור', () => {
 
     lines.push('')
     console.log(lines.join('\n'))
+  })
+
+  // The one open product question this fixture can actually answer with numbers
+  // instead of opinion: an Israeli student typically studies on Friday and keeps
+  // only Shabbat. Holding Friday back is a real cost, and this prints it.
+  it('מראה מה שישי שווה', { timeout: 60_000 }, () => {
+    const requests: PlacementRequest[] = [{
+      ref: { kind: 'task' },
+      title: 'לימוד לבחינה באלגברה ליניארית',
+      category: 'study',
+      energy: 'high',
+      totalMinutes: 12 * 60,
+      sessionCount: 6,
+      deadline: '2026-08-27T09:00:00',
+    }]
+
+    const count = (weekendDays: Weekday[]) => {
+      const base = buildStudentWeekContext()
+      const outcome = planSchedule({ ...base, profile: { ...base.profile, weekendDays } }, requests)
+      return 'blocks' in outcome ? outcome.blocks.length : 0
+    }
+
+    const withoutFriday = count([5, 6])
+    const withFriday = count([6])
+    const bothDays = count([])
+
+    console.log([
+      '',
+      '════════════════════════════════════════════════════════',
+      '  כמה מפגשים נכנסים, לפי הימים שנשמרים פנויים',
+      '════════════════════════════════════════════════════════',
+      `  שישי ושבת פנויים (ברירת המחדל):  ${withoutFriday} מפגשים`,
+      `  לומד בשישי, שבת נשמרת:            ${withFriday} מפגשים  (+${withFriday - withoutFriday})`,
+      `  לומד בשני הימים:                  ${bothDays} מפגשים  (+${bothDays - withoutFriday})`,
+      '',
+      '  ההגדרה: profile.schedule_weekend = none | friday | both',
+      '',
+    ].join('\n'))
   })
 })

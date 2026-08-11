@@ -11,6 +11,7 @@ const profile: SchedulingProfile = {
   peakStartHour: 9,
   peakEndHour: 12,
   bufferMinutes: 0,
+  weekendDays: [5, 6],
 }
 
 const rules: MethodRules = {

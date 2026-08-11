@@ -81,6 +81,13 @@ export interface UserProfile {
   secondary_methods?: string[]
   challenge?: 'procrastination' | 'overwhelmed' | 'focus' | 'scattered' | 'goals'
   day_structure?: 'fixed' | 'variable' | 'mixed' | 'independent'
+  /**
+   * Which weekend days the scheduler may use. 'none' (the default) keeps both
+   * Friday and Saturday clear; 'friday' frees Friday and keeps only Shabbat;
+   * 'both' holds nothing back. Worth an explicit answer rather than a guess —
+   * in a typical exam week, freeing Friday is worth ~16 extra study sessions.
+   */
+  schedule_weekend?: 'none' | 'friday' | 'both'
 }
 
 /**

@@ -206,7 +206,7 @@ npx vitest run preview --reporter=verbose --disable-console-intercept
 
 | Gap | Note |
 |---|---|
-| Friday/Saturday excluded from scheduling by default | `WEEKEND_DAYS` in `windows.ts`. Costs ~16 sessions in the fixture week. Friday is a real study day for an Israeli student — needs the owner's call |
+| Friday/Saturday held clear by default | Now a profile setting: `schedule_weekend` = `none` \| `friday` \| `both`, read by `weekendDaysFor` in `adapter.ts`. Measured on the fixture week: 15 sessions default, 19 with Friday, 23 with both. Awaiting the owner's answer, but it is a settings change now, not a code change |
 | No `extend_horizon` relaxation | "Too much work, too few days" is the commonest cause of a partial plan and nothing suggests more days |
 | `PlacedBlock.requestIndex` is `-1` for repair-created blocks | Ugly, not wrong |
 | Plans held in process memory (10 min) | A redeploy between propose and confirm makes the user re-ask |

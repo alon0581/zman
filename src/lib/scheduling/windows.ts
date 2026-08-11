@@ -14,10 +14,13 @@ import { LocalISO, addMinutes, localDateKey, minutesBetween, parseLocal, startOf
 import { DayWindow, SchedulingProfile, Weekday } from './types'
 
 /**
- * Friday and Saturday. The engine keeps them clear by default — the Israeli
- * working week runs Sunday to Thursday — and only fills them when the caller
- * asks. That default is what makes the `use_weekend` relaxation an honest offer
- * ("I could place 3 more if you let me use the weekend") rather than a no-op.
+ * Fallback only, for a profile that doesn't say. The real answer lives in
+ * `SchedulingProfile.weekendDays`, because which days someone keeps clear is a
+ * fact about that person, not a property of the algorithm: the Israeli working
+ * week runs Sunday to Thursday, but plenty of students study on Friday and only
+ * keep Shabbat. Either way, holding *some* days back is what makes the
+ * `use_weekend` relaxation an honest offer ("I could place 3 more if you let me
+ * use the weekend") instead of a no-op.
  */
 export const WEEKEND_DAYS: readonly Weekday[] = [5, 6]
 
@@ -80,10 +83,11 @@ export function buildDayWindows(
   const rawEndHour = clampHour(opts.dayEndHour ?? profile.dayEndHour)
   const endHour = rawEndHour <= startHour ? 24 : rawEndHour
   const includeWeekend = opts.includeWeekend ?? false
+  const weekendDays = profile.weekendDays ?? WEEKEND_DAYS
 
   const windows: DayWindow[] = []
   for (const day of eachDayKey(horizon.from, horizon.to)) {
-    if (!includeWeekend && WEEKEND_DAYS.includes(weekdayOf(day))) continue
+    if (!includeWeekend && weekendDays.includes(weekdayOf(day))) continue
 
     const dayStart = dayHourISO(day, startHour)
     const dayEnd = dayHourISO(day, endHour)

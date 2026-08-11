@@ -125,6 +125,15 @@ export interface SchedulingProfile {
   peakEndHour: number
   /** Breathing room to leave on each side of an existing commitment. */
   bufferMinutes: number
+  /**
+   * Days kept free unless the `use_weekend` relaxation is applied. Sunday = 0.
+   *
+   * Policy, not arithmetic, so it belongs to the profile rather than to the
+   * engine: the Israeli work week runs Sunday–Thursday, but Friday is a normal
+   * study day for plenty of students even though Saturday is not. Defaults to
+   * `[5, 6]` when the adapter has nothing better to go on.
+   */
+  weekendDays: Weekday[]
 }
 
 /** Everything the engine needs to know about the world. Assembled by the caller. */

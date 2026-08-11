@@ -14,6 +14,7 @@ const profile: SchedulingProfile = {
   peakStartHour: 9,
   peakEndHour: 12,
   bufferMinutes: 10,
+  weekendDays: [5, 6],
 }
 
 const horizon = { from: '2026-08-10T00:00:00', to: '2026-08-16T00:00:00' }
@@ -91,5 +92,41 @@ describe('clipWindows', () => {
   it('drops windows too short to hold the block', () => {
     const clipped = clipWindows(windows, '2026-08-10T16:30:00', undefined, 60)
     expect(clipped.map(w => w.day)).not.toContain('2026-08-10')
+  })
+})
+
+describe('weekendDays comes from the profile, not from a constant', () => {
+  // Which days someone keeps clear is a fact about that person. An Israeli
+  // student typically studies on Friday and keeps only Shabbat — and in the
+  // acceptance-gate week, freeing Friday is worth sixteen extra study sessions,
+  // so getting this from the profile rather than a hardcoded constant is the
+  // difference between a plan fitting and a plan needing an apology.
+  const week = { from: '2026-08-10T00:00:00', to: '2026-08-17T00:00:00' }
+  const days = (p: SchedulingProfile) => buildDayWindows(p, week).map(w => w.day)
+
+  it('keeps Friday and Saturday clear by default', () => {
+    const got = days(profile)
+    expect(got).not.toContain('2026-08-14') // Friday
+    expect(got).not.toContain('2026-08-15') // Saturday
+  })
+
+  it('frees Friday while still protecting Shabbat', () => {
+    const got = days({ ...profile, weekendDays: [6] })
+    expect(got).toContain('2026-08-14')
+    expect(got).not.toContain('2026-08-15')
+  })
+
+  it('can hold nothing back', () => {
+    const got = days({ ...profile, weekendDays: [] })
+    expect(got).toContain('2026-08-14')
+    expect(got).toContain('2026-08-15')
+  })
+
+  it('still falls back to the constant when a profile omits it', () => {
+    const legacy = { ...profile } as Partial<SchedulingProfile>
+    delete legacy.weekendDays
+    const got = buildDayWindows(legacy as SchedulingProfile, week).map(w => w.day)
+    expect(WEEKEND_DAYS).toEqual([5, 6])
+    expect(got).not.toContain('2026-08-14')
   })
 })
