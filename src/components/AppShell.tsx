@@ -77,8 +77,6 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
 
   useEffect(() => {
     fetchTasks()
-    const id = setInterval(() => { if (pollAllowed()) fetchTasks() }, 30_000)
-    return () => clearInterval(id)
   }, [])
 
   const handleEventsUpdate = (updatedEvents: CalendarEvent[], addedIds?: string[]) => {
@@ -91,16 +89,28 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     }
   }
 
+  // One timer for both events and tasks. They used to have a timer each, firing
+  // independently 30s apart, so a phone woke the radio twice per cycle for two
+  // requests that always want the same freshness. Also skipped entirely while the
+  // tab is hidden — polling a screen nobody is looking at is pure battery cost.
   useEffect(() => {
     const poll = () => {
-      if (!pollAllowed()) return
+      if (!pollAllowed() || document.hidden) return
       fetch('/api/events')
         .then(r => r.ok ? r.json() : null)
         .then(data => { if (data?.events && pollAllowed()) setEvents(data.events) })
         .catch(() => {})
+      fetchTasks()
     }
     const id = setInterval(poll, 30_000)
-    return () => clearInterval(id)
+    // Coming back to the tab should show current data immediately rather than
+    // waiting out the rest of an interval that was skipped while hidden.
+    const onVisible = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   const handleEventUpdate = (id: string, changes: Partial<CalendarEvent>) => {
