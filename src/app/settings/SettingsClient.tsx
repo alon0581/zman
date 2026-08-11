@@ -90,6 +90,8 @@ const LANGS: Record<string, Record<string, string>> = {
     memorySection: 'AI Memory', memoryDesc: 'What the AI remembers about you',
     memoryEmpty: 'Nothing saved yet — the AI will learn as you chat.',
     memoryClearAll: 'Clear all', memoryClearConfirm: 'Clear all memory? This cannot be undone.',
+    saveFailed: "Couldn't save — check your connection and try again.",
+    memoryDeleteFailed: "Couldn't delete that. Nothing was removed.",
   },
   he: {
     title: 'הגדרות', subtitle: 'התאם אישית את החוויה שלך',
@@ -114,6 +116,8 @@ const LANGS: Record<string, Record<string, string>> = {
     memorySection: 'זיכרון AI', memoryDesc: 'מה ה-AI זוכר עליך',
     memoryEmpty: 'עדיין לא נשמר כלום — ה-AI ילמד תוך כדי שיחה.',
     memoryClearAll: 'נקה הכל', memoryClearConfirm: 'למחוק את כל הזיכרון? לא ניתן לשחזר.',
+    saveFailed: 'לא הצלחנו לשמור — בדוק את החיבור ונסה שוב.',
+    memoryDeleteFailed: 'המחיקה נכשלה. שום דבר לא הוסר.',
   },
 }
 
@@ -127,6 +131,8 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     voice_response_enabled: false, language: 'en', onboarding_completed: false,
   })
   const [saved, setSaved] = useState(false)
+  // Set when a write actually failed, so the UI can say so instead of flashing "✓ saved".
+  const [saveError, setSaveError] = useState<string | null>(null)
 
 
   // Memory state
@@ -141,13 +147,21 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
 
   const isLocalMode = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
-  // Auto-save a single field immediately (merged server-side into the profile)
-  const saveField = async (key: keyof UserProfile, value: unknown) => {
+  // Auto-save a single field immediately (merged server-side into the profile).
+  // Reports whether it actually landed — there is no Save button here, so the
+  // only thing telling the user their setting stuck is the "✓ saved" flash, and
+  // flashing it after a failed write is just lying to them.
+  const saveField = async (key: keyof UserProfile, value: unknown): Promise<boolean> => {
     const patch = { [key]: value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
-    if (isLocalMode) {
-      await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
-    } else {
-      await supabase.from('user_profiles').upsert({ ...patch, user_id: user.id })
+    try {
+      if (isLocalMode) {
+        const res = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+        return res.ok
+      }
+      const { error } = await supabase.from('user_profiles').upsert({ ...patch, user_id: user.id })
+      return !error
+    } catch {
+      return false
     }
   }
 
@@ -160,8 +174,8 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
     const next = { ...p, [k]: v } as UserProfile
     setP(next)
     onProfileUpdate?.(next)
-    saveField(k, v)
-    flashSaved()
+    setSaveError(null)
+    saveField(k, v).then(ok => ok ? flashSaved() : setSaveError(t(lang, 'saveFailed')))
   }
 
   const handleMethodClick = (key: SchedulingMethod) => {
@@ -556,9 +570,18 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                         <button
                           onClick={async () => {
                             setDeletingMemKey(m.key)
-                            await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [m.key] }) })
-                            setMemory(prev => prev.filter(x => x.key !== m.key))
-                            setDeletingMemKey(null)
+                            setSaveError(null)
+                            try {
+                              const res = await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [m.key] }) })
+                              // Only drop it from the list once the server agrees it's gone,
+                              // otherwise it reappears on the next load and looks like a ghost.
+                              if (!res.ok) throw new Error('memory_delete_failed')
+                              setMemory(prev => prev.filter(x => x.key !== m.key))
+                            } catch {
+                              setSaveError(t(lang, 'memoryDeleteFailed'))
+                            } finally {
+                              setDeletingMemKey(null)
+                            }
                           }}
                           disabled={deletingMemKey === m.key}
                           style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: 'none', background: 'rgba(255,100,100,0.15)', color: '#F87171', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: deletingMemKey === m.key ? 0.5 : 1, marginTop: 2 }}
@@ -569,8 +592,14 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
                   <button
                     onClick={async () => {
                       if (!window.confirm(t(lang, 'memoryClearConfirm'))) return
-                      await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) })
-                      setMemory([])
+                      setSaveError(null)
+                      try {
+                        const res = await fetch('/api/memory', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) })
+                        if (!res.ok) throw new Error('memory_clear_failed')
+                        setMemory([])
+                      } catch {
+                        setSaveError(t(lang, 'memoryDeleteFailed'))
+                      }
                     }}
                     style={{ marginTop: 4, padding: '8px 14px', borderRadius: 10, border: '1px solid rgba(248,113,113,0.3)', background: 'rgba(248,113,113,0.08)', color: '#F87171', fontSize: 12, cursor: 'pointer', alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }}
                   >
@@ -607,6 +636,18 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
             {t(lang, 'signOutBtn')}
           </button>
         </Card>
+
+        {/* Settings auto-save with no Save button, so a failed write is invisible
+            unless we say so out loud. */}
+        {saveError && (
+          <div style={{
+            padding: '10px 14px', borderRadius: 12, marginBottom: 10,
+            background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)',
+            color: '#F87171', fontSize: 13, lineHeight: 1.4,
+          }}>
+            {saveError}
+          </div>
+        )}
 
         {/* ── SAVE ── */}
         <button

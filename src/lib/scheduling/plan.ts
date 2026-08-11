@@ -1,0 +1,474 @@
+/**
+ * plan.ts — the public entry point. Requests in, a PlanOutcome out.
+ *
+ * The strategy is greedy: order the requests most-constrained first, place each
+ * one in its best surviving slot, and repair by bounded displacement only when a
+ * request would otherwise fail. Not a CSP and not backtracking search — the
+ * space is one horizon at quarter-hour resolution, so exhaustive scoring is
+ * already cheap, and backtracking would trade the one thing this engine exists
+ * to provide: a per-block answer to "why here". A block chosen by a search that
+ * unwound three times cannot explain itself; a block that won its slot on a
+ * scored comparison can.
+ *
+ * Determinism is a hard requirement, not a nicety: the same context must produce
+ * the same plan byte for byte, which is what makes a fixture test able to assert
+ * exact start times. So no `Date.now()`, no locale-sensitive comparisons (Hebrew
+ * titles through localeCompare are ICU-version dependent), and every sort ends
+ * in a total order.
+ */
+
+import { addMonths } from 'date-fns'
+import { LocalISO, addMinutes, localDateKey, parseLocal, toLocalISO } from './clock'
+import { classifyMobility } from './mobilityClassifier'
+import {
+  cloneState, commitBlock, emptyState, PlaceOptions, PlaceResult, placeOne, PlacementState,
+} from './place'
+import { attemptRepair, MAX_REPAIR_DEPTH } from './repair'
+import { overlaps } from './timeline'
+import {
+  BusyBlock, DayWindow, Displacement, Energy, MethodRules, PlacedBlock, PlacementRequest,
+  PlanOutcome, Recurrence, Relaxation, RelaxationCode, SchedulingContext, Unplaced, UnplacedCode,
+} from './types'
+import { buildDayWindows, clipWindows, eachDayKey } from './windows'
+
+/** How far a recurring request may run when the caller gives neither count nor endDate. */
+const MAX_RECURRENCE_INSTANCES = 52
+/** `shorten_sessions` proposes two thirds of the session, floored at the method's minimum. */
+const SHORTEN_FACTOR = 2 / 3
+/** `extend_day` proposes one hour at each end. */
+const EXTEND_DAY_HOURS = 1
+/** Sorts a request with no deadline last: above every character an ISO date uses. */
+const NO_DEADLINE = '￿'
+
+/** A session that failed to place, kept so relaxations can be costed honestly. */
+interface PendingSession {
+  requestIndex: number
+  request: PlacementRequest
+  durationMinutes: number
+  /** Set for recurrence instances, which are anchored to a specific day. */
+  restrictToDay?: string
+}
+
+export function planSchedule(ctx: SchedulingContext, requests: PlacementRequest[]): PlanOutcome {
+  const baseWindows = buildDayWindows(ctx.profile, ctx.horizon)
+  const state = emptyState(ctx)
+  const blocks: PlacedBlock[] = []
+  const displacements: Displacement[] = []
+  const unplaced: Unplaced[] = []
+  const pending: PendingSession[] = []
+
+  const order = orderRequests(requests, ctx.rules)
+  // eat_the_frog's claim is about one item: the hardest one, earliest. Ordering
+  // already put it first, so it is simply the head of the queue.
+  const frogIndex = ctx.rules.hardestFirst && order.length > 0 ? order[0] : -1
+
+  for (const requestIndex of order) {
+    const request = requests[requestIndex]
+    const windows = windowsFor(request, baseWindows, ctx)
+    const opts: PlaceOptions = { isFrog: requestIndex === frogIndex }
+
+    if (request.recurrence) {
+      placeRecurring(ctx, request, requestIndex, windows, state, opts, blocks, displacements, unplaced, pending)
+    } else {
+      placeSessions(ctx, request, requestIndex, windows, state, opts, blocks, displacements, unplaced, pending)
+    }
+  }
+
+  blocks.sort(byStartThenTitle)
+
+  if (unplaced.length === 0) return { status: 'ok', blocks, displacements }
+
+  const relaxations = computeRelaxations(ctx, baseWindows, state, pending)
+  if (blocks.length === 0) return { status: 'blocked', unplaced, relaxations }
+  return { status: 'partial', blocks, displacements, unplaced, relaxations }
+}
+
+// ── Ordering ────────────────────────────────────────────────────────────────
+
+const ENERGY_RANK: Record<Energy, number> = { high: 0, medium: 1, low: 2 }
+
+/**
+ * Most-constrained first. A request with a tight deadline has the fewest places
+ * it can go, so it must choose before anything with a whole horizon to play
+ * with; length breaks the next tie, because a long block is harder to fit than a
+ * short one. Under eat_the_frog, energy outranks both — that is the method.
+ */
+export function orderRequests(requests: PlacementRequest[], rules: MethodRules): number[] {
+  return requests
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const ra = requests[a]
+      const rb = requests[b]
+      if (rules.hardestFirst) {
+        const byEnergy = ENERGY_RANK[ra.energy ?? 'medium'] - ENERGY_RANK[rb.energy ?? 'medium']
+        if (byEnergy !== 0) return byEnergy
+      }
+      const da = ra.deadline ?? NO_DEADLINE
+      const db = rb.deadline ?? NO_DEADLINE
+      if (da !== db) return da < db ? -1 : 1
+      const byLength = totalMinutesOf(rb, rules) - totalMinutesOf(ra, rules)
+      if (byLength !== 0) return byLength
+      // Code-unit comparison, never localeCompare — collation differs between ICU
+      // versions, and a plan that depends on the Node build is not deterministic.
+      if (ra.title !== rb.title) return ra.title < rb.title ? -1 : 1
+      return a - b
+    })
+}
+
+function totalMinutesOf(request: PlacementRequest, rules: MethodRules): number {
+  if (request.totalMinutes) return request.totalMinutes
+  return (request.sessionMinutes ?? rules.sessionMinutes) * (request.sessionCount ?? 1)
+}
+
+// ── Splitting ───────────────────────────────────────────────────────────────
+
+/**
+ * Turns a request into concrete session lengths.
+ *
+ * Every session is the same length, clamped into the method's block bounds, so
+ * that what lands on the calendar matches what METHOD_LABELS promised the user.
+ * The last session absorbs any remainder from an uneven split, but only while
+ * that keeps it inside the bounds — a 20-minute stub tacked onto a Pomodoro plan
+ * is worse than losing the twenty minutes.
+ */
+export function splitSessions(request: PlacementRequest, rules: MethodRules): number[] {
+  const count = sessionCountOf(request, rules)
+  const total = request.totalMinutes
+  const nominal = request.sessionMinutes
+    ?? (total ? Math.round(total / count) : rules.sessionMinutes)
+  const per = clampBlock(roundToQuarter(nominal), rules)
+
+  const lengths = Array<number>(count).fill(per)
+  if (total) {
+    const remainder = total - per * count
+    const last = clampBlock(per + remainder, rules)
+    if (remainder !== 0 && last >= rules.minBlock && last <= rules.maxBlock) {
+      lengths[lengths.length - 1] = last
+    }
+  }
+  return lengths
+}
+
+function sessionCountOf(request: PlacementRequest, rules: MethodRules): number {
+  if (request.sessionCount && request.sessionCount > 0) return request.sessionCount
+  if (request.totalMinutes) {
+    const per = clampBlock(roundToQuarter(request.sessionMinutes ?? rules.sessionMinutes), rules)
+    return Math.max(1, Math.ceil(request.totalMinutes / per))
+  }
+  return 1
+}
+
+function clampBlock(minutes: number, rules: MethodRules): number {
+  return Math.max(rules.minBlock, Math.min(rules.maxBlock, minutes))
+}
+
+function roundToQuarter(minutes: number): number {
+  return Math.max(15, Math.round(minutes / 15) * 15)
+}
+
+// ── Placement passes ────────────────────────────────────────────────────────
+
+function placeSessions(
+  ctx: SchedulingContext,
+  request: PlacementRequest,
+  requestIndex: number,
+  windows: DayWindow[],
+  state: PlacementState,
+  opts: PlaceOptions,
+  blocks: PlacedBlock[],
+  displacements: Displacement[],
+  unplaced: Unplaced[],
+  pending: PendingSession[]
+): void {
+  const lengths = splitSessions(request, ctx.rules)
+
+  for (let i = 0; i < lengths.length; i++) {
+    const outcome = placeWithRepair(ctx, request, requestIndex, lengths[i], windows, state, opts)
+    if (outcome.ok) {
+      adopt(state, requestIndex, request, outcome.block, outcome.displacements, blocks, displacements)
+      continue
+    }
+    // The first failure ends the request: later sessions face a strictly tighter
+    // world, and reporting one honest Unplaced beats N copies of the same news.
+    unplaced.push({
+      requestIndex,
+      code: outcome.code,
+      placedCount: i,
+      detail: { ...outcome.detail, sessions: lengths.length },
+    })
+    for (let j = i; j < lengths.length; j++) {
+      pending.push({ requestIndex, request, durationMinutes: lengths[j] })
+    }
+    return
+  }
+}
+
+/**
+ * A recurring request becomes concrete instances, and every one of them goes
+ * through the full hard filter. The old create_event skipped conflict checks for
+ * recurring events outright, which is how a weekly series quietly double-booked
+ * itself from week three onward.
+ */
+function placeRecurring(
+  ctx: SchedulingContext,
+  request: PlacementRequest,
+  requestIndex: number,
+  windows: DayWindow[],
+  state: PlacementState,
+  opts: PlaceOptions,
+  blocks: PlacedBlock[],
+  displacements: Displacement[],
+  unplaced: Unplaced[],
+  pending: PendingSession[]
+): void {
+  const duration = splitSessions(request, ctx.rules)[0]
+
+  const first = placeWithRepair(ctx, request, requestIndex, duration, windows, state, opts)
+  if (!first.ok) {
+    unplaced.push({ requestIndex, code: first.code, placedCount: 0, detail: { ...first.detail, instance: 0 } })
+    pending.push({ requestIndex, request, durationMinutes: duration })
+    return
+  }
+  adopt(state, requestIndex, request, first.block, first.displacements, blocks, displacements)
+
+  const anchorDay = localDateKey(first.block.start)
+  const anchorTime = first.block.start.slice(11)
+  let placedCount = 1
+
+  for (const { index, day } of instanceDays(request.recurrence!, anchorDay, ctx.horizon.to)) {
+    // A series wants to keep its time, so the anchor's hour is tried first; when
+    // that exact slot is taken, the instance still gets a fair search of its day
+    // rather than being dropped.
+    const pinned = placeWithRepair(ctx, request, requestIndex, duration, windows, state, {
+      ...opts, restrictToDay: day, pinnedStart: `${day}T${anchorTime}`,
+    })
+    const outcome = pinned.ok
+      ? pinned
+      : placeWithRepair(ctx, request, requestIndex, duration, windows, state, { ...opts, restrictToDay: day })
+
+    if (outcome.ok) {
+      adopt(state, requestIndex, request, outcome.block, outcome.displacements, blocks, displacements)
+      placedCount++
+      continue
+    }
+    // Per-instance failure, reported rather than swallowed.
+    unplaced.push({ requestIndex, code: outcome.code, placedCount, detail: { ...outcome.detail, instance: index, day } })
+    pending.push({ requestIndex, request, durationMinutes: duration, restrictToDay: day })
+  }
+}
+
+type Attempted =
+  | { ok: true; block: PlacedBlock; displacements: Displacement[] }
+  | { ok: false; code: UnplacedCode; detail?: Record<string, string | number> }
+
+function placeWithRepair(
+  ctx: SchedulingContext,
+  request: PlacementRequest,
+  requestIndex: number,
+  durationMinutes: number,
+  windows: DayWindow[],
+  state: PlacementState,
+  opts: PlaceOptions
+): Attempted {
+  const result: PlaceResult = placeOne(ctx, request, requestIndex, durationMinutes, windows, state, opts)
+  if (result.ok) return { ok: true, block: result.block, displacements: [] }
+
+  const repaired = attemptRepair(
+    ctx, request, requestIndex, durationMinutes, windows, state, result, opts, MAX_REPAIR_DEPTH
+  )
+  if (repaired) {
+    // Adopt the repaired world: displaced blocks now sit at their new times.
+    state.busy = repaired.state.busy
+    state.sessionsByDay = repaired.state.sessionsByDay
+    state.daysByRequest = repaired.state.daysByRequest
+    return { ok: true, block: repaired.block, displacements: repaired.displacements }
+  }
+  return { ok: false, code: result.code, detail: result.detail }
+}
+
+function adopt(
+  state: PlacementState,
+  requestIndex: number,
+  request: PlacementRequest,
+  block: PlacedBlock,
+  fromRepair: Displacement[],
+  blocks: PlacedBlock[],
+  displacements: Displacement[]
+): void {
+  commitBlock(state, requestIndex, block, asBusy(request, block, requestIndex))
+  blocks.push(block)
+  displacements.push(...fromRepair)
+}
+
+function asBusy(request: PlacementRequest, block: PlacedBlock, requestIndex: number): BusyBlock {
+  return {
+    id: `plan:${requestIndex}:${block.start}`,
+    title: block.title,
+    start: block.start,
+    end: block.end,
+    // The engine is the AI, so an unspecified mobility gets the same answer the
+    // rest of the app would give an AI-created event.
+    mobility: request.mobility ?? classifyMobility(block.title, 'ai'),
+    createdBy: 'ai',
+    isAllDay: false,
+    category: request.category,
+  }
+}
+
+// ── Recurrence ──────────────────────────────────────────────────────────────
+
+/** The concrete days instances 1..n-1 fall on, clipped to the horizon. */
+function instanceDays(recurrence: Recurrence, anchorDay: string, horizonTo: LocalISO): { index: number; day: string }[] {
+  const limit = recurrence.count && recurrence.count > 0
+    ? Math.min(recurrence.count, MAX_RECURRENCE_INSTANCES)
+    : MAX_RECURRENCE_INSTANCES
+  const lastDay = recurrence.endDate
+    ? minDay(localDateKey(recurrence.endDate), localDateKey(horizonTo))
+    : localDateKey(horizonTo)
+
+  const out: { index: number; day: string }[] = []
+  for (let index = 1; index < limit; index++) {
+    const day = shiftDay(anchorDay, index, recurrence.frequency)
+    if (day > lastDay) break
+    out.push({ index, day })
+  }
+  return out
+}
+
+function shiftDay(day: string, steps: number, frequency: Recurrence['frequency']): string {
+  if (frequency === 'monthly') {
+    // Anchored at noon so month arithmetic can never be nudged across a day
+    // boundary by a DST transition at midnight.
+    return localDateKey(toLocalISO(addMonths(parseLocal(`${day}T12:00:00`), steps)))
+  }
+  const stride = frequency === 'biweekly' ? 14 : 7
+  return localDateKey(addMinutes(`${day}T00:00:00`, steps * stride * 24 * 60))
+}
+
+function minDay(a: string, b: string): string {
+  return a < b ? a : b
+}
+
+// ── Relaxations ─────────────────────────────────────────────────────────────
+
+/**
+ * What the user could give up, and what it would buy them.
+ *
+ * `wouldPlace` is computed, never estimated: each relaxation re-runs the real
+ * filter over the sessions that actually failed, on a throwaway copy of the
+ * state. A guessed number here would be exactly the kind of confident-sounding
+ * fiction the engine exists to eliminate.
+ */
+function computeRelaxations(
+  ctx: SchedulingContext,
+  baseWindows: DayWindow[],
+  state: PlacementState,
+  pending: PendingSession[]
+): Relaxation[] {
+  if (pending.length === 0) return []
+
+  const shortest = Math.min(...pending.map(p => p.durationMinutes))
+  const shortened = Math.max(ctx.rules.minBlock, roundToQuarter(shortest * SHORTEN_FACTOR))
+
+  const trials: { code: RelaxationCode; delta: string; windows: DayWindow[]; opts: PlaceOptions; duration?: (p: PendingSession) => number }[] = [
+    {
+      code: 'shorten_sessions',
+      delta: `${shortest} → ${shortened}`,
+      windows: baseWindows,
+      opts: {},
+      duration: p => Math.max(ctx.rules.minBlock, roundToQuarter(p.durationMinutes * SHORTEN_FACTOR)),
+    },
+    {
+      code: 'extend_day',
+      delta: `+${EXTEND_DAY_HOURS}h ${ctx.profile.dayStartHour - EXTEND_DAY_HOURS}:00–${ctx.profile.dayEndHour + EXTEND_DAY_HOURS}:00`,
+      windows: buildDayWindows(ctx.profile, ctx.horizon, {
+        dayStartHour: ctx.profile.dayStartHour - EXTEND_DAY_HOURS,
+        dayEndHour: ctx.profile.dayEndHour + EXTEND_DAY_HOURS,
+      }),
+      opts: {},
+    },
+    {
+      code: 'use_weekend',
+      delta: 'Fri–Sat',
+      windows: buildDayWindows(ctx.profile, ctx.horizon, { includeWeekend: true }),
+      opts: {},
+    },
+    {
+      code: 'move_ask_first',
+      // Only the ones actually sitting inside the user's available hours — the
+      // delta is a number they will read as "events I'd have to touch".
+      delta: String(state.busy.filter(b =>
+        b.mobility === 'ask_first' && baseWindows.some(w => overlaps(b, w))
+      ).length),
+      windows: baseWindows,
+      opts: { ignoreAskFirst: true },
+    },
+    {
+      code: 'drop_buffer',
+      delta: `${ctx.profile.bufferMinutes} → 0`,
+      windows: baseWindows,
+      opts: { bufferMinutes: 0 },
+    },
+  ]
+
+  const relaxations: Relaxation[] = []
+  for (const trial of trials) {
+    const wouldPlace = countPlaceable(ctx, trial.windows, state, pending, trial.opts, trial.duration)
+    if (wouldPlace > 0) relaxations.push({ code: trial.code, delta: trial.delta, wouldPlace })
+  }
+
+  relaxations.sort((a, b) => (b.wouldPlace - a.wouldPlace) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0))
+  return relaxations
+}
+
+function countPlaceable(
+  ctx: SchedulingContext,
+  windows: DayWindow[],
+  state: PlacementState,
+  pending: PendingSession[],
+  opts: PlaceOptions,
+  duration?: (p: PendingSession) => number
+): number {
+  // A throwaway world, so counting one relaxation cannot bias the next.
+  const trial: PlacementState = cloneState(state)
+  let placed = 0
+  for (const p of pending) {
+    const minutes = duration ? duration(p) : p.durationMinutes
+    const scoped = p.request.hardWindows ? windowsFor(p.request, windows, ctx) : windows
+    const result = placeOne(ctx, p.request, p.requestIndex, minutes, scoped, trial, {
+      ...opts,
+      restrictToDay: p.restrictToDay,
+    })
+    if (!result.ok) continue
+    commitBlock(trial, p.requestIndex, result.block, {
+      id: `relax:${p.requestIndex}:${result.block.start}`,
+      title: result.block.title,
+      start: result.block.start,
+      end: result.block.end,
+      mobility: 'flexible',
+      createdBy: 'ai',
+      isAllDay: false,
+    })
+    placed++
+  }
+  return placed
+}
+
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
+/** hardWindows are a user constraint ("only in the evening") and replace the profile's. */
+function windowsFor(request: PlacementRequest, baseWindows: DayWindow[], ctx: SchedulingContext): DayWindow[] {
+  if (!request.hardWindows || request.hardWindows.length === 0) return baseWindows
+  const horizonDays = new Set(eachDayKey(ctx.horizon.from, ctx.horizon.to))
+  return clipWindows(
+    request.hardWindows.filter(w => horizonDays.has(w.day)),
+    ctx.horizon.from,
+    ctx.horizon.to
+  )
+}
+
+function byStartThenTitle(a: PlacedBlock, b: PlacedBlock): number {
+  if (a.start !== b.start) return a.start < b.start ? -1 : 1
+  if (a.title !== b.title) return a.title < b.title ? -1 : 1
+  return a.requestIndex - b.requestIndex
+}

@@ -185,8 +185,8 @@ const RENDERERS: Record<ReasonCode, { positive: Branch; negative: Branch }> = {
         : { he: 'השארתי מרווח נשימה מהאירועים הסמוכים', en: 'Left breathing room around the neighbouring events' }
     },
     negative: () => ({
-      he: 'הצמדתי את זה קצת יותר לאירוע הסמוך ממה שהייתי רוצה, כדי שזה בכלל ייכנס',
-      en: "This sits a bit tighter against the next event than ideal, so it could fit at all",
+      he: 'הצמדתי את זה קצת יותר לאירוע הסמוך ממה שהייתי רוצה, אבל רק ככה זה בכלל נכנס',
+      en: "This sits a bit tighter against the next event than ideal, but that's the only way it fit at all",
     }),
   },
 
@@ -196,8 +196,8 @@ const RENDERERS: Record<ReasonCode, { positive: Branch; negative: Branch }> = {
       en: 'This is simply the earliest slot available',
     }),
     negative: () => ({
-      he: 'לא היה חלון טוב יותר, אז זה החלון הכי מוקדם שנמצא',
-      en: 'No better window was available, so this is just the earliest one that fit',
+      he: 'לא היה חלון טוב יותר, אבל זה החלון הכי מוקדם שנמצא',
+      en: 'No better window was available, but this is just the earliest one that fit',
     }),
   },
 }

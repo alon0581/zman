@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { DATA_DIR } from '@/lib/util/dataDir'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { assertSafeUserId } from '@/lib/util/safeUserId'
 import path from 'path'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
@@ -28,7 +29,8 @@ async function getAuthUserId(): Promise<string | null> {
 }
 
 function chatFile(userId: string) {
-  return path.join(DATA_DIR, 'users', userId, 'chat-history.json')
+  // Every other store guards the id before it reaches a path; this one didn't.
+  return path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'chat-history.json')
 }
 
 function readMessages(userId: string): StoredMessage[] {

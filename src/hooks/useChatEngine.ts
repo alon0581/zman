@@ -198,6 +198,63 @@ export function useChatEngine({
     return () => { abortControllerRef.current?.abort() }
   }, [])
 
+  // ── Conversation persistence ──────────────────────────────────────────────
+  // The server has stored chat history all along (`/api/chat-history`, capped at
+  // 100 messages) — but nothing on the client ever called it, so every reload
+  // silently threw the conversation away. For an assistant whose whole premise is
+  // that it knows you, losing the thread on refresh is the wrong behaviour.
+  const historyLoadedRef = useRef(false)
+  // Serialized copy of what the server already has, so we never rewrite it unchanged.
+  const lastSavedRef = useRef('')
+
+  useEffect(() => {
+    // Onboarding starts from a scripted greeting; restoring an old thread there
+    // would drop the user into the middle of a conversation they aren't having.
+    if (initIsOnboarding) { historyLoadedRef.current = true; return }
+
+    let cancelled = false
+    fetch('/api/chat-history')
+      .then(res => res.ok ? res.json() : null)
+      .then((data: { messages?: Array<{ id: string; role: string; content: string; timestamp: string }> } | null) => {
+        if (cancelled || !data?.messages?.length) return
+        const restored: Message[] = data.messages.map(m => ({
+          id: m.id,
+          role: m.role === 'user' ? 'user' as const : 'assistant' as const,
+          content: m.content,
+          timestamp: new Date(m.timestamp),
+        }))
+        // Mark what we just loaded as already-saved, so restoring the thread
+        // doesn't immediately write the identical file straight back.
+        lastSavedRef.current = JSON.stringify(restored)
+        setMessages(restored)
+      })
+      .catch(() => { /* keep the welcome message — a missing history is not an error */ })
+      .finally(() => { if (!cancelled) historyLoadedRef.current = true })
+
+    return () => { cancelled = true }
+  }, [initIsOnboarding])
+
+  // Write back only once a turn has settled: saving mid-stream would POST on
+  // every token. The welcome message alone is not worth persisting.
+  useEffect(() => {
+    if (!historyLoadedRef.current || loading || isOnboarding) return
+    if (messages.length <= 1) return
+
+    // Loading the history sets state, which fires this effect — without this
+    // check every app start would write the file back unchanged.
+    const serialized = JSON.stringify(messages)
+    if (serialized === lastSavedRef.current) return
+    lastSavedRef.current = serialized
+
+    fetch('/api/chat-history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    })
+      .then(res => { if (!res.ok) console.warn('[chat] history save failed:', res.status) })
+      .catch(err => console.warn('[chat] history save failed:', err))
+  }, [messages, loading, isOnboarding])
+
   // Auto-dismiss toasts
   useEffect(() => {
     if (toasts.length === 0) return
