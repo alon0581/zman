@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { motion, AnimatePresence } from 'motion/react'
 import { CalendarEvent } from '@/types'
+import { toLocalISO } from '@/lib/scheduling/clock'
 import { format, isSameDay, endOfDay } from 'date-fns'
 import { he as heLocale } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
@@ -401,6 +402,37 @@ export default function CalendarPanel({
     }
   }
 
+  /**
+   * Persist a drag or resize. FullCalendar moves the event inside its own state
+   * the moment the gesture ends, but nothing wrote it through — so the move
+   * silently reverted on the next poll, on desktop as well as mobile. Write it
+   * to the server and put the event back if that fails.
+   *
+   * Times go out as naive local strings (`toLocalISO`), never UTC: every
+   * start_time/end_time in this app is naive local, and a `Z` here would shift
+   * the event by the timezone offset.
+   */
+  const persistEventTimes = async (info: {
+    event: { id: string; start: Date | null; end: Date | null }
+    revert: () => void
+  }) => {
+    const { id, start, end } = info.event
+    if (!start) { info.revert(); return }
+
+    const changes = { start_time: toLocalISO(start), end_time: toLocalISO(end ?? start) }
+    try {
+      const res = await fetch(`/api/events/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(changes),
+      })
+      if (!res.ok) throw new Error('event_move_failed')
+      onEventUpdate(id, changes)
+    } catch {
+      info.revert()
+    }
+  }
+
   const handleEventClick = (info: { event: { id: string }; jsEvent: MouseEvent }) => {
     const ev = eventMap.get(info.event.id)
     if (!ev) return
@@ -639,8 +671,16 @@ export default function CalendarPanel({
           slotLabelInterval="01:00:00"
           slotMinHeight={slotHeight}
           eventMinHeight={isMobile ? Math.max(24, Math.round(slotHeight * 0.55)) : 20}
-          editable={!isMobile}
-          selectable={!isMobile}
+          editable
+          selectable
+          /* Touch devices only (no-op on desktop mouse): require a deliberate
+             long-press before a drag/select starts, so a normal scroll gesture
+             doesn't get mistaken for "move this event". */
+          longPressDelay={300}
+          eventLongPressDelay={300}
+          selectLongPressDelay={300}
+          eventDrop={persistEventTimes}
+          eventResize={persistEventTimes}
           eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: false }}
           dayHeaderFormat={{ weekday: 'short', day: 'numeric' }}
           datesSet={(info: { view: { currentStart: Date } }) => {

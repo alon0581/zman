@@ -120,15 +120,30 @@ export interface ChatEngineResult {
   memory: AIMemory[]
   isOnboarding: boolean
   sendMessage: (text: string) => Promise<void>
+  stop: () => void
   resetChat: () => void
   retryLast: () => void
   toasts: ToastItem[]
   dismissToast: (id: string) => void
+  addToast: (type: ToastItem['type'], text: string) => void
 }
 
+// Wall-clock ceiling on a single chat turn. If the server accepts the
+// connection and then stalls (no more SSE chunks), we'd otherwise be stuck
+// in `loading` forever with no way out but a page reload.
+const STREAM_TIMEOUT_MS = 90_000
+
 const T = {
-  en: { error: 'Something went wrong. Please try again.' },
-  he: { error: 'משהו השתבש. נסה שוב.' },
+  en: {
+    error: 'Something went wrong. Please try again.',
+    timeout: 'The request took too long. Please try again.',
+    emptyReply: "I finished handling that, but didn't get a full reply back this time.",
+  },
+  he: {
+    error: 'משהו השתבש. נסה שוב.',
+    timeout: 'הבקשה ארכה זמן רב מדי. נסה שוב.',
+    emptyReply: 'סיימתי לטפל בבקשה, אבל הפעם לא קיבלתי ניסוח מלא מהשרת.',
+  },
 } as const
 
 export function useChatEngine({
@@ -173,6 +188,15 @@ export function useChatEngine({
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const lastUserTextRef = useRef('')  // last sent text, for retry-on-error
+  const abortControllerRef = useRef<AbortController | null>(null)
+  // Distinguishes *why* the in-flight request was aborted, so the catch block
+  // can tell "user tapped stop" (silent) apart from "watchdog timed out" (real error).
+  const abortReasonRef = useRef<'user' | 'timeout' | null>(null)
+
+  // Never leave a request dangling past unmount
+  useEffect(() => {
+    return () => { abortControllerRef.current?.abort() }
+  }, [])
 
   // Auto-dismiss toasts
   useEffect(() => {
@@ -253,6 +277,17 @@ export function useChatEngine({
     const lang = profile?.language ?? language
     const isHe = lang === 'he'
 
+    // Fresh controller per turn — aborted either by the user (stop()) or by
+    // the watchdog timeout below. abortReasonRef records which, so the catch
+    // block can tell a deliberate cancel apart from a real failure.
+    abortReasonRef.current = null
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+    const timeoutId = setTimeout(() => {
+      abortReasonRef.current = 'timeout'
+      controller.abort()
+    }, STREAM_TIMEOUT_MS)
+
     try {
       const welcomeMsg = messages.find(m => m.id === 'welcome')
       // Keep recent turns only — calendar/memory state is injected fresh server-side,
@@ -267,6 +302,7 @@ export function useChatEngine({
       const res = await fetch('/api/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: contextMessages, events: eventsSnapshot, profile, isOnboarding: activeOnboarding, memory, tasks, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+        signal: controller.signal,
       })
       if (!res.ok || !res.body) throw new Error()
 
@@ -294,6 +330,10 @@ export function useChatEngine({
               eventData = parsed
             } else if (parsed.type === 'text') {
               if (!streamingStarted) {
+                // Don't open the bubble on a blank/whitespace-only first chunk —
+                // otherwise the user is left staring at a permanently empty reply
+                // if the server's final text turns out blank (see fallback below).
+                if (!parsed.content || !String(parsed.content).trim()) continue
                 streamingStarted = true
                 setStreamingId(assistantId)
                 setMessages(p => [...p, { id: assistantId, role: 'assistant', content: parsed.content, timestamp: new Date() }])
@@ -307,19 +347,27 @@ export function useChatEngine({
             } else if (parsed.type === 'tasks_updated') {
               onTasksUpdate?.()
             } else if (parsed.type === 'memory_updated') {
-              fetch('/api/memory').then(r => r.ok ? r.json() : []).then(data => {
+              fetch('/api/memory').then(r => {
+                if (!r.ok) { console.warn('[useChatEngine] memory refetch failed:', r.status); return [] }
+                return r.json()
+              }).then(data => {
                 if (Array.isArray(data)) setMemory(data)
-              }).catch(() => {})
+              }).catch(err => console.warn('[useChatEngine] memory refetch failed:', err))
             } else if (parsed.type === 'onboarding_complete') {
               setIsOnboarding(false)
               onProfileUpdate(parsed.profile)
-              fetch('/api/memory').then(r => r.ok ? r.json() : []).then(data => {
+              fetch('/api/memory').then(r => {
+                if (!r.ok) { console.warn('[useChatEngine] memory refetch failed:', r.status); return [] }
+                return r.json()
+              }).then(data => {
                 if (Array.isArray(data)) setMemory(data)
-              }).catch(() => {})
+              }).catch(err => console.warn('[useChatEngine] memory refetch failed:', err))
               fetch('/api/profile', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ...parsed.profile, onboarding_completed: true }),
-              }).catch(() => {})
+              }).then(r => {
+                if (!r.ok) console.warn('[useChatEngine] onboarding profile save failed:', r.status)
+              }).catch(err => console.warn('[useChatEngine] onboarding profile save failed:', err))
             } else if (parsed.type === 'done') {
               let next = [...eventsSnapshot]
               if (eventData.createdEvents?.length) next = [...next, ...eventData.createdEvents]
@@ -347,7 +395,8 @@ export function useChatEngine({
       if (streamErrored) throw new Error('stream_error')
 
       if (!streamingStarted) {
-        setMessages(p => [...p, { id: assistantId, role: 'assistant', content: 'Done!', timestamp: new Date() }])
+        const emptyReply = isHe ? T.he.emptyReply : T.en.emptyReply
+        setMessages(p => [...p, { id: assistantId, role: 'assistant', content: emptyReply, timestamp: new Date() }])
       }
 
       // Toast for text response when overlay is closed
@@ -362,15 +411,36 @@ export function useChatEngine({
         })
       }
 
-    } catch {
-      const errMsg = lang === 'he' ? T.he.error : T.en.error
-      setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant', content: errMsg, timestamp: new Date(), isError: true }])
-      addToast('error', errMsg)
+    } catch (err) {
+      const wasAborted = err instanceof DOMException && err.name === 'AbortError'
+      if (wasAborted && abortReasonRef.current === 'user') {
+        // The user tapped "stop" — this is a deliberate action, not a failure.
+        // No error bubble, no toast; whatever streamed in so far stays as-is.
+      } else if (wasAborted && abortReasonRef.current === 'timeout') {
+        const errMsg = isHe ? T.he.timeout : T.en.timeout
+        setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant', content: errMsg, timestamp: new Date(), isError: true }])
+        addToast('error', errMsg)
+      } else {
+        const errMsg = isHe ? T.he.error : T.en.error
+        setMessages(p => [...p, { id: crypto.randomUUID(), role: 'assistant', content: errMsg, timestamp: new Date(), isError: true }])
+        addToast('error', errMsg)
+      }
     } finally {
+      clearTimeout(timeoutId)
+      abortControllerRef.current = null
       setLoading(false)
       setStreamingId(null)
     }
   }, [loading, messages, events, tasks, profile, memory, onEventsUpdate, onTasksUpdate, language, isOnboarding, onProfileUpdate, chatOverlayOpen, addToast])
+
+  // Aborts the in-flight request (if any) and clears loading state. Used by
+  // the ChatOverlay "stop" affordance to escape a stalled/stuck response.
+  const stop = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortReasonRef.current = 'user'
+      abortControllerRef.current.abort()
+    }
+  }, [])
 
   const resetChat = useCallback(() => {
     const lang = profile?.language ?? language
@@ -389,6 +459,6 @@ export function useChatEngine({
   return {
     messages, setMessages, input, setInput,
     loading, streamingId, memory, isOnboarding,
-    sendMessage, resetChat, retryLast, toasts, dismissToast,
+    sendMessage, stop, resetChat, retryLast, toasts, dismissToast, addToast,
   }
 }

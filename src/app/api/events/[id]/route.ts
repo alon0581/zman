@@ -38,6 +38,24 @@ export async function PUT(
   if (mobility_type) changes.mobility_type = mobility_type
 
   if (DEMO_MODE) {
+    // Learning signal: the user dragging an AI-proposed event to a different
+    // hour is the clearest signal of what time actually works for them —
+    // stronger than a rejection, since it says WHERE it should have gone.
+    // Read the pre-change event first so we still have the original hour.
+    if (start_time) {
+      const existing = userStore.getEvents(userId).find(e => e.id === id)
+      if (existing && existing.created_by === 'ai') {
+        const oldStart = new Date(existing.start_time)
+        const newStart = new Date(start_time)
+        if (oldStart.getHours() !== newStart.getHours()) {
+          recordFeedback(userId, {
+            type: 'moved', title: existing.title,
+            fromHour: oldStart.getHours(), toHour: newStart.getHours(),
+            day: format(oldStart, 'EEE'), at: new Date().toISOString(),
+          })
+        }
+      }
+    }
     userStore.updateEvent(id, changes, userId)
     return NextResponse.json({ success: true })
   }

@@ -116,19 +116,40 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
 
   const handleTaskToggle = (id: string, newStatus: Task['status']) => {
     markLocalMutation()
+    const prevTask = tasks.find(t => t.id === id)
     const completedAt = newStatus === 'done' ? new Date().toISOString() : undefined
     setTasks(prev => prev.map(t => t.id === id ? { ...t, status: newStatus, ...(completedAt ? { completed_at: completedAt } : { completed_at: undefined }) } : t))
     fetch(`/api/tasks/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus, ...(completedAt ? { completed_at: completedAt } : {}) }),
-    }).catch(() => {})
+    }).then(res => {
+      if (!res.ok) throw new Error('task_update_failed')
+    }).catch(() => {
+      // Roll back the optimistic update — the write never actually landed.
+      if (prevTask) setTasks(prev => prev.map(t => t.id === id ? prevTask : t))
+      chatEngine.addToast('error', language === 'he' ? 'עדכון המשימה נכשל. השינוי בוטל.' : 'Failed to update task. Change reverted.')
+    })
   }
 
   const handleDeleteTask = (id: string) => {
     markLocalMutation()
+    const prevTask = tasks.find(t => t.id === id)
+    const prevIndex = tasks.findIndex(t => t.id === id)
     setTasks(prev => prev.filter(t => t.id !== id))
-    fetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => {})
+    fetch(`/api/tasks/${id}`, { method: 'DELETE' }).then(res => {
+      if (!res.ok) throw new Error('task_delete_failed')
+    }).catch(() => {
+      // Roll back the optimistic removal — restore at its original position.
+      if (prevTask) {
+        setTasks(prev => {
+          const next = [...prev]
+          next.splice(Math.min(prevIndex, next.length), 0, prevTask)
+          return next
+        })
+      }
+      chatEngine.addToast('error', language === 'he' ? 'מחיקת המשימה נכשלה. המשימה שוחזרה.' : 'Failed to delete task. Task restored.')
+    })
   }
 
   const handleProfileUpdate = (updated: UserProfile) => {
@@ -368,6 +389,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             onClose={() => setChatOverlayOpen(false)}
             onReset={chatEngine.resetChat}
             onRetry={chatEngine.retryLast}
+            onStop={chatEngine.stop}
           />
         )}
       </AnimatePresence>

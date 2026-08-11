@@ -34,6 +34,8 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
   const [mobility, setMobility] = useState<'fixed' | 'flexible' | 'ask_first'>(autoMobility)
   const [mobilityManual, setMobilityManual] = useState(!!event.mobility_type)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const popupRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
 
@@ -72,25 +74,42 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
   const handleSave = async () => {
     if (!title.trim()) return
     setSaving(true)
+    setError(null)
     try {
-      await fetch(`/api/events/${event.id}`, {
+      const res = await fetch(`/api/events/${event.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: title.trim(), color, mobility_type: mobility }),
       })
+      if (!res.ok) {
+        setError(isHe ? 'שמירה נכשלה. נסה שוב.' : 'Save failed. Please try again.')
+        return
+      }
       onSave(event.id, { title: title.trim(), color, mobility_type: mobility })
       onClose()
+    } catch {
+      setError(isHe ? 'שמירה נכשלה. בדוק את החיבור ונסה שוב.' : 'Save failed. Check your connection and try again.')
     } finally {
       setSaving(false)
     }
   }
 
   const handleDelete = async () => {
+    setDeleting(true)
+    setError(null)
     try {
-      await fetch(`/api/events/${event.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/events/${event.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        setError(isHe ? 'מחיקה נכשלה. נסה שוב.' : 'Delete failed. Please try again.')
+        return
+      }
       onDelete(event.id)
       onClose()
-    } catch { /* ignore */ }
+    } catch {
+      setError(isHe ? 'מחיקה נכשלה. בדוק את החיבור ונסה שוב.' : 'Delete failed. Check your connection and try again.')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   // Keep the outside-click handler pointed at the latest state every render
@@ -209,10 +228,18 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
           ))}
         </div>
 
+        {/* Error banner — shown when a save/delete request failed */}
+        {error && (
+          <div style={{ fontSize: 11, color: 'var(--red)', marginBottom: 10, lineHeight: 1.4 }}>
+            {error}
+          </div>
+        )}
+
         {/* Actions */}
         <div style={{ display: 'flex', gap: 8 }}>
           <button
             onClick={handleDelete}
+            disabled={deleting}
             style={{
               padding: '8px 12px', borderRadius: 'var(--radius-md)',
               border: '1px solid rgba(248,113,113,0.28)',
@@ -220,6 +247,7 @@ export default function EventPopup({ event, x, y, language = 'en', onClose, onSa
               cursor: 'pointer', fontSize: 12, fontWeight: 600,
               display: 'flex', alignItems: 'center', gap: 5,
               transition: 'background var(--t-fast)',
+              opacity: deleting ? 0.6 : 1,
             }}
             onMouseEnter={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.16)')}
             onMouseLeave={e => (e.currentTarget.style.background = 'rgba(248,113,113,0.08)')}

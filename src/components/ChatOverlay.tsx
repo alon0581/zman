@@ -18,14 +18,15 @@ interface Props {
   onClose: () => void
   onReset: () => void
   onRetry?: () => void
+  onStop?: () => void
 }
 
 const T = {
-  en: { header: 'AI Assistant', placeholder: 'Type a message…', online: 'Online', subtitle: 'Talk or type to manage your schedule' },
-  he: { header: 'עוזר AI', placeholder: 'כתוב הודעה…', online: 'פעיל', subtitle: 'דבר או כתוב כדי לנהל את הלוח זמנים שלך' },
+  en: { header: 'AI Assistant', placeholder: 'Type a message…', online: 'Online', subtitle: 'Talk or type to manage your schedule', stop: '⏹ Stop' },
+  he: { header: 'עוזר AI', placeholder: 'כתוב הודעה…', online: 'פעיל', subtitle: 'דבר או כתוב כדי לנהל את הלוח זמנים שלך', stop: '⏹ עצור' },
 } as const
 
-export default function ChatOverlay({ messages, input, setInput, loading, streamingId, isOnboarding, language, isMobile, onSend, onClose, onReset, onRetry }: Props) {
+export default function ChatOverlay({ messages, input, setInput, loading, streamingId, isOnboarding, language, isMobile, onSend, onClose, onReset, onRetry, onStop }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const lang = (language === 'he' ? 'he' : 'en') as keyof typeof T
@@ -121,7 +122,24 @@ export default function ChatOverlay({ messages, input, setInput, loading, stream
         {/* Messages */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {messages.map(msg => <Bubble key={msg.id} msg={msg} isRTL={isRTL} isStreaming={msg.id === streamingId} lang={lang} onRetry={onRetry} />)}
-          {loading && !streamingId && <TypingBubble />}
+          {loading && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {!streamingId && <TypingBubble />}
+              {onStop && (
+                <button
+                  onClick={onStop}
+                  style={{
+                    alignSelf: 'flex-start', marginInlineStart: 38,
+                    padding: '5px 12px', borderRadius: 9,
+                    border: '1px solid var(--border-hi)', background: 'var(--bg-input)',
+                    color: 'var(--blue)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600,
+                  }}
+                >
+                  {t.stop}
+                </button>
+              )}
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
