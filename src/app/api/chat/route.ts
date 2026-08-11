@@ -6,7 +6,7 @@ import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
 import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
 import { CalendarEvent, UserProfile, AIMemory, Task } from '@/types'
 import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay } from 'date-fns'
-import { demoStorage } from '@/lib/demo/storage'
+import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
 import { mapToMethod } from '@/lib/scheduling/methodMapper'
@@ -828,7 +828,7 @@ async function executeTool(
 
           try {
             if (DEMO_MODE) {
-              demoStorage.addEvent(instance, userId)
+              userStore.addEvent(instance, userId)
             } else {
               const { createClient } = await import('@/lib/supabase/server')
               const supabase = await createClient()
@@ -927,7 +927,7 @@ async function executeTool(
 
       if (DEMO_MODE) {
         try {
-          demoStorage.addEvent(event, userId)
+          userStore.addEvent(event, userId)
         } catch (err) {
           return { error: 'write_failed', message: `Could not save the event: ${(err as Error)?.message}. Do NOT tell the user it was created.` }
         }
@@ -961,7 +961,7 @@ async function executeTool(
       if (apply_to_series && existing.series_id) {
         const seriesEvents = currentEvents.filter(e => e.series_id === existing.series_id)
         if (DEMO_MODE) {
-          for (const e of seriesEvents) demoStorage.updateEvent(e.id, changes as Partial<CalendarEvent>, userId)
+          for (const e of seriesEvents) userStore.updateEvent(e.id, changes as Partial<CalendarEvent>, userId)
         } else {
           const { createClient } = await import('@/lib/supabase/server')
           const supabase = await createClient()
@@ -975,7 +975,7 @@ async function executeTool(
 
       // Single event update
       if (DEMO_MODE) {
-        demoStorage.updateEvent(event_id, changes as Partial<CalendarEvent>, userId)
+        userStore.updateEvent(event_id, changes as Partial<CalendarEvent>, userId)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1043,7 +1043,7 @@ async function executeTool(
       }
 
       if (DEMO_MODE) {
-        demoStorage.updateEvent(event_id, { start_time: new_start_time, end_time: new_end_time }, userId)
+        userStore.updateEvent(event_id, { start_time: new_start_time, end_time: new_end_time }, userId)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1067,7 +1067,7 @@ async function executeTool(
         if (sid) {
           const seriesIds = currentEvents.filter(e => e.series_id === sid).map(e => e.id)
           if (DEMO_MODE) {
-            for (const id of seriesIds) demoStorage.deleteEvent(id, userId)
+            for (const id of seriesIds) userStore.deleteEvent(id, userId)
           } else {
             const { createClient } = await import('@/lib/supabase/server')
             const supabase = await createClient()
@@ -1081,7 +1081,7 @@ async function executeTool(
       }
 
       if (DEMO_MODE) {
-        demoStorage.deleteEvent(event_id, userId)
+        userStore.deleteEvent(event_id, userId)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1180,7 +1180,7 @@ async function executeTool(
 
         try {
           if (DEMO_MODE) {
-            demoStorage.addEvent(event, userId)
+            userStore.addEvent(event, userId)
           } else {
             const { createClient } = await import('@/lib/supabase/server')
             const supabase = await createClient()
@@ -1509,7 +1509,7 @@ async function executeTool(
         created_at: new Date().toISOString(),
       }
       if (DEMO_MODE) {
-        demoStorage.addTask(task, userId)
+        userStore.addTask(task, userId)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1531,7 +1531,7 @@ async function executeTool(
       if (input.estimated_hours) updates.estimated_hours = num(input.estimated_hours)
 
       if (DEMO_MODE) {
-        demoStorage.updateTask(taskId, updates, userId)
+        userStore.updateTask(taskId, updates, userId)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1545,7 +1545,7 @@ async function executeTool(
     case 'delete_task': {
       const taskId = str(input.task_id)
       if (DEMO_MODE) {
-        demoStorage.deleteTask(taskId, userId)
+        userStore.deleteTask(taskId, userId)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()
@@ -1559,7 +1559,7 @@ async function executeTool(
     case 'list_tasks': {
       const { status, topic } = input as { status?: string; topic?: string }
       if (DEMO_MODE) {
-        let tasks = demoStorage.getTasks(userId)
+        let tasks = userStore.getTasks(userId)
         if (status) tasks = tasks.filter(t => t.status === status)
         if (topic) tasks = tasks.filter(t => t.topic === topic)
         return { tasks }
@@ -1682,7 +1682,7 @@ async function executeTool(
     case 'delete_all_events': {
       const allIds = currentEvents.map(e => e.id)
       if (DEMO_MODE) {
-        for (const id of allIds) demoStorage.deleteEvent(id, userId)
+        for (const id of allIds) userStore.deleteEvent(id, userId)
       } else {
         const { createClient } = await import('@/lib/supabase/server')
         const supabase = await createClient()

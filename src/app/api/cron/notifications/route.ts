@@ -9,6 +9,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { UserProfile, CalendarEvent, Task } from '@/types'
 import { computeNotifications } from '@/lib/notifications/scheduler'
 import { DATA_DIR } from '@/lib/util/dataDir'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { withUserLock } from '@/lib/store/lock'
 import { sendPush, sendFcmPush } from '@/lib/push'
 import fs from 'fs'
 import path from 'path'
@@ -54,10 +56,8 @@ async function processDemoUsers(results: { userId: string; sent: number }[]) {
     const profilePath = path.join(usersDir, userId, 'profile.json')
     if (!fs.existsSync(profilePath)) continue
 
-    let profile: UserProfile
-    try {
-      profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8')) as UserProfile
-    } catch { continue }
+    const profile = readJsonFile<UserProfile | null>(profilePath, null)
+    if (!profile) continue
 
     // Skip if notifications disabled or no push token
     if (!profile.notifications_enabled) continue
@@ -66,24 +66,29 @@ async function processDemoUsers(results: { userId: string; sent: number }[]) {
     // Load events and tasks
     const eventsPath = path.join(usersDir, userId, 'events.json')
     const tasksPath = path.join(usersDir, userId, 'tasks.json')
-    let events: CalendarEvent[] = []
-    let tasks: Task[] = []
-    try { events = JSON.parse(fs.readFileSync(eventsPath, 'utf-8')) } catch { /* empty */ }
-    try { tasks = JSON.parse(fs.readFileSync(tasksPath, 'utf-8')) } catch { /* empty */ }
+    const events = readJsonFile<CalendarEvent[]>(eventsPath, [])
+    const tasks = readJsonFile<Task[]>(tasksPath, [])
 
     const { notifications, profileUpdates } = computeNotifications(profile, events, tasks, profile.timezone)
 
-    // Send notifications
+    // Sending is network I/O and deliberately runs OUTSIDE the user lock. Holding
+    // a lock across a push round-trip would stall that user's own requests — the
+    // app's profile load takes the same lock — for as long as delivery takes.
     let sent = 0
     for (const n of notifications) {
       await sendToUser(profile, n)
       sent++
     }
 
-    // Update profile with tracking fields
+    // Only the write is locked, and it merges into a FRESH read: a settings save
+    // that landed while we were sending is preserved instead of being clobbered
+    // by the copy we loaded minutes ago.
     if (Object.keys(profileUpdates).length > 0) {
-      const updated = { ...profile, ...profileUpdates }
-      fs.writeFileSync(profilePath, JSON.stringify(updated, null, 2))
+      await withUserLock(userId, () => {
+        const current = readJsonFile<UserProfile | null>(profilePath, null)
+        if (!current) return
+        writeJsonFileAtomic(profilePath, { ...current, ...profileUpdates })
+      })
     }
 
     results.push({ userId, sent })

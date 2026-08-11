@@ -15,6 +15,9 @@ export interface CalendarEvent {
   series_id?: string          // groups all instances of a recurring event
   recurrence_rule?: string    // e.g. "weekly", "biweekly", "monthly"
   mobility_type?: 'fixed' | 'flexible' | 'ask_first'  // how movable this event is
+  // Reserved for a future "projects" feature — nothing reads or writes these yet.
+  project_id?: string
+  ref?: { kind: 'event' | 'task' | 'project'; id: string }
 }
 
 export interface Task {
@@ -30,6 +33,8 @@ export interface Task {
   topic?: string
   created_at: string
   completed_at?: string
+  // Reserved for a future "projects" feature — nothing reads or writes this yet.
+  project_id?: string
 }
 
 export interface UserProfile {

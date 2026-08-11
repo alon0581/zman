@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { demoStorage } from '@/lib/demo/storage'
+import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   if (DEMO_MODE) {
-    const events = demoStorage.getEvents(userId)
+    const events = userStore.getEvents(userId)
     return NextResponse.json({ events })
   }
 
@@ -51,7 +51,7 @@ export async function DELETE(req: NextRequest) {
   const { id } = await req.json()
 
   if (DEMO_MODE) {
-    demoStorage.deleteEvent(id, userId)
+    userStore.deleteEvent(id, userId)
     return NextResponse.json({ success: true })
   }
 

@@ -5,6 +5,7 @@ import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { encryptApiKey, maskApiKey } from '@/lib/encryption'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { withUserLock } from '@/lib/store/lock'
 import { DATA_DIR } from '@/lib/util/dataDir'
 import path from 'path'
 import { UserProfile, AIMemory } from '@/types'
@@ -77,10 +78,20 @@ export async function POST(req: NextRequest) {
     body.ai_model = undefined
   }
 
-  const existing = readProfile(userId)
+  // A mutex only works if every writer joins it. This read-modify-write is
+  // synchronous and therefore safe on its own, but the cron takes the same lock
+  // around its write — without joining here, this handler could still land in
+  // the middle of that and lose one of the two updates.
+  // Returns the pre-merge profile too — the onboarding block below detects the
+  // *transition* to onboarding_completed, so it needs the value from before this
+  // write, not after it.
   const updates = body as Partial<UserProfile>
-  const profile: UserProfile = { ...existing, ...updates, user_id: userId }
-  writeProfile(userId, profile)
+  const { existing, profile } = await withUserLock(userId, () => {
+    const previous = readProfile(userId)
+    const merged: UserProfile = { ...previous, ...updates, user_id: userId }
+    writeProfile(userId, merged)
+    return { existing: previous, profile: merged }
+  })
 
   // When UI onboarding completes for the first time, also save key facts to memory
   if (!existing.onboarding_completed && updates.onboarding_completed === true) {

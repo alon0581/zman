@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { demoStorage } from '@/lib/demo/storage'
+import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { Task } from '@/types'
 
@@ -23,7 +23,7 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   if (DEMO_MODE) {
-    const tasks = demoStorage.getTasks(userId)
+    const tasks = userStore.getTasks(userId)
     return NextResponse.json({ tasks })
   }
 
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (DEMO_MODE) {
-    demoStorage.addTask(task, userId)
+    userStore.addTask(task, userId)
     return NextResponse.json({ task })
   }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { demoStorage } from '@/lib/demo/storage'
+import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
@@ -25,7 +25,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const updates = await req.json()
 
   if (DEMO_MODE) {
-    demoStorage.updateTask(id, updates, userId)
+    userStore.updateTask(id, updates, userId)
     return NextResponse.json({ success: true })
   }
 
@@ -44,11 +44,11 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   if (DEMO_MODE) {
     // Cascade: delete child tasks first
-    const allTasks = demoStorage.getTasks(userId)
+    const allTasks = userStore.getTasks(userId)
     for (const t of allTasks) {
-      if (t.parent_task_id === id) demoStorage.deleteTask(t.id, userId)
+      if (t.parent_task_id === id) userStore.deleteTask(t.id, userId)
     }
-    demoStorage.deleteTask(id, userId)
+    userStore.deleteTask(id, userId)
     return NextResponse.json({ success: true })
   }
 

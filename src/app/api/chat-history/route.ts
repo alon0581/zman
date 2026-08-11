@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { DATA_DIR } from '@/lib/util/dataDir'
-import fs from 'fs'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import path from 'path'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
@@ -31,17 +31,8 @@ function chatFile(userId: string) {
   return path.join(DATA_DIR, 'users', userId, 'chat-history.json')
 }
 
-function ensureUserDir(userId: string) {
-  const dir = path.join(DATA_DIR, 'users', userId)
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-}
-
 function readMessages(userId: string): StoredMessage[] {
-  try {
-    const file = chatFile(userId)
-    if (!fs.existsSync(file)) return []
-    return JSON.parse(fs.readFileSync(file, 'utf-8'))
-  } catch { return [] }
+  return readJsonFile<StoredMessage[]>(chatFile(userId), [])
 }
 
 export async function GET(req: NextRequest) {
@@ -67,8 +58,8 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(body.messages)) return NextResponse.json({ error: 'Invalid' }, { status: 400 })
 
   if (DEMO_MODE) {
-    ensureUserDir(userId)
-    fs.writeFileSync(chatFile(userId), JSON.stringify(body.messages.slice(-MAX_MESSAGES), null, 2))
+    // Whole-file overwrite — nothing is read first, so no lock is needed.
+    writeJsonFileAtomic(chatFile(userId), body.messages.slice(-MAX_MESSAGES))
   }
   // Supabase: no chat schema — no-op for now
   return NextResponse.json({ ok: true })

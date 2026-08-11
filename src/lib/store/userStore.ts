@@ -32,7 +32,16 @@ function writeTasks(userId: string, tasks: Task[]) {
   writeJsonFileAtomic(tasksFile(userId), tasks)
 }
 
-export const demoStorage = {
+/**
+ * The real, production event/task store — every logged-in user's data lives here,
+ * under `<DATA_DIR>/users/<id>/`. It was once called `demoStorage`, which is why
+ * `DEMO_MODE` leaked into auth checks; the name was wrong, the storage never was.
+ *
+ * Deliberately synchronous: each method is a read-modify-write that completes
+ * within one turn of the event loop, so it is already atomic in-process and needs
+ * no lock (see `lock.ts`). Do not make these async.
+ */
+export const userStore = {
   getEvents(userId = 'demo'): CalendarEvent[] {
     return readEvents(userId)
   },

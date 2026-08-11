@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { registerUser, checkRateLimit, RATE_MAX_REGISTER, COOKIE_NAME, COOKIE_MAX_AGE } from '@/lib/auth'
-import fs from 'fs'
 import path from 'path'
 import { DATA_DIR } from '@/lib/util/dataDir'
+import { writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { UserProfile } from '@/types'
 
 export async function POST(req: NextRequest) {
@@ -28,10 +28,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 409 })
     }
 
-    // Create default profile for new user
-    const profileDir = path.join(DATA_DIR, 'users', result.userId)
-    if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true })
-    const profileFile = path.join(profileDir, 'profile.json')
+    // Create default profile for new user (writeJsonFileAtomic creates the dir)
+    const profileFile = path.join(DATA_DIR, 'users', result.userId, 'profile.json')
     // Auto-detect language from browser's Accept-Language header
     const acceptLang = req.headers.get('accept-language') ?? ''
     const detectedLang = acceptLang.toLowerCase().startsWith('he') ? 'he' : 'en'
@@ -45,7 +43,7 @@ export async function POST(req: NextRequest) {
       onboarding_completed: false,
       productivity_peak: 'morning',
     }
-    fs.writeFileSync(profileFile, JSON.stringify(defaultProfile, null, 2))
+    writeJsonFileAtomic(profileFile, defaultProfile)
 
     const res = NextResponse.json({ success: true })
     res.cookies.set(COOKIE_NAME, result.token, {

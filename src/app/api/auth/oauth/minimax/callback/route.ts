@@ -5,7 +5,8 @@ import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 import { cookies } from 'next/headers'
 import { UserProfile } from '@/types'
 import { DATA_DIR } from '@/lib/util/dataDir'
-import fs from 'fs'
+import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
+import { withUserLock } from '@/lib/store/lock'
 import path from 'path'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
@@ -16,17 +17,11 @@ function profileFile(userId: string) {
 }
 
 function readProfile(userId: string): UserProfile {
-  try {
-    const file = profileFile(userId)
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf-8')) as UserProfile
-  } catch { /* ignore */ }
-  return { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: true }
+  return readJsonFile<UserProfile>(profileFile(userId), { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: true })
 }
 
 function writeProfile(userId: string, profile: UserProfile) {
-  const dir = path.dirname(profileFile(userId))
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(profileFile(userId), JSON.stringify(profile, null, 2))
+  writeJsonFileAtomic(profileFile(userId), profile)
 }
 
 export async function GET(req: NextRequest) {
@@ -85,15 +80,21 @@ export async function GET(req: NextRequest) {
 
     // Save the access_token as the API key (MiniMax token = API key for their API)
     if (DEMO_MODE) {
-      const profile = readProfile(sessionUserId)
-      const updated: UserProfile = {
-        ...profile,
-        ai_provider: 'minimax',
-        ai_model: profile.ai_model ?? 'MiniMax-M1',
-        ai_api_key_encrypted: encryptApiKey(access_token),
-        ai_api_key_masked: maskApiKey(access_token),
-      }
-      writeProfile(sessionUserId, updated)
+      const uid = sessionUserId
+      // Read → modify → write under the user lock: the token exchange above is an
+      // await, so another writer (settings save, cron) could otherwise land between
+      // our read and our write and lose its update.
+      await withUserLock(uid, () => {
+        const profile = readProfile(uid)
+        const updated: UserProfile = {
+          ...profile,
+          ai_provider: 'minimax',
+          ai_model: profile.ai_model ?? 'MiniMax-M1',
+          ai_api_key_encrypted: encryptApiKey(access_token),
+          ai_api_key_masked: maskApiKey(access_token),
+        }
+        writeProfile(uid, updated)
+      })
     } else {
       const { createClient } = await import('@/lib/supabase/server')
       const supabase = await createClient()
