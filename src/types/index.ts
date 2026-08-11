@@ -55,6 +55,7 @@ export interface UserProfile {
   ai_api_key_encrypted?: string    // AES-256-GCM encrypted — NEVER sent to frontend
   push_subscription?: string       // JSON-serialised PushSubscription for Web Push (browser PWA)
   fcm_token?: string               // Firebase Cloud Messaging token for native Capacitor push
+  ntfy_topic?: string              // ntfy topic; derived from the user id when unset (see channels/ntfy.ts)
   mic_position?: 'left' | 'right'  // VoiceFAB side (default: 'right')
   // Smart notifications
   notifications_enabled?: boolean

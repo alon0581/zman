@@ -13,9 +13,8 @@
  */
 
 import { LocalISO, localDateKey, minutesBetween } from './clock'
-import { overlapMinutes, Span } from './timeline'
-import { BusyBlock, PlacementRequest, ReasonCode, ScoredReason, SchedulingContext } from './types'
-import { dayHourISO, weekdayOf } from './windows'
+import { BusyBlock, Category, PlacementRequest, ReasonCode, ScoredReason, SchedulingContext, Weekday } from './types'
+import { weekdayOf } from './windows'
 
 /**
  * The tuning surface. One place, so a complaint like "it keeps burying my
@@ -49,6 +48,24 @@ export const WEIGHTS: Record<ReasonCode, number> = {
   EARLIEST_AVAILABLE: 6,
 }
 
+/**
+ * Below this, a slot is worse than no slot at all and the engine refuses it.
+ *
+ * Chosen from the score distribution the acceptance-gate week actually produced,
+ * not from a round number. Placed blocks ran 113.6 down to -162.0 in steps of
+ * roughly 10-20 points, with one 45-point cliff in the middle: -17.2, then
+ * -62.8, -108.9, -136.9, -162.0. Everything above the cliff was a slot a person
+ * would keep ("third session that day, off your peak, but it fits"); everything
+ * below it was a 20:45 study block they would delete on sight — which then feeds
+ * a `rejected` signal into priors and teaches the engine the wrong lesson.
+ *
+ * -42 sits inside that cliff, and lands there for a structural reason too: it is
+ * one SPREAD penalty below the last slot that still read as sane. Since SPREAD
+ * costs WEIGHTS.SPREAD per session already on the day, the floor admits stacking
+ * a third session onto a day and refuses the fourth.
+ */
+export const MIN_ACCEPTABLE_SCORE = -42
+
 /** 'Sun'…'Sat', matching the convention FeedbackSignal.day already uses. */
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
 
@@ -72,6 +89,76 @@ export interface ScoreInput {
   isFrog: boolean
   /** Effective buffer — may be 0 while probing the `drop_buffer` relaxation. */
   bufferMinutes: number
+  /**
+   * Optional: the day-level work, already done. Every candidate on a given day
+   * shares it, so place.ts builds it once per window and hands it back for each
+   * of that day's ~60 candidates. Omit it and this computes the same values
+   * itself — the score is identical either way, only slower.
+   */
+  dayContext?: DayScoreContext
+  /** Optional: the block length the caller already knows, saving a re-derivation. */
+  durationMinutes?: number
+}
+
+/**
+ * Everything a score needs that depends on the candidate's DAY and its request,
+ * but not on where in the day the block sits.
+ *
+ * This exists for one reason: scoring was 60% of the engine's runtime, and
+ * almost all of that was re-deriving these same values per candidate through
+ * clock.ts, which re-validates and re-parses a timestamp on every call. Holding
+ * them as minutes-from-midnight makes per-candidate scoring integer arithmetic
+ * without changing a single number it produces.
+ */
+export interface DayScoreContext {
+  weekday: Weekday
+  /** Minutes from ctx.now to this day's midnight. Negative once the day is underway. */
+  midnightFromNow: number
+  /** Minutes from ctx.now to the far edge of the horizon. */
+  horizonSpan: number
+  /** Minutes from ctx.now to the request's deadline, or null when it has none. */
+  runway: number | null
+  peakFromMinute: number
+  peakToMinute: number
+  theme?: Category
+  /** Neighbour spans, as minutes from this day's midnight. */
+  neighbourRanges: { from: number; to: number }[]
+  /** How many of this request's other sessions already sit on this day. */
+  siblingsOnDay: number
+  /** Days to the nearest other session of this request, or null when it is the first. */
+  nearestSiblingDays: number | null
+}
+
+export function buildDayScoreContext(
+  ctx: SchedulingContext,
+  request: PlacementRequest,
+  day: string,
+  neighbours: BusyBlock[],
+  siblingDays: string[]
+): DayScoreContext {
+  const midnight = `${day}T00:00:00`
+  const weekday = weekdayOf(day)
+  const otherDays = siblingDays.filter(d => d !== day)
+
+  return {
+    weekday,
+    midnightFromNow: minutesBetween(ctx.now, midnight),
+    horizonSpan: minutesBetween(ctx.now, ctx.horizon.to),
+    runway: request.deadline ? minutesBetween(ctx.now, request.deadline) : null,
+    peakFromMinute: ctx.profile.peakStartHour * 60,
+    peakToMinute: ctx.profile.peakEndHour * 60,
+    theme: ctx.rules.themeDays?.[weekday],
+    neighbourRanges: neighbours.map(n => {
+      const from = minutesBetween(midnight, n.start)
+      return { from, to: from + minutesBetween(n.start, n.end) }
+    }),
+    siblingsOnDay: siblingDays.length - otherDays.length,
+    // Deduped first: a request with 29 sessions repeats the same handful of days
+    // over and over, and only the distinct ones can be the nearest.
+    nearestSiblingDays: otherDays.length === 0
+      ? null
+      : Math.min(...[...new Set(otherDays)].map(d => Math.abs(daysBetween(d, day)))),
+  }
 }
 
 export interface ScoreResult {
@@ -88,12 +175,14 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
     reasons.push(detail ? { code, weight: w, detail } : { code, weight: w })
   }
 
-  const { ctx, request, start, end } = input
-  const span: Span = { start, end }
-  const duration = minutesBetween(start, end)
+  const { ctx, request, start } = input
   const day = localDateKey(start)
-  const weekday = weekdayOf(day)
-  const peakFraction = fractionInPeak(span, duration, ctx)
+  const dayCtx = input.dayContext ?? buildDayScoreContext(ctx, request, day, input.neighbours, input.siblingDays)
+  const duration = input.durationMinutes ?? minutesBetween(start, input.end)
+  const startMinute = minuteOfDay(start)
+  const endMinute = startMinute + duration
+  const weekday = dayCtx.weekday
+  const peakFraction = fractionInPeak(startMinute, endMinute, duration, dayCtx)
 
   // PEAK_MATCH — by how much of the block sits inside the peak, not by its start
   // hour. The old code called a 6-hour window "peak" because it began at 09:00;
@@ -116,23 +205,20 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
   // SPREAD — the day-striding idea from pickSpreadSlots, as a score instead of a
   // hand-rolled pass: stacking onto a day this request already uses is penalised
   // per session already there, and separation is rewarded up to saturation.
-  if (input.siblingDays.length > 0) {
-    const sameDay = input.siblingDays.filter(d => d === day).length
-    if (sameDay > 0) {
-      push('SPREAD', -WEIGHTS.SPREAD * sameDay, { sameDaySessions: sameDay })
-    } else {
-      const nearest = Math.min(...input.siblingDays.map(d => Math.abs(daysBetween(d, day))))
-      const reward = Math.min(nearest, SPREAD_SATURATION_DAYS) / SPREAD_SATURATION_DAYS
-      push('SPREAD', WEIGHTS.SPREAD * reward, { daysFromNearest: nearest })
-    }
+  if (dayCtx.siblingsOnDay > 0) {
+    push('SPREAD', -WEIGHTS.SPREAD * dayCtx.siblingsOnDay, { sameDaySessions: dayCtx.siblingsOnDay })
+  } else if (dayCtx.nearestSiblingDays !== null) {
+    const nearest = dayCtx.nearestSiblingDays
+    const reward = Math.min(nearest, SPREAD_SATURATION_DAYS) / SPREAD_SATURATION_DAYS
+    push('SPREAD', WEIGHTS.SPREAD * reward, { daysFromNearest: nearest })
   }
 
   // DEADLINE_MARGIN — prefer finishing early, and actively punish the last fifth
   // of the runway, where a single slipped day means missing the deadline outright.
-  if (request.deadline) {
-    const runway = minutesBetween(ctx.now, request.deadline)
+  if (dayCtx.runway !== null) {
+    const runway = dayCtx.runway
     if (runway > 0) {
-      const margin = minutesBetween(end, request.deadline)
+      const margin = runway - (dayCtx.midnightFromNow + endMinute)
       const ratio = clamp01(margin / runway)
       const crunch = ratio < DEADLINE_CRUNCH_FRACTION
         ? -WEIGHTS.DEADLINE_MARGIN * (1 - ratio / DEADLINE_CRUNCH_FRACTION)
@@ -146,7 +232,7 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
 
   // PRIOR_HOUR — their own corrections. Normalised by the clamp priors.ts applies,
   // so a fully-reinforced hour is worth exactly WEIGHTS.PRIOR_HOUR and no more.
-  const hour = Number(start.slice(11, 13))
+  const hour = Math.floor(startMinute / 60)
   const hourPrior = ctx.priors.hourWeight[hour] ?? 0
   const dayPrior = ctx.priors.dayWeight[WEEKDAY_LABELS[weekday]] ?? 0
   if (hourPrior !== 0 || dayPrior !== 0) {
@@ -159,7 +245,7 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
 
   // THEME_DAY — a match is a bonus and a mismatch is a penalty, because the point
   // of theme days is that Wednesday is *not* for admin.
-  const theme = ctx.rules.themeDays?.[weekday]
+  const theme = dayCtx.theme
   if (theme && request.category) {
     push('THEME_DAY', theme === request.category ? WEIGHTS.THEME_DAY : -WEIGHTS.THEME_DAY / 2, {
       theme,
@@ -176,7 +262,9 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
     push('ENERGY_MATCH', WEIGHTS.ENERGY_MATCH * (1 - peakFraction), { energy: 'low', fraction: round2(peakFraction) })
   }
 
-  const earliness = earlinessFraction(ctx, start)
+  const earliness = dayCtx.horizonSpan > 0
+    ? clamp01(1 - (dayCtx.midnightFromNow + startMinute) / dayCtx.horizonSpan)
+    : 0
 
   // FROG_FIRST — eat_the_frog's whole claim is that the hardest thing goes first,
   // so for the frog, earliness is worth far more than it is for anything else.
@@ -189,7 +277,7 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
   // all respects every buffer trivially and scores full marks: awarding it
   // nothing made a crowded day outrank an empty one, which is exactly backwards,
   // and it quietly dragged whole plans onto the days that were already busiest.
-  const gap = nearestNeighbourGap(span, input.neighbours)
+  const gap = nearestNeighbourGap(startMinute, endMinute, dayCtx.neighbourRanges)
   const comfortable = 2 * Math.max(input.bufferMinutes, 15)
   const respect = gap === null ? 1 : clamp01(gap / comfortable)
   push('BUFFER_RESPECTED', WEIGHTS.BUFFER_RESPECTED * respect, gap === null ? undefined : { gapMinutes: gap })
@@ -202,39 +290,43 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
 }
 
 /** How much of the block falls inside the user's peak window, as 0..1. */
-function fractionInPeak(span: Span, duration: number, ctx: SchedulingContext): number {
-  if (duration <= 0) return 0
-  const day = localDateKey(span.start)
-  const peak: Span = {
-    start: dayHourISO(day, ctx.profile.peakStartHour),
-    end: dayHourISO(day, ctx.profile.peakEndHour),
-  }
-  if (peak.end <= peak.start) return 0
-  return clamp01(overlapMinutes(span, peak) / duration)
-}
-
-/** 1.0 at `now`, falling to 0 at the far edge of the horizon. */
-function earlinessFraction(ctx: SchedulingContext, start: LocalISO): number {
-  const span = minutesBetween(ctx.now, ctx.horizon.to)
-  if (span <= 0) return 0
-  return clamp01(1 - minutesBetween(ctx.now, start) / span)
+function fractionInPeak(startMinute: number, endMinute: number, duration: number, dayCtx: DayScoreContext): number {
+  if (duration <= 0 || dayCtx.peakToMinute <= dayCtx.peakFromMinute) return 0
+  const overlap = Math.min(endMinute, dayCtx.peakToMinute) - Math.max(startMinute, dayCtx.peakFromMinute)
+  return overlap <= 0 ? 0 : clamp01(overlap / duration)
 }
 
 /** Minutes to the closest commitment on either side, or null when there is none. */
-function nearestNeighbourGap(span: Span, neighbours: BusyBlock[]): number | null {
+function nearestNeighbourGap(startMinute: number, endMinute: number, ranges: { from: number; to: number }[]): number | null {
   let best: number | null = null
-  for (const n of neighbours) {
-    const gap = n.start >= span.end ? minutesBetween(span.end, n.start)
-      : n.end <= span.start ? minutesBetween(n.end, span.start)
+  for (const n of ranges) {
+    const gap = n.from >= endMinute ? n.from - endMinute
+      : n.to <= startMinute ? startMinute - n.to
       : 0
     if (best === null || gap < best) best = gap
   }
   return best
 }
 
-/** Whole days from day key `a` to day key `b`. */
+/** Minutes past midnight of a LocalISO's time-of-day. */
+function minuteOfDay(iso: LocalISO): number {
+  return Number(iso.slice(11, 13)) * 60 + Number(iso.slice(14, 16))
+}
+
+/**
+ * Whole days from day key `a` to day key `b`.
+ *
+ * Straight UTC day arithmetic rather than clock.ts: a day key carries no time,
+ * so there is nothing here for a timezone to affect, and this runs once per
+ * distinct sibling day per candidate day.
+ */
 function daysBetween(a: string, b: string): number {
-  return Math.round(minutesBetween(`${a}T00:00:00`, `${b}T00:00:00`) / (24 * 60))
+  return dayIndex(b) - dayIndex(a)
+}
+
+/** Days since the epoch for a "YYYY-MM-DD" key. */
+function dayIndex(day: string): number {
+  return Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10))) / 86_400_000
 }
 
 function clamp01(n: number): number {

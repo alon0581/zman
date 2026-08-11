@@ -161,6 +161,12 @@ export function freeGaps(window: DayWindow, busy: BusyBlock[], bufferMinutes: nu
  * scheduled time, and charging them to the cap would shrink the day twice.
  */
 export function busyMinutesIn(window: DayWindow, busy: BusyBlock[]): number {
-  return mergeSpans(busy.map(b => ({ start: b.start, end: b.end })))
-    .reduce((sum, s) => sum + overlapMinutes(s, window), 0)
+  // Narrowed to the window before merging. Blocks elsewhere in the horizon
+  // contribute nothing once clipped, and merging the whole calendar to discover
+  // that meant sorting every event for every candidate slot considered.
+  const inside: Span[] = []
+  for (const b of busy) {
+    if (b.start < window.end && window.start < b.end) inside.push({ start: b.start, end: b.end })
+  }
+  return mergeSpans(inside).reduce((sum, s) => sum + overlapMinutes(s, window), 0)
 }

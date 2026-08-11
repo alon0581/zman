@@ -220,6 +220,8 @@ export type UnplacedCode =
   | 'blocked_by_fixed'    // only fixed events stood in the way
   | 'needs_user_approval' // would require moving an ask_first event
   | 'horizon_exhausted'   // ran out of days before placing every session
+  | 'no_free_space'       // only flexible work was in the way and repair could not move it
+  | 'below_quality_floor' // slots existed, but all of them were bad enough to be worse than nothing
 
 export interface Unplaced {
   requestIndex: number
@@ -241,8 +243,15 @@ export interface Relaxation {
   code: RelaxationCode
   /** Human-facing size of the change, e.g. "45 → 30" or "+1h". */
   delta: string
-  /** How many currently-unplaced sessions this would place. */
+  /**
+   * How many currently-unplaced sessions this would place. A floor, not an
+   * estimate: the engine re-runs the real filter to get it, but may stop probing
+   * early on a large backlog, in which case the true number is higher. Never
+   * lower — so "this would place at least N more" is always a safe reading.
+   */
   wouldPlace: number
+  /** Which request the payoff belongs to, so the advice can name it. */
+  requestIndex?: number
 }
 
 /** A flexible event the engine moved to make room. Always reported, never silent. */

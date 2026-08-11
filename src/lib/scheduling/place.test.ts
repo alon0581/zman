@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ceilToGrid, emptyState, placeOne, PlaceResult } from './place'
+import { MIN_ACCEPTABLE_SCORE } from './score'
 import { toBusyBlocks } from './timeline'
 import { CalendarEvent } from '@/types'
 import { BusyBlock, MethodRules, PlacementRequest, SchedulingContext, SchedulingProfile } from './types'
@@ -175,6 +176,15 @@ describe('the hard filter', () => {
     expect(failure(place(ctxOf({ now: '2026-08-14T00:00:00' }))).code).toBe('horizon_exhausted')
   })
 
+  it('reports no_free_space when only unmovable flexible work occupied every slot', () => {
+    // Not blocked_by_fixed and not a cap: the room is simply taken. Repair gets
+    // first refusal on these; this is what is left when it cannot help.
+    const busy = ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13'].map(day => busyOf({
+      id: `x-${day}`, title: 'בלוק עבודה', start: `${day}T09:00:00`, end: `${day}T17:00:00`, mobility: 'flexible',
+    }))
+    expect(failure(place(ctxOf({ busy }))).code).toBe('no_free_space')
+  })
+
   it('reports no_window for a block no window is long enough to hold', () => {
     const ctx = ctxOf({ rules: { ...rules, maxBlock: 600 } })
     const result = failure(place(ctx, request, 600))
@@ -185,6 +195,44 @@ describe('the hard filter', () => {
     const result = failure(place(ctxOf(), request, 200))
     expect(result.code).toBe('no_window')
     expect(result.detail).toMatchObject({ reason: 'block_length', maxBlock: 180 })
+  })
+})
+
+describe('the quality floor', () => {
+  /**
+   * SPREAD costs WEIGHTS.SPREAD per session already on the day, so piling
+   * sessions onto one day is what drives a score through the floor — exactly the
+   * run of -62 / -108 / -162 blocks the acceptance-gate week produced.
+   */
+  function stackedState(ctx: SchedulingContext, sessions: number) {
+    const state = emptyState(ctx)
+    state.daysByRequest[0] = Array.from({ length: sessions }, () => '2026-08-10')
+    return state
+  }
+
+  const oneDay = { from: '2026-08-10T00:00:00', to: '2026-08-11T00:00:00' }
+
+  it('still places a mildly negative slot — "not your peak, but it fits" is a real answer', () => {
+    const ctx = ctxOf({ horizon: oneDay })
+    const result = placeOne(ctx, request, 0, 60, buildDayWindows(profile, oneDay), stackedState(ctx, 3))
+    expect(result.ok).toBe(true)
+    expect(placed(result).score).toBeLessThan(0)
+    expect(placed(result).score).toBeGreaterThan(MIN_ACCEPTABLE_SCORE)
+  })
+
+  it('refuses a slot below the floor rather than handing over something to delete', () => {
+    const ctx = ctxOf({ horizon: oneDay })
+    const result = failure(placeOne(ctx, request, 0, 60, buildDayWindows(profile, oneDay), stackedState(ctx, 5)))
+    expect(result.code).toBe('below_quality_floor')
+    expect(result.detail).toMatchObject({ floor: MIN_ACCEPTABLE_SCORE })
+    expect(Number(result.detail!.bestScore)).toBeLessThan(MIN_ACCEPTABLE_SCORE)
+  })
+
+  it('reports the best slot it turned down, so the refusal is auditable', () => {
+    const ctx = ctxOf({ horizon: oneDay })
+    const result = failure(placeOne(ctx, request, 0, 60, buildDayWindows(profile, oneDay), stackedState(ctx, 8)))
+    const worse = failure(placeOne(ctx, request, 0, 60, buildDayWindows(profile, oneDay), stackedState(ctx, 12)))
+    expect(Number(result.detail!.bestScore)).toBeGreaterThan(Number(worse.detail!.bestScore))
   })
 })
 

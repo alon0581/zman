@@ -43,12 +43,32 @@ export async function POST(req: NextRequest) {
     : 'Calendar scheduling. Appointments, meetings, events, tasks, reminders, deadlines.'
 
   try {
-    const transcription = await getOpenAI().audio.transcriptions.create({
-      file: audio,
-      model: 'whisper-1',
-      language: whisperLang ?? undefined,
-      prompt,
-    })
+    // gpt-4o-transcribe is markedly better on Hebrew than whisper-1, which is the
+    // oldest transcription model OpenAI still serves. Overridable by env so a
+    // model rename can be fixed without a deploy, and it falls back to whisper-1
+    // below rather than leaving the mic dead if the newer model is unavailable.
+    let transcription
+    try {
+      transcription = await getOpenAI().audio.transcriptions.create({
+        file: audio,
+        model: process.env.TRANSCRIBE_MODEL || 'gpt-4o-transcribe',
+        language: whisperLang ?? undefined,
+        prompt,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      // Only fall back for "this model doesn't exist / isn't yours" — a quota or
+      // auth failure would fail identically on whisper-1, so retrying wastes a
+      // round-trip and hides the real cause.
+      if (!/model/i.test(msg) || !/(not found|does not exist|no access|invalid)/i.test(msg)) throw err
+      console.warn('[transcribe] falling back to whisper-1:', msg)
+      transcription = await getOpenAI().audio.transcriptions.create({
+        file: audio,
+        model: 'whisper-1',
+        language: whisperLang ?? undefined,
+        prompt,
+      })
+    }
 
     // Reject common Whisper hallucinations on silence
     const hallucinationPhrases = [

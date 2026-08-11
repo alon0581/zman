@@ -12,6 +12,7 @@ import { DATA_DIR } from '@/lib/util/dataDir'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { withUserLock } from '@/lib/store/lock'
 import { sendPush, sendFcmPush } from '@/lib/push'
+import { sendNtfy, defaultTopicFor, isNtfyConfigured } from '@/lib/notifications/channels/ntfy'
 import fs from 'fs'
 import path from 'path'
 
@@ -61,7 +62,10 @@ async function processDemoUsers(results: { userId: string; sent: number }[]) {
 
     // Skip if notifications disabled or no push token
     if (!profile.notifications_enabled) continue
-    if (!profile.fcm_token && !profile.push_subscription) continue
+    // A user with no FCM token and no browser subscription is still reachable via
+    // ntfy, so the old "no token, skip" gate silently excluded everyone on this
+    // deployment — which is precisely why nothing has ever been delivered.
+    if (!profile.fcm_token && !profile.push_subscription && !isNtfyConfigured()) continue
 
     // Load events and tasks
     const eventsPath = path.join(usersDir, userId, 'events.json')
@@ -110,7 +114,10 @@ async function processSupabaseUsers(results: { userId: string; sent: number }[])
   if (!profiles) return
 
   for (const profile of profiles as UserProfile[]) {
-    if (!profile.fcm_token && !profile.push_subscription) continue
+    // A user with no FCM token and no browser subscription is still reachable via
+    // ntfy, so the old "no token, skip" gate silently excluded everyone on this
+    // deployment — which is precisely why nothing has ever been delivered.
+    if (!profile.fcm_token && !profile.push_subscription && !isNtfyConfigured()) continue
 
     // Load events (today ± 1 day)
     const now = new Date()
@@ -157,7 +164,19 @@ async function sendToUser(
   profile: UserProfile,
   payload: { title: string; body: string; url?: string; tag?: string }
 ) {
-  // FCM (native) takes priority — most reliable, works when app is closed
+  // One channel per notification, never two — the moment a second one works the
+  // user gets every reminder twice, which is worse than the channel being wrong.
+  //
+  // ntfy leads when it is configured because it is the only path that reaches a
+  // phone on this deployment today: FCM needs a Firebase service account that was
+  // never set up, and VAPID only reaches a browser tab the user has open. FCM
+  // stays ahead of VAPID below for when that service account does get configured
+  // — at which point leaving NTFY_TOPIC_SECRET unset hands delivery back to it.
+  const topic = profile.ntfy_topic || defaultTopicFor(profile.user_id)
+  if (topic && isNtfyConfigured()) {
+    await sendNtfy(topic, payload)
+    return
+  }
   if (profile.fcm_token) {
     await sendFcmPush(profile.fcm_token, payload).catch(() => {})
   } else if (profile.push_subscription) {

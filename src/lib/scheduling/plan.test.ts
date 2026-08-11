@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { CalendarEvent } from '@/types'
 import { orderRequests, planSchedule, splitSessions } from './plan'
+import { MIN_ACCEPTABLE_SCORE } from './score'
 import { overlaps, toBusyBlocks } from './timeline'
 import {
   BusyBlock, MethodRules, Mobility, PlacedBlock, PlacementRequest, PlanOutcome,
@@ -247,6 +248,98 @@ describe('repair, seen from the outside', () => {
   })
 })
 
+describe('the quality floor, end to end', () => {
+  const oneDay = { from: '2026-08-10T00:00:00', to: '2026-08-11T00:00:00' }
+  const roomy = { ...rules, maxSessionsPerDay: 10, dailyCapMinutes: 600 }
+
+  it('stops stacking a day once the slots left are worse than nothing', () => {
+    const outcome = planSchedule(
+      ctxOf({ horizon: oneDay, rules: roomy }),
+      [requestOf({ totalMinutes: 6 * 60, sessionCount: 6 })]
+    )
+    expect(outcome.status).toBe('partial')
+    if (outcome.status !== 'partial') return
+    expect(outcome.unplaced[0].code).toBe('below_quality_floor')
+    // Nothing it did place is a block the user would delete on sight.
+    for (const b of outcome.blocks) expect(b.score).toBeGreaterThanOrEqual(MIN_ACCEPTABLE_SCORE)
+    expect(outcome.blocks.length).toBeGreaterThan(0)
+  })
+
+  it('explains the refusal with relaxations when one would actually help', () => {
+    // Thu 13th plus the weekend. The floor stops the Thursday stack, and the two
+    // sessions it turned down are exactly what opening Fri–Sat would absorb.
+    const outcome = planSchedule(
+      ctxOf({
+        now: '2026-08-13T08:00:00',
+        horizon: { from: '2026-08-13T00:00:00', to: '2026-08-16T00:00:00' },
+        rules: roomy,
+      }),
+      [requestOf({ totalMinutes: 6 * 60, sessionCount: 6 })]
+    )
+    expect(outcome.status).toBe('partial')
+    if (outcome.status !== 'partial') return
+    expect(outcome.unplaced[0].code).toBe('below_quality_floor')
+    expect(outcome.relaxations.find(r => r.code === 'use_weekend'))
+      .toEqual({ code: 'use_weekend', delta: 'Fri–Sat', wouldPlace: 6 - outcome.blocks.length, requestIndex: 0 })
+  })
+
+  it('offers nothing when the real constraint is "one day is not enough days"', () => {
+    // Honest emptiness, not a missing feature: no relaxation in the contract
+    // says "give me more days", and inventing a payoff here would be a guess.
+    const outcome = planSchedule(
+      ctxOf({ horizon: oneDay, rules: roomy }),
+      [requestOf({ totalMinutes: 6 * 60, sessionCount: 6 })]
+    )
+    if (outcome.status !== 'partial') return
+    expect(outcome.relaxations).toEqual([])
+  })
+})
+
+describe('the engine never displaces its own blocks', () => {
+  it('leaves an earlier request where it put it, and reports the later one unplaced', () => {
+    // Only 16:00–17:00 is free, and the first request takes it. Displacing that
+    // block would have left it listed in `blocks` at a time the engine had just
+    // vacated — a plan contradicting itself.
+    const outcome = planSchedule(
+      ctxOf({
+        horizon: { from: '2026-08-10T00:00:00', to: '2026-08-11T00:00:00' },
+        busy: [block('wall', '2026-08-10T09:00:00', '2026-08-10T16:00:00', 'fixed')],
+      }),
+      [requestOf({ title: 'א' }), requestOf({ title: 'ב' })]
+    )
+    expect(outcome.status).toBe('partial')
+    if (outcome.status !== 'partial') return
+    expect(outcome.blocks).toHaveLength(1)
+    expect(outcome.blocks[0]).toMatchObject({ title: 'א', start: '2026-08-10T16:00:00' })
+    expect(outcome.displacements).toEqual([])
+    expect(outcome.unplaced[0].requestIndex).toBe(1)
+  })
+})
+
+describe('relaxations name the request they would help', () => {
+  it('reports a payoff per request, not one anonymous total', () => {
+    // Friday and Saturday only: the engine keeps the weekend clear, so both
+    // requests are stuck for the same reason and both would be freed by it.
+    const outcome = planSchedule(
+      ctxOf({ now: '2026-08-14T07:00:00', horizon: { from: '2026-08-14T00:00:00', to: '2026-08-16T00:00:00' } }),
+      [requestOf({ title: 'א' }), requestOf({ title: 'ב' })]
+    )
+    expect(outcome.status).toBe('blocked')
+    if (outcome.status !== 'blocked') return
+    const weekend = outcome.relaxations.filter(r => r.code === 'use_weekend')
+    expect(weekend.map(r => r.requestIndex).sort()).toEqual([0, 1])
+    expect(weekend.every(r => r.wouldPlace === 1)).toBe(true)
+  })
+
+  it('skips a relaxation that provably changes nothing instead of probing it', () => {
+    // Buffer is already zero, so "drop the buffer" is not an offer worth making.
+    const busy = ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13'].map(d => wall(d))
+    const outcome = planSchedule(ctxOf({ busy }), [requestOf()])
+    if (outcome.status !== 'blocked') return
+    expect(outcome.relaxations.map(r => r.code)).not.toContain('drop_buffer')
+  })
+})
+
 describe('when it cannot be done', () => {
   it('reports blocked, with a code, when nothing landed at all', () => {
     const busy = ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13'].map(d => wall(d))
@@ -278,7 +371,7 @@ describe('relaxations are computed, never guessed', () => {
     )
     expect(outcome.status).toBe('blocked')
     if (outcome.status !== 'blocked') return
-    expect(outcome.relaxations).toContainEqual({ code: 'use_weekend', delta: 'Fri–Sat', wouldPlace: 1 })
+    expect(outcome.relaxations).toContainEqual({ code: 'use_weekend', delta: 'Fri–Sat', wouldPlace: 1, requestIndex: 0 })
   })
 
   it('offers a shorter session when the only hole is smaller than one', () => {
@@ -292,7 +385,7 @@ describe('relaxations are computed, never guessed', () => {
     expect(outcome.status).toBe('blocked')
     if (outcome.status !== 'blocked') return
     expect(outcome.relaxations.find(r => r.code === 'shorten_sessions'))
-      .toEqual({ code: 'shorten_sessions', delta: '60 → 45', wouldPlace: 1 })
+      .toEqual({ code: 'shorten_sessions', delta: '60 → 45', wouldPlace: 1, requestIndex: 0 })
   })
 
   it('offers to drop the buffer when the buffer is what is in the way', () => {
@@ -307,7 +400,7 @@ describe('relaxations are computed, never guessed', () => {
     expect(outcome.status).toBe('blocked')
     if (outcome.status !== 'blocked') return
     expect(outcome.relaxations.find(r => r.code === 'drop_buffer'))
-      .toEqual({ code: 'drop_buffer', delta: '60 → 0', wouldPlace: 1 })
+      .toEqual({ code: 'drop_buffer', delta: '60 → 0', wouldPlace: 1, requestIndex: 0 })
   })
 
   it('counts what each relaxation would really place, session by session', () => {
@@ -325,7 +418,7 @@ describe('relaxations are computed, never guessed', () => {
     if (outcome.status !== 'blocked') return
     // Both sessions become placeable, one per day — not "some", not "all six".
     expect(outcome.relaxations.find(r => r.code === 'move_ask_first'))
-      .toEqual({ code: 'move_ask_first', delta: '2', wouldPlace: 2 })
+      .toEqual({ code: 'move_ask_first', delta: '2', wouldPlace: 2, requestIndex: 0 })
   })
 
   it('offers nothing when nothing would help', () => {

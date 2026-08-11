@@ -18,7 +18,7 @@
  */
 
 import {
-  blockMinutes, cloneState, PlaceOptions, PlaceResult, placeOne, PlacementState,
+  blockMinutes, cloneState, isEngineBlock, PlaceOptions, PlaceResult, placeOne, PlacementState,
 } from './place'
 import { scoreCandidate } from './score'
 import {
@@ -68,9 +68,15 @@ export function attemptRepair(
     .filter(a =>
       a.blockers.length > 0 &&
       a.blockers.length <= MAX_BLOCKERS_PER_CANDIDATE &&
-      // Everything in the way must be movable, unmoved, and not an all-day block —
-      // an all-day block has no other home inside a day it already fills.
-      a.blockers.every(b => b.mobility === 'flexible' && !b.isAllDay && !alreadyMoved.has(b.id) && !b.id.startsWith(TARGET_PIN_PREFIX))
+      // Everything in the way must be a real calendar event that is movable,
+      // unmoved, and not all-day — an all-day block has no other home inside a
+      // day it already fills, and one of our own blocks is not an event yet.
+      a.blockers.every(b =>
+        b.mobility === 'flexible' &&
+        !b.isAllDay &&
+        !alreadyMoved.has(b.id) &&
+        !isEngineBlock(b.id) &&
+        !b.id.startsWith(TARGET_PIN_PREFIX))
     )
     .map(a => ({
       attempt: a,

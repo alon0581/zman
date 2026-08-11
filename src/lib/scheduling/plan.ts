@@ -21,7 +21,7 @@ import { addMonths } from 'date-fns'
 import { LocalISO, addMinutes, localDateKey, parseLocal, toLocalISO } from './clock'
 import { classifyMobility } from './mobilityClassifier'
 import {
-  cloneState, commitBlock, emptyState, PlaceOptions, PlaceResult, placeOne, PlacementState,
+  cloneState, commitBlock, emptyState, ENGINE_BLOCK_PREFIX, PlaceOptions, PlaceResult, placeOne, PlacementState,
 } from './place'
 import { attemptRepair, MAX_REPAIR_DEPTH } from './repair'
 import { overlaps } from './timeline'
@@ -37,6 +37,16 @@ const MAX_RECURRENCE_INSTANCES = 52
 const SHORTEN_FACTOR = 2 / 3
 /** `extend_day` proposes one hour at each end. */
 const EXTEND_DAY_HOURS = 1
+/**
+ * How many failed sessions each relaxation probe will actually try to re-place.
+ *
+ * Every probe is a real placement pass, so the cost is (relaxation codes) x
+ * (backlog). The bound keeps a pathological backlog from turning one chat reply
+ * into a multi-second wait, and is why Relaxation.wouldPlace is a floor rather
+ * than an exact count. Set well above any realistic backlog — the acceptance-gate
+ * week has 16 — so in practice it does not bind and the number is exact.
+ */
+const MAX_RELAXATION_PROBE_SESSIONS = 24
 /** Sorts a request with no deadline last: above every character an ISO date uses. */
 const NO_DEADLINE = '￿'
 
@@ -323,7 +333,7 @@ function adopt(
 
 function asBusy(request: PlacementRequest, block: PlacedBlock, requestIndex: number): BusyBlock {
   return {
-    id: `plan:${requestIndex}:${block.start}`,
+    id: `${ENGINE_BLOCK_PREFIX}${requestIndex}:${block.start}`,
     title: block.title,
     start: block.start,
     end: block.end,
@@ -396,6 +406,9 @@ function minDay(a: string, b: string): string {
  * filter over the sessions that actually failed, on a throwaway copy of the
  * state. A guessed number here would be exactly the kind of confident-sounding
  * fiction the engine exists to eliminate.
+ *
+ * A trial that cannot possibly change anything is skipped rather than probed —
+ * offering to drop a buffer of zero is both a lie and a wasted search.
  */
 function computeRelaxations(
   ctx: SchedulingContext,
@@ -407,13 +420,26 @@ function computeRelaxations(
 
   const shortest = Math.min(...pending.map(p => p.durationMinutes))
   const shortened = Math.max(ctx.rules.minBlock, roundToQuarter(shortest * SHORTEN_FACTOR))
+  const weekendWindows = buildDayWindows(ctx.profile, ctx.horizon, { includeWeekend: true })
+  const askFirstInTheWay = state.busy.filter(b =>
+    b.mobility === 'ask_first' && baseWindows.some(w => overlaps(b, w))
+  ).length
 
-  const trials: { code: RelaxationCode; delta: string; windows: DayWindow[]; opts: PlaceOptions; duration?: (p: PendingSession) => number }[] = [
+  const trials: {
+    code: RelaxationCode
+    delta: string
+    windows: DayWindow[]
+    opts: PlaceOptions
+    /** False when this relaxation provably changes nothing for this context. */
+    applicable: boolean
+    duration?: (p: PendingSession) => number
+  }[] = [
     {
       code: 'shorten_sessions',
       delta: `${shortest} → ${shortened}`,
       windows: baseWindows,
       opts: {},
+      applicable: shortened < shortest,
       duration: p => Math.max(ctx.rules.minBlock, roundToQuarter(p.durationMinutes * SHORTEN_FACTOR)),
     },
     {
@@ -424,41 +450,57 @@ function computeRelaxations(
         dayEndHour: ctx.profile.dayEndHour + EXTEND_DAY_HOURS,
       }),
       opts: {},
+      applicable: ctx.profile.dayStartHour > 0 || ctx.profile.dayEndHour < 24,
     },
     {
       code: 'use_weekend',
       delta: 'Fri–Sat',
-      windows: buildDayWindows(ctx.profile, ctx.horizon, { includeWeekend: true }),
+      windows: weekendWindows,
       opts: {},
+      applicable: weekendWindows.length > baseWindows.length,
     },
     {
       code: 'move_ask_first',
       // Only the ones actually sitting inside the user's available hours — the
       // delta is a number they will read as "events I'd have to touch".
-      delta: String(state.busy.filter(b =>
-        b.mobility === 'ask_first' && baseWindows.some(w => overlaps(b, w))
-      ).length),
+      delta: String(askFirstInTheWay),
       windows: baseWindows,
       opts: { ignoreAskFirst: true },
+      applicable: askFirstInTheWay > 0,
     },
     {
       code: 'drop_buffer',
       delta: `${ctx.profile.bufferMinutes} → 0`,
       windows: baseWindows,
       opts: { bufferMinutes: 0 },
+      applicable: ctx.profile.bufferMinutes > 0,
     },
   ]
 
   const relaxations: Relaxation[] = []
   for (const trial of trials) {
-    const wouldPlace = countPlaceable(ctx, trial.windows, state, pending, trial.opts, trial.duration)
-    if (wouldPlace > 0) relaxations.push({ code: trial.code, delta: trial.delta, wouldPlace })
+    if (!trial.applicable) continue
+    for (const [requestIndex, wouldPlace] of countPlaceable(ctx, trial.windows, state, pending, trial.opts, trial.duration)) {
+      if (wouldPlace > 0) relaxations.push({ code: trial.code, delta: trial.delta, wouldPlace, requestIndex })
+    }
   }
 
-  relaxations.sort((a, b) => (b.wouldPlace - a.wouldPlace) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0))
+  relaxations.sort((a, b) =>
+    (b.wouldPlace - a.wouldPlace) ||
+    (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) ||
+    ((a.requestIndex ?? 0) - (b.requestIndex ?? 0))
+  )
   return relaxations
 }
 
+/**
+ * How many of the pending sessions this relaxation would place, per request.
+ *
+ * Bounded: past MAX_RELAXATION_PROBE_SESSIONS the probe stops, which is why
+ * Relaxation.wouldPlace is documented as a floor. A backlog that long is already
+ * being told "this does not fit" — the exact size of the shortfall is not what
+ * makes the advice useful, and probing all of it turns a chat reply into a wait.
+ */
 function countPlaceable(
   ctx: SchedulingContext,
   windows: DayWindow[],
@@ -466,11 +508,11 @@ function countPlaceable(
   pending: PendingSession[],
   opts: PlaceOptions,
   duration?: (p: PendingSession) => number
-): number {
+): Map<number, number> {
   // A throwaway world, so counting one relaxation cannot bias the next.
   const trial: PlacementState = cloneState(state)
-  let placed = 0
-  for (const p of pending) {
+  const placed = new Map<number, number>()
+  for (const p of pending.slice(0, MAX_RELAXATION_PROBE_SESSIONS)) {
     const minutes = duration ? duration(p) : p.durationMinutes
     const scoped = p.request.hardWindows ? windowsFor(p.request, windows, ctx) : windows
     const result = placeOne(ctx, p.request, p.requestIndex, minutes, scoped, trial, {
@@ -478,8 +520,9 @@ function countPlaceable(
       restrictToDay: p.restrictToDay,
     })
     if (!result.ok) continue
+    placed.set(p.requestIndex, (placed.get(p.requestIndex) ?? 0) + 1)
     commitBlock(trial, p.requestIndex, result.block, {
-      id: `relax:${p.requestIndex}:${result.block.start}`,
+      id: `${ENGINE_BLOCK_PREFIX}relax:${p.requestIndex}:${result.block.start}`,
       title: result.block.title,
       start: result.block.start,
       end: result.block.end,
@@ -487,7 +530,6 @@ function countPlaceable(
       createdBy: 'ai',
       isAllDay: false,
     })
-    placed++
   }
   return placed
 }
