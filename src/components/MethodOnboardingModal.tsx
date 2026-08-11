@@ -24,6 +24,7 @@ export default function MethodOnboardingModal({ profile, memory, language, onCom
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [recState, setRecState] = useState<RecState>('idle')
+  const [micError, setMicError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -145,14 +146,20 @@ export default function MethodOnboardingModal({ profile, memory, language, onCom
         const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
         if (blob.size < 1000) { setRecState('idle'); return }
         setRecState('processing')
+        setMicError(null)
         try {
           const fd = new FormData()
           fd.append('audio', blob, mimeType?.includes('mp4') ? 'rec.m4a' : 'rec.webm')
           fd.append('lang', language ?? 'en')
           const res = await fetch('/api/transcribe', { method: 'POST', body: fd })
+          if (!res.ok) throw new Error(`transcribe ${res.status}`)
           const { text } = await res.json()
           if (text?.trim()) sendToAI(text.trim())
-        } catch { /* ignore */ }
+        } catch {
+          // This is a brand-new user's first interaction. Swallowing the failure
+          // means they talk, nothing happens, and they have no idea why.
+          setMicError(isHe ? 'לא הצלחתי לשמוע. נסה שוב, או פשוט הקלד.' : "Couldn't catch that. Try again, or just type.")
+        }
         finally { setRecState('idle') }
       }
       recorder.start(250)
@@ -312,6 +319,15 @@ export default function MethodOnboardingModal({ profile, memory, language, onCom
             <Send size={15} />
           </button>
         </div>
+
+        {micError && (
+          <div
+            dir={isHe ? 'rtl' : 'ltr'}
+            style={{ marginTop: 6, fontSize: 12, color: '#F87171', lineHeight: 1.4 }}
+          >
+            {micError}
+          </div>
+        )}
       </div>
     </div>
   )

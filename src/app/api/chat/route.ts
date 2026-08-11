@@ -1,10 +1,17 @@
 import { NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
 import OpenAI from 'openai'
-import { calendarTools, onboardingTools } from '@/lib/ai/tools'
+import { getCalendarTools, getOnboardingTools, V2_ONLY_TOOLS } from '@/lib/ai/tools'
 import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
 import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
-import { CalendarEvent, UserProfile, AIMemory, Task } from '@/types'
+import { schedulerV2Enabled } from '@/lib/ai/featureFlags'
+import { followupPrompt, needsFollowup } from '@/lib/ai/followup'
+import { consumePlan } from '@/lib/ai/planStore'
+import {
+  buildBreakdownSpec, buildScheduleItemSpec, METHOD_SESSION_HOURS, methodMobility,
+  methodTitleFormatter, planMove, planRecurring, proposePlan, recurringToolResult, SchedulerCtx,
+} from '@/lib/ai/schedulerTools'
+import { CalendarEvent, UserProfile, AIMemory, Task, FeedbackSignal } from '@/types'
 import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay } from 'date-fns'
 import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
@@ -34,20 +41,75 @@ function memoryFile(userId: string) {
   return path.join(DATA_DIR, 'users',assertSafeUserId(userId), 'memory.json')
 }
 
-// Scheduling/task/calendar intent → use the smart (main) model. Otherwise plain
-// chit-chat can run on the cheaper model. Conservative: defaults to TRUE for
-// anything substantial, only short greetings/thanks fall through to the cheap model.
-const SMART_INTENT_RE = /\b(add|create|schedule|move|delete|remove|reschedule|organi[sz]e|arrange|event|meeting|exam|deadline|task|todo|calendar|free|busy|plan|analy|review|week|tomorrow|today|every|remind)\b|הוסף|צור|קבע|תזמן|תוסיף|תקבע|תזיז|הזז|מחק|תמחק|בטל|אירוע|פגיש|מבחן|בחינ|הגש|דדליין|משימ|לו"?ז|לוח|פנוי|תכנן|תסדר|סדר לי|לסדר|תארגן|ארגן|לארגן|נתח|סקיר|שבוע|מחר|היום|כל יום|כל שבוע|תזכיר|נקבע|למחוק|להזיז/i
-// Self-description / personal facts → also use the smart model. The cheap model is
-// unreliable at calling save_memory, which is exactly how the user ends up feeling
-// "forgotten" next session. Keep anything that looks like the user telling us about
-// themselves (name, occupation, habits, preferences, "remember…") on the smart model.
-const PERSONAL_INTENT_RE = /\b(i am|i'?m|my name|call me|i like|i love|i prefer|i hate|i work|i study|i live|i have|remember (that|this)?|don'?t forget|fyi|about me)\b|אני |שמי|קוראים לי|תקרא לי|אני לומד|אני עובד|אני גר|אני אוהב|אני מעדיף|אני שונא|יש לי|תזכור|אל תשכח|שתדע|כדאי שתדע|לידיעתך|עליי|עלי /i
-function needsSmartModel(text: string): boolean {
-  if (!text) return false
-  if (text.length > 200) return true        // long message → likely complex
-  return SMART_INTENT_RE.test(text) || PERSONAL_INTENT_RE.test(text)
+// ── Model policy ────────────────────────────────────────────────────────────
+//
+// One model per conversation, deliberately. The previous tiered setup routed
+// chit-chat to Haiku and scheduling to Sonnet, which reads as a saving and isn't:
+// prompt caches are keyed per model, so alternating models alternately misses the
+// cache. The static prefix is thousands of tokens, and re-writing it every other
+// turn costs more than the cheaper model saves — while also making the assistant
+// feel like two different assistants depending on how a sentence was phrased.
+const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5'
+
+// Sonnet 5 runs adaptive thinking by default, and max_tokens caps thinking PLUS
+// the reply. The old 2048 was sized for a non-thinking model and truncates
+// answers here — the thinking eats the budget and the user gets half a sentence.
+const ANTHROPIC_MAX_TOKENS = Number(process.env.ANTHROPIC_MAX_TOKENS) || 8192
+const ANTHROPIC_FOLLOWUP_MAX_TOKENS = 4096
+
+/**
+ * `output_config.effort` is rejected by models that predate it, and a per-user
+ * key from Settings can still point at one — so it is sent only to models known
+ * to accept it.
+ *
+ * Why `medium` and not `low`: effort has to be set against who is doing the
+ * thinking. While SCHEDULER_V2 is off, the model still works out slot placement
+ * itself, and `low` is documented for short, scoped, non-intelligence-sensitive
+ * turns — exactly the wrong setting for the work it is actually carrying. Once
+ * the engine owns placement, the model's job shrinks to understanding Hebrew and
+ * paraphrasing reasons it was handed, and `low` becomes the honest setting.
+ * Overridable so that switch is an env change, not a deploy.
+ *
+ * Note what is NOT here: `temperature`, `top_p`, `top_k`. Sonnet 5 rejects
+ * non-default sampling parameters outright. None were ever sent; keep it that way.
+ */
+const EFFORT_CAPABLE = /^claude-(opus-5|sonnet-5|fable-5|mythos-5|opus-4-[5678]|sonnet-4-6)/
+// `xhigh` exists on the API but not in the installed SDK's types (0.78 predates
+// it). Left out deliberately rather than cast around — add it when the SDK is
+// upgraded, so the compiler keeps telling us what the client actually supports.
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'max'] as const
+type EffortLevel = typeof EFFORT_LEVELS[number]
+
+function chatEffort(): EffortLevel {
+  const raw = process.env.AI_EFFORT as EffortLevel | undefined
+  return raw && EFFORT_LEVELS.includes(raw) ? raw : 'medium'
 }
+
+function effortConfig(model: string): { output_config: { effort: EffortLevel } } | Record<string, never> {
+  return EFFORT_CAPABLE.test(model) ? { output_config: { effort: chatEffort() } } : {}
+}
+
+// ── SCHEDULER_V2 ────────────────────────────────────────────────────────────
+
+/**
+ * Appended to the DYNAMIC half of the system prompt when the flag is on.
+ *
+ * The v1 prompt is full of "call get_free_slots first" instructions, and under
+ * the flag that tool is not offered at all — so without this the model would be
+ * told to reach for something that no longer exists. Keeping the correction out
+ * of the static prefix means the cacheable half never varies by flag.
+ */
+const SCHEDULER_V2_GUIDANCE = `
+SCHEDULING ENGINE (this overrides any earlier instruction about get_free_slots):
+- get_free_slots no longer exists. Do NOT compute free time, count hours, or pick times yourself — you will get it wrong on all-day events and recurring series, and you cannot see what the user has quietly been moving.
+- "When should I…" / "מתי כדאי…" / "תמצא לי זמן" / anything needing multiple sessions → schedule_item.
+- Splitting a big task or an exam across sessions → break_down_task (same engine).
+- Moving an event without a specific new time → move_event with the times omitted (this one applies straight away and returns the new time).
+- schedule_item and break_down_task return a PROPOSAL with a plan_id and write nothing. Show it, wait for agreement, then apply_plan with that plan_id. In autonomy_mode "auto" you may apply immediately.
+- Every block comes with a "why" array of finished sentences. Paraphrase those. Never invent a different reason, and never state a reason the engine did not give.
+- status "partial" or "blocked" means it did NOT all fit. Say so plainly, name what did not fit, and offer the "suggestions" verbatim. Do not round a partial plan up to a success.
+- create_event stays for times the user named explicitly.
+`.trim()
 
 /** Parse an "HH:mm" string to an hour in [0,23], falling back on bad input. */
 function parseHour(value: string | undefined, fallback: number): number {
@@ -202,7 +264,7 @@ export async function POST(req: NextRequest) {
       p === 'openai'     ? process.env.OPENAI_API_KEY :
       undefined
     const defaultModelFor = (p: string): string =>
-      p === 'anthropic'  ? 'claude-sonnet-4-6' :
+      p === 'anthropic'  ? DEFAULT_ANTHROPIC_MODEL :
       p === 'minimax'    ? 'MiniMax-M2.5' :
       'gpt-4o-mini'
 
@@ -217,7 +279,7 @@ export async function POST(req: NextRequest) {
       model = process.env.AI_MODEL || defaultModelFor(provider)
       apiKey = envKeyFor(provider)!
     } else if (process.env.ANTHROPIC_API_KEY) {
-      provider = 'anthropic'; model = process.env.AI_MODEL || 'claude-sonnet-4-6'; apiKey = process.env.ANTHROPIC_API_KEY
+      provider = 'anthropic'; model = process.env.AI_MODEL || DEFAULT_ANTHROPIC_MODEL; apiKey = process.env.ANTHROPIC_API_KEY
     } else if (process.env.OPENAI_API_KEY) {
       provider = 'openai'; model = 'gpt-4o-mini'; apiKey = process.env.OPENAI_API_KEY
     } else {
@@ -229,14 +291,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ── Tiered routing: cheap model for simple chit-chat, main model for scheduling/tools ──
-    // simpleModel only defaults on Anthropic (Haiku); empty string disables routing.
-    const simpleModel = process.env.AI_MODEL_SIMPLE ?? (provider === 'anthropic' ? 'claude-haiku-4-5' : '')
-    if (!isOnboarding && simpleModel && simpleModel !== model) {
-      const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content ?? ''
-      if (!needsSmartModel(lastUser)) model = simpleModel
-    }
-    console.log('[chat] provider:', provider, 'model:', model)
+    // One model, pinned for the whole conversation — see DEFAULT_ANTHROPIC_MODEL.
+    const v2 = schedulerV2Enabled()
+    console.log('[chat] provider:', provider, 'model:', model, 'scheduler_v2:', v2)
     // ───────────────────────────────────────────────────────────────────────
 
     // Create "now" in the user's timezone (Railway runs UTC; user may be in Asia/Jerusalem etc.)
@@ -270,9 +327,16 @@ export async function POST(req: NextRequest) {
         : (memory as AIMemory[] | undefined)
 
     // Split system prompt: stable `staticPrefix` (cacheable) + per-request `dynamicSuffix`.
-    const sys = isOnboarding
+    const rawSys = isOnboarding
       ? { staticPrefix: buildOnboardingSystemPrompt(profile?.language ?? 'en', userNow), dynamicSuffix: '' }
       : buildSystemPrompt(profile, events, userNow, effectiveMemory, tasks, feedback)
+    // Under the flag the v1 prompt still tells the model to call get_free_slots and
+    // do the arithmetic itself — a tool that no longer exists. The correction goes
+    // in the DYNAMIC suffix, never the static prefix, so the cached prefix is
+    // byte-identical whether the flag is on or off.
+    const sys = v2
+      ? { ...rawSys, dynamicSuffix: `${rawSys.dynamicSuffix}\n\n${SCHEDULER_V2_GUIDANCE}`.trim() }
+      : rawSys
     // For OpenAI-compatible providers: one system string (stable prefix first → auto-caches).
     const systemPrompt = sys.dynamicSuffix ? `${sys.staticPrefix}\n\n${sys.dynamicSuffix}` : sys.staticPrefix
 
@@ -280,8 +344,21 @@ export async function POST(req: NextRequest) {
     const updatedEvents: CalendarEvent[] = []
     const deletedEventIds: string[] = []
     let lastContent = ''
+    // "Did this turn actually do anything" — the input to the shared retry rule.
+    let toolCallsMade = 0
     let completedProfile: UserProfile | null = null
     const state = { completedProfile: null as UserProfile | null, memoryUpdated: false, tasksUpdated: false }
+
+    // Everything the engine-backed tools need that the v1 dispatcher never carried.
+    // `enabled: false` makes every v2 branch inside executeTool unreachable.
+    const schedCtx: SchedulerCtx = {
+      enabled: v2,
+      memory: effectiveMemory ?? [],
+      feedback: feedback as FeedbackSignal[],
+      timezone,
+      isHe: (profile?.language ?? 'he') === 'he',
+    }
+    const activeTools = isOnboarding ? getOnboardingTools(v2) : getCalendarTools(v2)
 
     // ── Tool-call loop ──────────────────────────────────────────────────────
 
@@ -289,7 +366,13 @@ export async function POST(req: NextRequest) {
       // Anthropic tool-call loop
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const anthropic = new Anthropic({ apiKey })
-      const anthropicTools = toAnthropicTools(isOnboarding ? onboardingTools : calendarTools)
+      const anthropicTools = toAnthropicTools(activeTools)
+      const anthropicSystem = sys.dynamicSuffix
+        ? [
+            { type: 'text' as const, text: sys.staticPrefix, cache_control: { type: 'ephemeral' as const } },
+            { type: 'text' as const, text: sys.dynamicSuffix },
+          ]
+        : [{ type: 'text' as const, text: sys.staticPrefix, cache_control: { type: 'ephemeral' as const } }]
 
       type AnthropicMessageParam = { role: 'user' | 'assistant'; content: string | object[] }
       const anthropicMessages: AnthropicMessageParam[] = messages.map(m => ({
@@ -297,92 +380,105 @@ export async function POST(req: NextRequest) {
         content: m.content,
       }))
 
-      let iterations = 0
-      const loopStart = Date.now()
-      while (iterations < 10) {
-        if (Date.now() - loopStart > MAX_LOOP_MS) {
-          console.warn('[chat] Anthropic tool-loop timeout after', iterations, 'iterations')
-          if (!lastContent) lastContent = '⏱️ This took too long to process. Please try again.'
-          break
-        }
-        iterations++
-        const response = await anthropic.messages.create({
-          model,
-          // Prompt caching: stable prefix cached (~10% on reads), volatile suffix not.
-          system: sys.dynamicSuffix
-            ? [
-                { type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } },
-                { type: 'text', text: sys.dynamicSuffix },
-              ]
-            : [{ type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } }],
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          messages: anthropicMessages as any,
-          tools: anthropicTools,
-          max_tokens: 2048,
-        })
-
-        // Cache visibility: cache_read_input_tokens > 0 means the static prefix was reused.
-        if (response.usage) console.log('[chat] anthropic usage:', JSON.stringify(response.usage))
-
-        if (response.stop_reason === 'tool_use') {
-          anthropicMessages.push({ role: 'assistant', content: response.content as object[] })
-
-          const toolResults: object[] = []
-          for (const block of response.content) {
-            if (block.type === 'tool_use') {
-              const result = await executeTool(
-                block.name,
-                block.input as Record<string, unknown>,
-                userId as string,
-                events,
-                createdEvents,
-                updatedEvents,
-                deletedEventIds,
-                profile,
-                state,
-                freshProfile?.push_subscription,
-                freshProfile?.fcm_token,
-                userNow,
-              )
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: block.id,
-                content: JSON.stringify(result),
-              })
-            }
+      // The provider loop gets its own try/catch: an SDK throw here used to fall
+      // all the way out to the outer catch, which returns a bare error frame with
+      // no `done` — and the client's reader waits forever on a turn that is over.
+      try {
+        let iterations = 0
+        const loopStart = Date.now()
+        while (iterations < 10) {
+          if (Date.now() - loopStart > MAX_LOOP_MS) {
+            console.warn('[chat] Anthropic tool-loop timeout after', iterations, 'iterations')
+            if (!lastContent) lastContent = '⏱️ This took too long to process. Please try again.'
+            break
           }
-          anthropicMessages.push({ role: 'user', content: toolResults })
-          continue
-        }
-
-        // End turn — extract text
-        const textBlock = response.content.find(b => b.type === 'text')
-        lastContent = (textBlock as { type: 'text'; text: string } | undefined)?.text ?? ''
-        break
-      }
-
-      // Anthropic (especially Haiku) often ends a tool turn with NO text block, so the
-      // user sees events created but gets no reply ("it disconnected"). Force one final
-      // no-tools call to produce a short confirmation. `anthropicMessages` already holds
-      // the tool results, so the model just summarizes what it did.
-      if (!lastContent) {
-        try {
-          const followup = await anthropic.messages.create({
+          iterations++
+          const response = await anthropic.messages.create({
             model,
-            system: sys.dynamicSuffix
-              ? [
-                  { type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } },
-                  { type: 'text', text: sys.dynamicSuffix },
-                ]
-              : [{ type: 'text', text: sys.staticPrefix, cache_control: { type: 'ephemeral' } }],
+            // Prompt caching: stable prefix cached (~10% on reads), volatile suffix not.
+            system: anthropicSystem,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             messages: anthropicMessages as any,
-            max_tokens: 512,
+            tools: anthropicTools,
+            max_tokens: ANTHROPIC_MAX_TOKENS,
+            ...effortConfig(model),
           })
-          const tb = followup.content.find(b => b.type === 'text')
-          lastContent = (tb as { type: 'text'; text: string } | undefined)?.text ?? ''
-        } catch (err) {
-          console.warn('[chat] follow-up summary failed:', (err as Error)?.message)
+
+          // Cache visibility: cache_read_input_tokens > 0 means the static prefix was reused.
+          if (response.usage) console.log('[chat] anthropic usage:', JSON.stringify(response.usage))
+
+          if (response.stop_reason === 'tool_use') {
+            anthropicMessages.push({ role: 'assistant', content: response.content as object[] })
+
+            const toolResults: object[] = []
+            for (const block of response.content) {
+              if (block.type === 'tool_use') {
+                toolCallsMade++
+                const result = await executeTool(
+                  block.name,
+                  block.input as Record<string, unknown>,
+                  userId as string,
+                  events,
+                  createdEvents,
+                  updatedEvents,
+                  deletedEventIds,
+                  profile,
+                  state,
+                  freshProfile?.push_subscription,
+                  freshProfile?.fcm_token,
+                  userNow,
+                  schedCtx,
+                )
+                toolResults.push({
+                  type: 'tool_result',
+                  tool_use_id: block.id,
+                  content: JSON.stringify(result),
+                })
+              }
+            }
+            anthropicMessages.push({ role: 'user', content: toolResults })
+            continue
+          }
+
+          // End turn — extract text
+          const textBlock = response.content.find(b => b.type === 'text')
+          lastContent = (textBlock as { type: 'text'; text: string } | undefined)?.text ?? ''
+          break
+        }
+
+        // A tool turn that ends with no text — or with "בוצע!" — leaves the user
+        // watching events appear with no account of what was decided. One shared
+        // rule decides that for both providers; see lib/ai/followup.ts.
+        if (needsFollowup(lastContent, toolCallsMade)) {
+          try {
+            const followupMessages: AnthropicMessageParam[] = [...anthropicMessages]
+            // An empty assistant turn is rejected by the API, so only echo real text.
+            if (lastContent.trim()) followupMessages.push({ role: 'assistant', content: lastContent })
+            followupMessages.push({ role: 'user', content: followupPrompt(schedCtx.isHe) })
+
+            const followup = await anthropic.messages.create({
+              model,
+              system: anthropicSystem,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              messages: followupMessages as any,
+              max_tokens: ANTHROPIC_FOLLOWUP_MAX_TOKENS,
+              ...effortConfig(model),
+            })
+            const tb = followup.content.find(b => b.type === 'text')
+            const retryText = (tb as { type: 'text'; text: string } | undefined)?.text ?? ''
+            if (retryText.trim().length > lastContent.trim().length) lastContent = retryText
+          } catch (err) {
+            console.warn('[chat] follow-up summary failed:', (err as Error)?.message)
+          }
+        }
+      } catch (err) {
+        // Whatever happened, the turn still has to end cleanly: report it as text
+        // and fall through to the stream, which always terminates with `done`.
+        console.error('[chat] Anthropic provider loop failed:', err)
+        if (!lastContent) {
+          lastContent = schedCtx.isHe
+            ? '⚠️ הייתה תקלה מול מנוע ה-AI. נסה שוב בעוד רגע.'
+            : '⚠️ The AI provider failed on this request. Please try again in a moment.'
         }
       }
 
@@ -411,129 +507,138 @@ export async function POST(req: NextRequest) {
       const isReasoningModel = model.includes('M2.5') || model.includes('M2-5') || model.startsWith('o1') || model.startsWith('o3')
       const maxTokens = isReasoningModel ? 4096 : 2048
 
-      let iterations = 0
-      const loopStart = Date.now()
-      while (iterations < 10) {
-        if (Date.now() - loopStart > MAX_LOOP_MS) {
-          console.warn('[chat] OpenAI tool-loop timeout after', iterations, 'iterations')
-          if (!lastContent) lastContent = '⏱️ This took too long to process. Please try again.'
-          break
-        }
-        iterations++
-        const response = await openaiClient.chat.completions.create({
-          model,
-          messages: currentMessages,
-          tools: isOnboarding ? onboardingTools : calendarTools,
-          tool_choice: 'auto',
-          max_tokens: maxTokens,
-        })
-
-        const message = response.choices[0].message
-
-        if (message.tool_calls?.length) {
-          currentMessages.push(message)
-          for (const toolCall of message.tool_calls) {
-            const tc = toolCall as { id: string; function: { name: string; arguments: string } }
-            // Guard against truncated/invalid tool-call JSON (e.g. hit max_tokens mid-args)
-            let input: Record<string, unknown>
-            try {
-              input = JSON.parse(tc.function.arguments) as Record<string, unknown>
-            } catch {
-              currentMessages.push({
-                role: 'tool',
-                tool_call_id: tc.id,
-                content: JSON.stringify({ error: 'invalid_arguments', message: 'Tool arguments were not valid JSON (possibly truncated). Retry with shorter arguments or split into multiple calls.' }),
-              })
-              continue
-            }
-            const result = await executeTool(
-              tc.function.name, input, userId as string, events,
-              createdEvents, updatedEvents, deletedEventIds, profile, state,
-              freshProfile?.push_subscription,
-              freshProfile?.fcm_token,
-              userNow,
-            )
-            currentMessages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: JSON.stringify(result),
-            })
+      // Same shape as the Anthropic branch: the loop owns its failures so the
+      // stream below always gets to run and always terminates with `done`.
+      try {
+        let iterations = 0
+        const loopStart = Date.now()
+        while (iterations < 10) {
+          if (Date.now() - loopStart > MAX_LOOP_MS) {
+            console.warn('[chat] OpenAI tool-loop timeout after', iterations, 'iterations')
+            if (!lastContent) lastContent = '⏱️ This took too long to process. Please try again.'
+            break
           }
-          if (state.completedProfile) completedProfile = state.completedProfile
-          continue
-        }
+          iterations++
+          const response = await openaiClient.chat.completions.create({
+            model,
+            messages: currentMessages,
+            tools: activeTools,
+            tool_choice: 'auto',
+            max_tokens: maxTokens,
+          })
 
-        // Fallback: MiniMax M2.5 sometimes outputs XML tool calls in content
-        if (!message.tool_calls?.length && message.content?.includes('<invoke name=')) {
-          const xmlCalls = parseXmlToolCalls(message.content)
-          if (xmlCalls.length > 0) {
+          const message = response.choices[0].message
+
+          if (message.tool_calls?.length) {
             currentMessages.push(message)
-            const allowed = new Set(
-              (isOnboarding ? onboardingTools : calendarTools)
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                .map(t => (t as any).function?.name as string)
-                .filter(Boolean)
-            )
-            let xmlIdx = 0
-            for (const tc of xmlCalls) {
-              // Only execute recognized tool names — never run an arbitrary name parsed from content
-              if (!allowed.has(tc.name)) {
+            for (const toolCall of message.tool_calls) {
+              const tc = toolCall as { id: string; function: { name: string; arguments: string } }
+              // Guard against truncated/invalid tool-call JSON (e.g. hit max_tokens mid-args)
+              let input: Record<string, unknown>
+              try {
+                input = JSON.parse(tc.function.arguments) as Record<string, unknown>
+              } catch {
                 currentMessages.push({
                   role: 'tool',
-                  tool_call_id: `xml-${xmlIdx++}`,
-                  content: JSON.stringify({ error: 'unknown_tool', message: `'${tc.name}' is not a valid tool` }),
+                  tool_call_id: tc.id,
+                  content: JSON.stringify({ error: 'invalid_arguments', message: 'Tool arguments were not valid JSON (possibly truncated). Retry with shorter arguments or split into multiple calls.' }),
                 })
                 continue
               }
+              toolCallsMade++
               const result = await executeTool(
-                tc.name, tc.args, userId as string, events,
+                tc.function.name, input, userId as string, events,
                 createdEvents, updatedEvents, deletedEventIds, profile, state,
                 freshProfile?.push_subscription,
                 freshProfile?.fcm_token,
                 userNow,
+                schedCtx,
               )
               currentMessages.push({
                 role: 'tool',
-                tool_call_id: `xml-${tc.name}-${xmlIdx++}`,
+                tool_call_id: tc.id,
                 content: JSON.stringify(result),
               })
             }
+            if (state.completedProfile) completedProfile = state.completedProfile
             continue
           }
-        }
 
-        // No more tool calls — capture final text (strip reasoning + XML blocks)
-        lastContent = (message.content ?? '')
-          .replace(/<think>[\s\S]*?<\/think>/g, '')
-          .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
-          .trim()
-        break
-      }
+          // Fallback: MiniMax M2.5 sometimes outputs XML tool calls in content
+          if (!message.tool_calls?.length && message.content?.includes('<invoke name=')) {
+            const xmlCalls = parseXmlToolCalls(message.content)
+            if (xmlCalls.length > 0) {
+              currentMessages.push(message)
+              const allowed = new Set(
+                activeTools
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  .map(t => (t as any).function?.name as string)
+                  .filter(Boolean)
+              )
+              let xmlIdx = 0
+              for (const tc of xmlCalls) {
+                // Only execute recognized tool names — never run an arbitrary name parsed from content
+                if (!allowed.has(tc.name)) {
+                  currentMessages.push({
+                    role: 'tool',
+                    tool_call_id: `xml-${xmlIdx++}`,
+                    content: JSON.stringify({ error: 'unknown_tool', message: `'${tc.name}' is not a valid tool` }),
+                  })
+                  continue
+                }
+                toolCallsMade++
+                const result = await executeTool(
+                  tc.name, tc.args, userId as string, events,
+                  createdEvents, updatedEvents, deletedEventIds, profile, state,
+                  freshProfile?.push_subscription,
+                  freshProfile?.fcm_token,
+                  userNow,
+                  schedCtx,
+                )
+                currentMessages.push({
+                  role: 'tool',
+                  tool_call_id: `xml-${tc.name}-${xmlIdx++}`,
+                  content: JSON.stringify(result),
+                })
+              }
+              continue
+            }
+          }
 
-      // Safety net: if AI responded with just "Done!" or similarly terse after tool calls,
-      // re-prompt to get a proper explanation (MiniMax-M2.5 sometimes does this with large prompts)
-      if (lastContent && lastContent.length < 30 && iterations > 1) {
-        try {
-          currentMessages.push({ role: 'assistant', content: lastContent })
-          currentMessages.push({
-            role: 'user',
-            content: profile?.language === 'he'
-              ? 'תן תשובה מפורטת על סמך תוצאות הכלים למעלה. הסבר מה מצאת, בעיות, והצעות. ענה בעברית.'
-              : 'Please provide a detailed response based on the tool results above. Explain what you found, any issues, and your suggestions.',
-          })
-          const retryResp = await openaiClient.chat.completions.create({
-            model,
-            messages: currentMessages,
-            max_tokens: isReasoningModel ? 4096 : 2048,
-          })
-          const retryText = (retryResp.choices[0].message.content ?? '')
+          // No more tool calls — capture final text (strip reasoning + XML blocks)
+          lastContent = (message.content ?? '')
             .replace(/<think>[\s\S]*?<\/think>/g, '')
             .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
             .trim()
-          if (retryText.length > lastContent.length) {
-            lastContent = retryText
-          }
-        } catch { /* keep original lastContent */ }
+          break
+        }
+
+        // Same rule as the Anthropic branch, from the same function — see lib/ai/followup.ts.
+        if (needsFollowup(lastContent, toolCallsMade)) {
+          try {
+            if (lastContent.trim()) currentMessages.push({ role: 'assistant', content: lastContent })
+            currentMessages.push({ role: 'user', content: followupPrompt(schedCtx.isHe) })
+            const retryResp = await openaiClient.chat.completions.create({
+              model,
+              messages: currentMessages,
+              max_tokens: maxTokens,
+            })
+            const retryText = (retryResp.choices[0].message.content ?? '')
+              .replace(/<think>[\s\S]*?<\/think>/g, '')
+              .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
+              .trim()
+            if (retryText.length > lastContent.trim().length) {
+              lastContent = retryText
+            }
+          } catch { /* keep original lastContent */ }
+        }
+      } catch (err) {
+        console.error('[chat] OpenAI provider loop failed:', err)
+        if (!lastContent) {
+          lastContent = schedCtx.isHe
+            ? '⚠️ הייתה תקלה מול מנוע ה-AI. נסה שוב בעוד רגע.'
+            : '⚠️ The AI provider failed on this request. Please try again in a moment.'
+        }
       }
 
       if (state.completedProfile) completedProfile = state.completedProfile
@@ -640,12 +745,15 @@ export async function POST(req: NextRequest) {
               }
             }
 
-            controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
           } catch (err) {
             console.error('Stream error:', err)
             const message = err instanceof Error ? err.message : 'stream_failed'
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message })}\n\n`))
           } finally {
+            // `done` is what ends the client's read loop. Emitting it only on the
+            // happy path meant any mid-stream throw left the UI spinning forever
+            // on a turn that was already over, so it lives in `finally`.
+            controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
             controller.close()
           }
         }
@@ -711,11 +819,13 @@ export async function POST(req: NextRequest) {
             ))
           }
 
-          controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
         } catch (err) {
           console.error('Stream error:', err)
           controller.enqueue(encoder.encode('data: {"type":"error"}\n\n'))
         } finally {
+          // See the note on the OpenAI stream: `done` must be unconditional, or
+          // an error frame leaves the client waiting on a stream that has closed.
+          controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
           controller.close()
         }
       }
@@ -730,10 +840,15 @@ export async function POST(req: NextRequest) {
     })
 
   } catch (err) {
+    // Last line of defence — anything the provider loops didn't already catch
+    // (bad request body, auth, storage). Still a well-formed SSE turn: the
+    // client's reader only stops on `done`, so a bare error frame hangs the UI.
     console.error('Chat API error:', err)
     return new Response(
-      `data: {"type":"error","message":"Internal server error"}\n\n`,
-      { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+      `data: {"type":"events","createdEvents":[],"updatedEvents":[],"deletedEventIds":[]}\n\n` +
+      `data: {"type":"error","message":"Internal server error"}\n\n` +
+      `data: {"type":"done"}\n\n`,
+      { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } }
     )
   }
 }
@@ -753,11 +868,20 @@ async function executeTool(
   pushSubscription?: string,
   fcmToken?: string,
   now: Date = new Date(),  // user-local "now" (Asia/Jerusalem), not server UTC — used for scheduling
+  // Absent (or disabled) ⇒ every `sched?.enabled` branch below is dead and the
+  // dispatcher behaves exactly as it did before the engine existed.
+  sched?: SchedulerCtx,
 ): Promise<unknown> {
   // ── Input validation helpers ──────────────────────────────────────────────
   const str  = (v: unknown): string  => (typeof v === 'string' ? v : '')
   const num  = (v: unknown): number  => (typeof v === 'number' ? v : 0)
   const bool = (v: unknown): boolean => (typeof v === 'boolean' ? v : false)
+
+  // A v2-only tool reached through a stale transcript when the flag is off must
+  // fail loudly rather than silently doing nothing.
+  if (!sched?.enabled && V2_ONLY_TOOLS.has(toolName)) {
+    return { error: 'unknown_tool', message: `Unknown tool: ${toolName}` }
+  }
 
   switch (toolName) {
     case 'create_event': {
@@ -773,6 +897,15 @@ async function executeTool(
       }
       // ── Recurring shortcut: generate N instances, skip conflict checks ───
       const recurrence = input.recurrence as { frequency?: string; count?: number; end_date?: string } | undefined
+      if (recurrence?.frequency && sched?.enabled) {
+        // Same generation, but every instance is checked against the real
+        // timeline — the one that understands all-day events and multi-day
+        // spans — and every skip is reported. The v1 path below checks only
+        // `fixed` clashes with a naive overlap test and then swallows the
+        // result in a bare `skipped` count, which is how a weekly series
+        // quietly double-booked itself from week three onward.
+        return applyRecurringPlan(input, userId, currentEvents, createdEvents, profile, sched, recurrence)
+      }
       if (recurrence?.frequency) {
         const seriesId = crypto.randomUUID()
         const baseStart = new Date(input.start_time as string)
@@ -995,6 +1128,17 @@ async function executeTool(
 
     case 'move_event': {
       const { event_id, new_start_time, new_end_time } = input as { event_id: string; new_start_time: string; new_end_time: string }
+
+      // ── SCHEDULER_V2: no time given means "you find one" ──────────────────
+      // A move is a single, visible, reversible change, so unlike schedule_item
+      // it applies immediately — but the slot is the engine's answer, not the
+      // model's guess, and it comes back with the reasons that chose it.
+      if (sched?.enabled && !str(new_start_time)) {
+        return applyEngineMove(
+          str(event_id), userId, currentEvents, createdEvents, updatedEvents, profile, sched, now,
+        )
+      }
+
       if (!str(new_start_time) || !str(new_end_time) ||
           isNaN(Date.parse(str(new_start_time))) || isNaN(Date.parse(str(new_end_time)))) {
         return { error: 'invalid_date', message: 'new_start_time and new_end_time must be valid dates' }
@@ -1093,9 +1237,80 @@ async function executeTool(
       return { success: true }
     }
 
+    // Still declared and still working with the flag off. With the flag on it is
+    // simply not in the tool list the model is given, so this case is unreachable
+    // — the arithmetic is the engine's job, and an unoffered tool cannot be called.
     case 'get_free_slots': {
       const { from_date, to_date, min_duration_minutes = 60, prefer_peak = false } = input as { from_date: string; to_date: string; min_duration_minutes?: number; prefer_peak?: boolean }
       return { free_slots: getFreeSlots(currentEvents, from_date, to_date, min_duration_minutes as number, profile, prefer_peak as boolean, now) }
+    }
+
+    // ── SCHEDULER_V2 tools ────────────────────────────────────────────────
+    // Guarded above by V2_ONLY_TOOLS, so with the flag off neither is reachable.
+
+    case 'schedule_item': {
+      if (!sched?.enabled) return { error: 'unknown_tool', message: 'Unknown tool: schedule_item' }
+      const spec = buildScheduleItemSpec(input, profile, sched)
+      if (!spec) return { error: 'missing_required_fields', message: 'title is required' }
+      // Events created earlier in this same turn are part of the world the
+      // engine must plan around, or two tool calls in one turn book the same hour.
+      return proposePlan(userId, [...currentEvents, ...createdEvents], profile, sched, now, spec).toolResult
+    }
+
+    case 'apply_plan': {
+      if (!sched?.enabled) return { error: 'unknown_tool', message: 'Unknown tool: apply_plan' }
+      const planId = str(input.plan_id)
+      if (!planId) return { error: 'missing_required_fields', message: 'plan_id is required' }
+
+      // Consumed, not just read: the blocks are written verbatim, so applying the
+      // same proposal twice would duplicate every event on the calendar.
+      const plan = consumePlan(userId, planId)
+      if (!plan) {
+        return {
+          error: 'plan_expired',
+          message: 'That plan is no longer available (applied already, or older than ~10 minutes). Call schedule_item again — do NOT invent times from the earlier message.',
+        }
+      }
+
+      const written: CalendarEvent[] = []
+      const failed: string[] = []
+      for (const block of plan.blocks) {
+        const event: CalendarEvent = {
+          id: crypto.randomUUID(),
+          user_id: userId,
+          title: block.title,
+          start_time: block.start,
+          end_time: block.end,
+          // The engine's own justification, kept on the event so the calendar
+          // can still answer "why is this here" long after the chat scrolled away.
+          description: block.why.join(' · '),
+          color: block.color,
+          source: 'zman',
+          created_by: 'ai',
+          status: 'confirmed',
+          is_all_day: false,
+          created_at: new Date().toISOString(),
+          mobility_type: block.mobility,
+        }
+        try {
+          await persistEvent(event, userId)
+          createdEvents.push(event)
+          written.push(event)
+        } catch (err) {
+          failed.push(`${block.title} @ ${block.start}: ${(err as Error)?.message}`)
+        }
+      }
+
+      return {
+        success: failed.length === 0,
+        events_created: written.length,
+        events: written.map(e => ({ id: e.id, title: e.title, start: e.start_time, end: e.end_time })),
+        ...(failed.length > 0 ? {
+          error: 'write_failed',
+          failed,
+          message: `${failed.length} block(s) failed to save. Do NOT tell the user those were scheduled.`,
+        } : {}),
+      }
     }
 
     case 'break_down_task': {
@@ -1103,51 +1318,23 @@ async function executeTool(
         task_title: string; deadline: string; total_hours: number; session_length_hours?: number; color?: string
       }
 
-      // Method-aware session length safety net (all 18 methods)
-      const METHOD_SESSION_HOURS: Record<string, number> = {
-        pomodoro: 0.5, deep_work: 2.5, eisenhower: 1.5, gtd: 1,
-        time_blocking: 1.5, ivy_lee: 1, eat_the_frog: 1.5, theme_days: 2,
-        the_one_thing: 3, weekly_review: 1.25, okr: 1.5, kanban: 1,
-        time_boxing: 0.75, moscow: 1.5, rule_5217: 0.87, scrum: 1.5,
-        energy_management: 1.5, twelve_week_year: 1.5,
+      // ── SCHEDULER_V2: the same request, answered by the engine ─────────────
+      // Session length still comes from the method (that is a promise the UI
+      // makes), but WHERE the sessions land is the engine's answer, and nothing
+      // is written until the user agrees.
+      if (sched?.enabled) {
+        const spec = buildBreakdownSpec(input, profile, sched)
+        if (!spec) return { error: 'missing_required_fields', message: 'task_title and a positive total_hours are required' }
+        return proposePlan(userId, [...currentEvents, ...createdEvents], profile, sched, now, spec).toolResult
       }
+
       const userMethod = profile?.scheduling_method as string | undefined
       const effectiveSessionLength = session_length_hours
         ?? (userMethod ? METHOD_SESSION_HOURS[userMethod] : undefined)
         ?? 2
 
-      // Method-aware title format (all 18 methods)
-      const METHOD_TITLE: Record<string, (t: string, i: number) => string> = {
-        pomodoro:     (t, i) => `${t} — פומודורו ${i + 1}`,
-        deep_work:    (t, i) => `${t} — Deep Work ${i + 1}`,
-        eisenhower:   (t, i) => `${t} — Session ${i + 1}`,
-        gtd:          (t, i) => `${t} — Action ${i + 1}`,
-        time_blocking:(t, i) => `${t} — Block ${i + 1}`,
-        ivy_lee:      (t, i) => `#${i + 1} ${t}`,
-        eat_the_frog: (t, i) => i === 0 ? `🐸 ${t}` : `${t} — Session ${i + 1}`,
-        theme_days:   (t, i) => `${t} — Session ${i + 1}`,
-        the_one_thing:(t, i) => i === 0 ? `🎯 ${t}` : `${t} — Session ${i + 1}`,
-        weekly_review:(t, i) => `🔄 ${t}`,
-        okr:          (t, i) => `${t} — OKR ${i + 1}`,
-        kanban:       (t, i) => `${t} — ${i + 1}`,
-        time_boxing:  (t, i) => `${t} (timebox ${i + 1})`,
-        moscow:       (t, i) => `${t} — Session ${i + 1}`,
-        rule_5217:    (t, i) => `${t} — 52/17 #${i + 1}`,
-        scrum:        (t, i) => `${t} — Sprint Task ${i + 1}`,
-        energy_management: (t, i) => `${t} — Session ${i + 1}`,
-        twelve_week_year:  (t, i) => `${t} — W${i + 1}`,
-      }
-      const formatTitle = userMethod && METHOD_TITLE[userMethod]
-        ? METHOD_TITLE[userMethod]
-        : (t: string, i: number) => `${t} — Session ${i + 1}`
-
-      // Method-aware mobility default
-      const FIXED_METHODS = new Set(['deep_work', 'the_one_thing'])
-      const ASK_FIRST_METHODS = new Set(['eat_the_frog', 'theme_days', 'weekly_review', 'scrum', 'moscow'])
-      const defaultMobility: 'fixed' | 'flexible' | 'ask_first' =
-        userMethod && FIXED_METHODS.has(userMethod) ? 'fixed' :
-        userMethod && ASK_FIRST_METHODS.has(userMethod) ? 'ask_first' :
-        'flexible'
+      const formatTitle = methodTitleFormatter(userMethod)
+      const defaultMobility = methodMobility(userMethod)
 
       // Gather candidate slots chronologically (with is_peak flags) across the whole
       // window, then SPREAD the sessions across non-consecutive days instead of
@@ -1695,6 +1882,120 @@ async function executeTool(
     default:
       return { error: `Unknown tool: ${toolName}` }
   }
+}
+
+// ─── SCHEDULER_V2 storage glue ────────────────────────────────────────────────
+//
+// The decisions live in lib/ai/schedulerTools.ts, which is pure and tested. What
+// stays here is the part that touches storage: writing events, updating one, and
+// recording the learning signal. Only reachable from a `sched?.enabled` branch.
+
+/** One write path for engine-created events, so demo and Supabase can't drift. */
+async function persistEvent(event: CalendarEvent, userId: string): Promise<void> {
+  if (DEMO_MODE) {
+    userStore.addEvent(event, userId)
+    return
+  }
+  const { createClient } = await import('@/lib/supabase/server')
+  const supabase = await createClient()
+  const { data, error } = await supabase.from('events').insert(event).select().single()
+  if (error) throw new Error(error.message)
+  if (data) Object.assign(event, data)
+}
+
+/** Applies the slot `planMove` chose, and records that the AI's original time was wrong. */
+async function applyEngineMove(
+  eventId: string,
+  userId: string,
+  currentEvents: CalendarEvent[],
+  createdEvents: CalendarEvent[],
+  updatedEvents: CalendarEvent[],
+  profile: UserProfile | null,
+  sched: SchedulerCtx,
+  now: Date,
+): Promise<unknown> {
+  // Events created earlier in this same turn are part of the world too, or two
+  // tool calls in one turn will book the same hour.
+  const known = [...currentEvents, ...createdEvents]
+  const decision = planMove(eventId, known, profile, sched, now)
+  if (!decision.ok) return decision.toolResult
+
+  const existing = known.find(e => e.id === eventId)!
+
+  if (DEMO_MODE) {
+    userStore.updateEvent(eventId, { start_time: decision.start, end_time: decision.end }, userId)
+  } else {
+    const { createClient } = await import('@/lib/supabase/server')
+    const supabase = await createClient()
+    const { error } = await supabase.from('events')
+      .update({ start_time: decision.start, end_time: decision.end })
+      .eq('id', eventId).eq('user_id', userId)
+    if (error) return { error: error.message }
+  }
+
+  if (existing.created_by === 'ai') {
+    try {
+      const oldStart = new Date(existing.start_time)
+      recordFeedback(userId, {
+        type: 'moved', title: existing.title,
+        fromHour: oldStart.getHours(), toHour: Number(decision.start.slice(11, 13)),
+        day: format(oldStart, 'EEE'), at: new Date().toISOString(),
+      })
+    } catch { /* a lost learning signal must not fail the move */ }
+  }
+
+  const updated = { ...existing, start_time: decision.start, end_time: decision.end }
+  updatedEvents.push(updated)
+  return { success: true, event: updated, moved_to: decision.view.blocks[0], why: decision.why }
+}
+
+/** Writes the instances `planRecurring` cleared, and reports every one it didn't. */
+async function applyRecurringPlan(
+  input: Record<string, unknown>,
+  userId: string,
+  currentEvents: CalendarEvent[],
+  createdEvents: CalendarEvent[],
+  profile: UserProfile | null,
+  sched: SchedulerCtx,
+  recurrence: { frequency?: string; count?: number; end_date?: string },
+): Promise<unknown> {
+  const known = [...currentEvents, ...createdEvents]
+  const plan = planRecurring(input, known, profile, sched, recurrence)
+  if (plan.error) return plan.error
+
+  const seriesId = crypto.randomUUID()
+  const writeErrors: string[] = []
+  let created = 0
+
+  for (const slot of plan.instances) {
+    const instance: CalendarEvent = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      title: String(input.title ?? ''),
+      start_time: slot.start,
+      end_time: slot.end,
+      description: String(input.description ?? ''),
+      color: String(input.color ?? '') || '#3B7EF7',
+      source: 'zman',
+      created_by: 'ai',
+      status: 'confirmed',
+      is_all_day: false,
+      created_at: new Date().toISOString(),
+      series_id: seriesId,
+      recurrence_rule: recurrence.frequency,
+      mobility_type: slot.mobility,
+    }
+    try {
+      await persistEvent(instance, userId)
+    } catch (err) {
+      writeErrors.push(`${slot.start}: ${(err as Error)?.message}`)
+      continue
+    }
+    createdEvents.push(instance)
+    created++
+  }
+
+  return recurringToolResult(seriesId, created, plan, writeErrors)
 }
 
 // ─── Free slot calculator ─────────────────────────────────────────────────────

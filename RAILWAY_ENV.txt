@@ -37,15 +37,45 @@ ENCRYPTION_KEY=<fresh 64-hex value from step 1>
 ADMIN_USER_IDS=<your user id, e.g. from data/auth/users.json>
 
 # AI provider + model (server-wide default — one key for everyone).
-# Recommended: Claude Sonnet for scheduling, Haiku auto-used for simple chat.
+# ONE model per conversation. Do not reintroduce per-message model routing:
+# prompt caches are keyed per model, so alternating models misses the cache on
+# roughly every other turn, and re-writing the multi-thousand-token static
+# prefix costs more than the cheaper model saves.
 AI_PROVIDER=anthropic
-AI_MODEL=claude-sonnet-4-6
-AI_MODEL_SIMPLE=claude-haiku-4-5        # cheap model for non-scheduling chit-chat; "" to disable routing
+AI_MODEL=claude-sonnet-5
 ANTHROPIC_API_KEY=sk-ant-...
+#
+# ‼️ AI_MODEL_SIMPLE IS NO LONGER READ. The tiered Haiku/Sonnet routing was
+#    removed (see the note above). Delete the variable from Railway — leaving it
+#    set does nothing, but it will mislead the next person reading this file.
+#
+# ── Claude Sonnet 5 notes (why max_tokens is what it is) ────────────────────
+# • Adaptive thinking is ON by default on Sonnet 5, and `max_tokens` caps
+#   thinking PLUS the visible reply. The old 2048 was sized for a non-thinking
+#   model and truncates answers here. The code now sends 8192; override with
+#   ANTHROPIC_MAX_TOKENS if a workload needs more.
+# • Chat turns are sent with output_config: { effort: "low" } so thinking does
+#   not eat the whole budget. Effort is only sent to models known to accept it.
+# • temperature / top_p / top_k are REJECTED by Sonnet 5 (400). None are sent —
+#   do not add them.
+# ANTHROPIC_MAX_TOKENS=8192               # optional override
+#
 #  — or use OpenAI / MiniMax instead (then drop the Anthropic vars):
 # AI_PROVIDER=openai   AI_MODEL=gpt-4o-mini   OPENAI_API_KEY=sk-...
 # MINIMAX_API_KEY=sk-cp-...   (legacy)
 # Precedence: a per-user key set in Settings → AI Model always overrides these.
+
+# ── SCHEDULER_V2 (OFF by default — leave it unset in production for now) ────
+# Routes scheduling through the deterministic engine in src/lib/scheduling
+# instead of letting the model do free-slot arithmetic. When set:
+#   • get_free_slots is removed from the tool list entirely
+#   • schedule_item / apply_plan appear (propose, then confirm — two phase)
+#   • break_down_task and move_event become engine front-ends
+#   • recurring create_event checks every instance and reports clashes
+# UNSET (the default) = the previous behaviour, byte for byte. Only "1" or
+# "true" turns it on. Note plans are held in process memory for ~10 minutes, so
+# a redeploy between a proposal and its confirmation makes the user re-ask.
+# SCHEDULER_V2=1
 
 # Web push (browser PWA). Generate with: npx web-push generate-vapid-keys
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=<vapid public>

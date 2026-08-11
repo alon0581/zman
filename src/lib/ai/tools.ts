@@ -1,5 +1,19 @@
 import OpenAI from 'openai'
 
+/**
+ * The tool surface, in two versions.
+ *
+ * `calendarTools` / `onboardingTools` are the shipped v1 arrays and are exported
+ * unchanged — with SCHEDULER_V2 off, `getCalendarTools()` returns these exact
+ * array references, so the model sees byte-identical JSON to before.
+ *
+ * The v2 arrays (built at the bottom of this file) exist only behind that flag.
+ * The important difference is a subtraction: `get_free_slots` is *removed*, not
+ * deprecated. Leaving it available while telling the model not to use it is the
+ * pattern that produced the bug the engine exists to fix — the model reaches for
+ * the arithmetic tool, does the arithmetic itself, and lands a study block inside
+ * an all-day reserve-duty event. A tool that is not offered cannot be called.
+ */
 export const calendarTools: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
@@ -338,3 +352,132 @@ export const onboardingTools: OpenAI.ChatCompletionTool[] = [
     },
   },
 ]
+
+// ─── SCHEDULER_V2 tool surface ───────────────────────────────────────────────
+//
+// Everything below is inert unless SCHEDULER_V2 is set. Nothing here mutates the
+// arrays above; the v2 lists are built by filtering and appending into new arrays.
+
+const scheduleItemTool: OpenAI.ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'schedule_item',
+    description:
+      'Ask the scheduling engine WHEN something should go. This is the tool for any "when should I..." / "מתי כדאי..." / "תקבע לי זמן ל..." request, and for anything that needs multiple sessions. ' +
+      'The engine reads the real calendar (including all-day events and recurring series), the user\'s hours, their method, and what they have historically moved — you do NOT do this arithmetic yourself. ' +
+      'It returns a PROPOSAL and writes nothing. Each block comes with a `why` array of ready-made sentences: paraphrase those when you explain the plan, and never invent a different reason. ' +
+      'If the result is partial or blocked, say so honestly and offer the `suggestions` — do not pretend it fit. ' +
+      'After showing the proposal, wait for the user to agree, then call apply_plan with the plan_id.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What is being scheduled, in the user\'s own words' },
+        total_minutes: { type: 'number', description: 'Total work to place, in minutes. Omit for a single default-length session.' },
+        session_count: { type: 'number', description: 'How many separate sessions to spread the work across.' },
+        session_minutes: { type: 'number', description: 'Override the method\'s default session length. Usually omit — the method decides.' },
+        deadline: { type: 'string', description: 'Must be finished by this local time, e.g. 2026-08-27T09:00:00' },
+        earliest: { type: 'string', description: 'Must not start before this local time.' },
+        category: { type: 'string', enum: ['study', 'work', 'fitness', 'personal', 'social', 'admin'] },
+        energy: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How much focus this needs. High-energy work is matched to the user\'s peak hours.' },
+        color: { type: 'string', description: 'Hex color: #3B7EF7=work, #6366F1=study, #34D399=fitness, #FBBF24=personal, #F97316=social' },
+        mobility_type: { type: 'string', enum: ['fixed', 'flexible', 'ask_first'] },
+      },
+      required: ['title'],
+    },
+  },
+}
+
+const applyPlanTool: OpenAI.ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'apply_plan',
+    description:
+      'Write a previously proposed plan to the calendar, exactly as it was shown. Takes the plan_id returned by schedule_item or break_down_task. ' +
+      'Call this only after the user has agreed (or when their autonomy mode is "auto"). The stored blocks are written verbatim — nothing is recomputed, so what the user approved is what they get. ' +
+      'A plan_id can be applied once, and expires after about ten minutes; if it is gone, call schedule_item again rather than guessing times.',
+    parameters: {
+      type: 'object',
+      properties: {
+        plan_id: { type: 'string', description: 'The plan_id from the proposal' },
+      },
+      required: ['plan_id'],
+    },
+  },
+}
+
+/**
+ * In v2, move_event no longer demands that the caller name the new time. The
+ * whole point of the engine is that "where should this go" is its question, not
+ * the model's — so the times become optional and their absence means "you pick".
+ */
+const V2_MOVE_EVENT_PARAMETERS = {
+  type: 'object',
+  properties: {
+    event_id: { type: 'string' },
+    new_start_time: { type: 'string', description: 'Optional. Local time, e.g. 2026-08-18T14:00:00. Omit to let the engine choose.' },
+    new_end_time: { type: 'string', description: 'Optional, required only if new_start_time is given.' },
+  },
+  required: ['event_id'],
+}
+
+const V2_PARAMETER_OVERRIDES: Record<string, unknown> = {
+  move_event: V2_MOVE_EVENT_PARAMETERS,
+}
+
+/** In v2 these stop being "do the arithmetic" tools and become engine front-ends. */
+const V2_DESCRIPTION_OVERRIDES: Record<string, string> = {
+  break_down_task:
+    'Split a big task (exam, project, deadline) into scheduled sessions. Runs the same scheduling engine as schedule_item: it picks the session length from the user\'s method and the times from their real calendar. ' +
+    'Returns a PROPOSAL with a plan_id and writes nothing — show it, get agreement, then call apply_plan. Report unplaced sessions honestly; never claim a session that the engine did not place.',
+  move_event:
+    'Move an existing event. Omit new_start_time/new_end_time to let the scheduling engine choose the best free slot — it moves the event and returns the new time plus a `why` array explaining the choice; paraphrase that, do not invent a reason. ' +
+    'Pass explicit times only when the user named a specific time. Either way the move is written immediately (a move is one visible, reversible change — no plan_id needed). ' +
+    'Never moves an event marked fixed (🔒); ask before moving one marked ask_first (🔵).',
+  create_event:
+    'Create a calendar event at a time the user explicitly named. If the user did NOT name a time, use schedule_item instead — do not pick a time yourself. ' +
+    'The server detects conflicts and returns { error: "conflict", conflictingEvent, alternatives }. For recurring events every generated instance is checked against the real calendar and clashes are reported, not silently skipped. ' +
+    'Colors: #3B7EF7=work, #6366F1=study, #34D399=fitness, #FBBF24=personal, #F97316=social.',
+}
+
+function toV2(tools: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
+  const out: OpenAI.ChatCompletionTool[] = []
+  for (const tool of tools) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fn = (tool as any).function as { name: string; description?: string; parameters?: unknown }
+    if (fn?.name === 'get_free_slots') continue  // the arithmetic the model must stop doing
+    const description = V2_DESCRIPTION_OVERRIDES[fn?.name]
+    const parameters = V2_PARAMETER_OVERRIDES[fn?.name]
+    if (!description && !parameters) { out.push(tool); continue }
+    out.push({
+      ...tool,
+      function: {
+        ...fn,
+        ...(description ? { description } : {}),
+        ...(parameters ? { parameters } : {}),
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+  }
+  // Inserted after the existing tools so the engine entry points read as the
+  // scheduling section of the list rather than being buried mid-way.
+  out.push(scheduleItemTool, applyPlanTool)
+  return out
+}
+
+const calendarToolsV2: OpenAI.ChatCompletionTool[] = toV2(calendarTools)
+const onboardingToolsV2: OpenAI.ChatCompletionTool[] = toV2(onboardingTools)
+
+/**
+ * The tool list to hand the model. With `v2` false this returns the exact same
+ * array reference the app has always used — not a copy, not a rebuild.
+ */
+export function getCalendarTools(v2: boolean): OpenAI.ChatCompletionTool[] {
+  return v2 ? calendarToolsV2 : calendarTools
+}
+
+export function getOnboardingTools(v2: boolean): OpenAI.ChatCompletionTool[] {
+  return v2 ? onboardingToolsV2 : onboardingTools
+}
+
+/** Tools that only exist under the flag. Used by the dispatcher to fail closed. */
+export const V2_ONLY_TOOLS = new Set(['schedule_item', 'apply_plan'])
