@@ -284,15 +284,18 @@ describe('the quality floor, end to end', () => {
       .toEqual({ code: 'use_weekend', delta: 'Fri–Sat', wouldPlace: 6 - outcome.blocks.length, requestIndex: 0 })
   })
 
-  it('offers nothing when the real constraint is "one day is not enough days"', () => {
-    // Honest emptiness, not a missing feature: no relaxation in the contract
-    // says "give me more days", and inventing a payoff here would be a guess.
+  it('answers "one day is not enough days" with more days', () => {
+    // This used to return no relaxations at all: the engine could diagnose "too
+    // much work, too few days" and then had nothing in the contract to suggest.
+    // extend_horizon closes that, and its payoff is measured, not guessed.
     const outcome = planSchedule(
       ctxOf({ horizon: oneDay, rules: roomy }),
       [requestOf({ totalMinutes: 6 * 60, sessionCount: 6 })]
     )
     if (outcome.status !== 'partial') return
-    expect(outcome.relaxations).toEqual([])
+    const extend = outcome.relaxations.find(r => r.code === 'extend_horizon')
+    expect(extend?.delta).toBe('+7d')
+    expect(extend?.wouldPlace).toBeGreaterThan(0)
   })
 })
 
@@ -422,12 +425,14 @@ describe('relaxations are computed, never guessed', () => {
       .toEqual({ code: 'move_ask_first', delta: '2', wouldPlace: 2, requestIndex: 0 })
   })
 
-  it('offers nothing when nothing would help', () => {
+  it('offers only what actually helps: every day booked solid leaves just more days', () => {
     const busy = ['2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13'].map(d => wall(d, '00:00:00', '23:59:59'))
     const outcome = planSchedule(ctxOf({ busy }), [requestOf()])
     expect(outcome.status).toBe('blocked')
     if (outcome.status !== 'blocked') return
-    expect(outcome.relaxations).toEqual([])
+    // Nothing about this horizon can be relaxed into space — the days are full.
+    // Looking past them is the only real answer, so it is the only one offered.
+    expect(outcome.relaxations.map(r => r.code)).toEqual(['extend_horizon'])
   })
 })
 

@@ -247,6 +247,13 @@ export type RelaxationCode =
   | 'use_weekend'
   | 'move_ask_first'
   | 'drop_buffer'
+  /**
+   * Look further ahead. The commonest reason a plan comes back partial is simply
+   * "too much work, too few days", and without this the engine could diagnose
+   * that and then have nothing to suggest. Naturally reports 0 for anything
+   * deadline-bound — you cannot solve an exam on Tuesday with more Wednesdays.
+   */
+  | 'extend_horizon'
 
 export interface Relaxation {
   code: RelaxationCode

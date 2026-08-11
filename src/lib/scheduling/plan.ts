@@ -38,6 +38,14 @@ const SHORTEN_FACTOR = 2 / 3
 /** `extend_day` proposes one hour at each end. */
 const EXTEND_DAY_HOURS = 1
 /**
+ * `extend_horizon` proposes looking a week further out.
+ *
+ * A week, not a day, because the point is to answer "there isn't enough room" —
+ * and a single extra day rarely changes that answer, so offering one would be
+ * technically true and practically useless.
+ */
+const EXTEND_HORIZON_DAYS = 7
+/**
  * How many failed sessions each relaxation probe will actually try to re-place.
  *
  * Every probe is a real placement pass, so the cost is (relaxation codes) x
@@ -421,6 +429,8 @@ function computeRelaxations(
   const shortest = Math.min(...pending.map(p => p.durationMinutes))
   const shortened = Math.max(ctx.rules.minBlock, roundToQuarter(shortest * SHORTEN_FACTOR))
   const weekendWindows = buildDayWindows(ctx.profile, ctx.horizon, { includeWeekend: true })
+  const extendedHorizon = { from: ctx.horizon.from, to: addMinutes(ctx.horizon.to, EXTEND_HORIZON_DAYS * 24 * 60) }
+  const extendedWindows = buildDayWindows(ctx.profile, extendedHorizon)
   const askFirstInTheWay = state.busy.filter(b =>
     b.mobility === 'ask_first' && baseWindows.some(w => overlaps(b, w))
   ).length
@@ -474,6 +484,16 @@ function computeRelaxations(
       windows: baseWindows,
       opts: { bufferMinutes: 0 },
       applicable: ctx.profile.bufferMinutes > 0,
+    },
+    {
+      // Deadlines are still enforced inside placement, so this reports 0 for a
+      // session that has to happen before a fixed date — which is the honest
+      // answer. It only ever helps open-ended work.
+      code: 'extend_horizon',
+      delta: `+${EXTEND_HORIZON_DAYS}d`,
+      windows: extendedWindows,
+      opts: {},
+      applicable: extendedWindows.length > baseWindows.length,
     },
   ]
 

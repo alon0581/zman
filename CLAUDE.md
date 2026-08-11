@@ -207,7 +207,7 @@ npx vitest run preview --reporter=verbose --disable-console-intercept
 | Gap | Note |
 |---|---|
 | Friday/Saturday held clear by default | Now a profile setting: `schedule_weekend` = `none` \| `friday` \| `both`, read by `weekendDaysFor` in `adapter.ts`. Measured on the fixture week: 15 sessions default, 19 with Friday, 23 with both. Awaiting the owner's answer, but it is a settings change now, not a code change |
-| No `extend_horizon` relaxation | "Too much work, too few days" is the commonest cause of a partial plan and nothing suggests more days |
+| ~~No `extend_horizon` relaxation~~ | **Closed.** Proposes `+7d` and measures the payoff; reports 0 for deadline-bound work, which is the honest answer |
 | `PlacedBlock.requestIndex` is `-1` for repair-created blocks | Ugly, not wrong |
 | Plans held in process memory (10 min) | A redeploy between propose and confirm makes the user re-ask |
 | The v1 system prompt still references `get_free_slots` | Overridden by the dynamic suffix under the flag rather than rewritten |

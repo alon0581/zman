@@ -378,6 +378,10 @@ const RELAXATION_TEXT: Record<RelaxationCode, { he: (d: string) => string; en: (
     he: d => `לוותר על מרווח הנשימה בין אירועים (${d} דק')`,
     en: d => `Drop the breathing room between events (${d} min)`,
   },
+  extend_horizon: {
+    he: () => 'לפרוס את זה על עוד שבוע קדימה',
+    en: () => 'Spread this over another week',
+  },
 }
 
 export interface PlanBlockView {
