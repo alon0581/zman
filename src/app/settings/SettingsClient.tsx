@@ -90,6 +90,8 @@ const LANGS: Record<string, Record<string, string>> = {
     memoryClearAll: 'Clear all', memoryClearConfirm: 'Clear all memory? This cannot be undone.',
     saveFailed: "Couldn't save — check your connection and try again.",
     memoryDeleteFailed: "Couldn't delete that. Nothing was removed.",
+    weekendLabel: 'Schedule on the weekend?',
+    weekendDesc: 'Days Zman may use. Kept clear unless you say otherwise.',
   },
   he: {
     title: 'הגדרות', subtitle: 'התאם אישית את החוויה שלך',
@@ -116,6 +118,8 @@ const LANGS: Record<string, Record<string, string>> = {
     memoryClearAll: 'נקה הכל', memoryClearConfirm: 'למחוק את כל הזיכרון? לא ניתן לשחזר.',
     saveFailed: 'לא הצלחנו לשמור — בדוק את החיבור ונסה שוב.',
     memoryDeleteFailed: 'המחיקה נכשלה. שום דבר לא הוסר.',
+    weekendLabel: 'לתזמן בסוף השבוע?',
+    weekendDesc: 'הימים שזמן רשאי להשתמש בהם. נשמרים פנויים אלא אם תגיד אחרת.',
   },
 }
 
@@ -328,6 +332,19 @@ export default function SettingsClient({ user, profile: init, onClose, onProfile
           <Row label={t(lang, 'sleepLabel')} desc="">
             <input type="time" value={p.sleep_time ?? '23:00'} onChange={e => update('sleep_time', e.target.value)}
               style={{ ...selectStyle }} />
+          </Row>
+          {/* Held-clear days are a real constraint, not a preference: in a typical
+              exam week, freeing Friday is worth several extra study sessions. */}
+          <Row label={t(lang, 'weekendLabel')} desc={t(lang, 'weekendDesc')}>
+            <SegmentedControl
+              options={[
+                { value: 'none',   label: lang === 'he' ? 'לא'      : 'Neither' },
+                { value: 'friday', label: lang === 'he' ? 'שישי'    : 'Friday' },
+                { value: 'both',   label: lang === 'he' ? 'שניהם'   : 'Both' },
+              ]}
+              value={p.schedule_weekend ?? 'none'}
+              onChange={v => update('schedule_weekend', v)}
+            />
           </Row>
         </Card>
 
