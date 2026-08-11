@@ -32,6 +32,10 @@ Node (anywhere):
 AUTH_SECRET=<fresh value from step 1 — unique to this project>
 ENCRYPTION_KEY=<fresh 64-hex value from step 1>
 
+# Comma-separated user IDs allowed to hit /api/admin/*. Leaving this unset
+# disables the admin routes entirely (they fail closed — 403 for everyone).
+ADMIN_USER_IDS=<your user id, e.g. from data/auth/users.json>
+
 # AI provider + model (server-wide default — one key for everyone).
 # Recommended: Claude Sonnet for scheduling, Haiku auto-used for simple chat.
 AI_PROVIDER=anthropic

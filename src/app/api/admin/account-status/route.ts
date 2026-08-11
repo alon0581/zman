@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import path from 'path'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { isAdmin } from '@/lib/auth/roles'
 import { readJsonFile } from '@/lib/util/jsonStore'
 import { DATA_DIR } from '@/lib/util/dataDir'
 
@@ -26,6 +27,7 @@ export async function GET() {
   const cookieStore = await cookies()
   const userId = getUserIdFromCookie(cookieStore.get(COOKIE_NAME)?.value)
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!isAdmin(userId)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const users = readJsonFile<AuthUser[]>(path.join(DATA_DIR, 'auth', 'users.json'), [])
   const real = users.filter(u => !TEST_EMAIL_RE.test(u.email ?? ''))

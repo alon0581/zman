@@ -163,7 +163,7 @@ export default function LoginPage() {
         </div>
 
         <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-2)', marginTop: 20 }}>
-          הנתונים שלך נשמרים באופן מקומי בלבד
+          הנתונים שלך פרטיים ולא משותפים עם איש
         </p>
       </div>
     </div>

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import OpenAI from 'openai'
+import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
 
 const DEMO_MODE = !process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith('http')
 
@@ -9,13 +11,21 @@ function getOpenAI() {
   return new OpenAI({ apiKey })
 }
 
-export async function POST(req: NextRequest) {
-  if (!DEMO_MODE) {
-    const { createClient } = await import('@/lib/supabase/server')
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+async function getAuthUserId(): Promise<string | null> {
+  if (DEMO_MODE) {
+    const cookieStore = await cookies()
+    const token = cookieStore.get(COOKIE_NAME)?.value
+    return getUserIdFromCookie(token)
   }
+  const { createClient } = await import('@/lib/supabase/server')
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user?.id ?? null
+}
+
+export async function POST(req: NextRequest) {
+  const userId = await getAuthUserId()
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const formData = await req.formData()
   const audio = formData.get('audio') as File
