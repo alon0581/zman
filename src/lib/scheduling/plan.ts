@@ -134,13 +134,25 @@ function totalMinutesOf(request: PlacementRequest, rules: MethodRules): number {
 export function splitSessions(request: PlacementRequest, rules: MethodRules): number[] {
   const count = sessionCountOf(request, rules)
   const total = request.totalMinutes
+  // A caller who named a session count is dividing the work N ways; a caller who
+  // named only a total wants sessions of the method's own length, however many
+  // that takes. Deriving the length from the count in the second case would
+  // quietly rewrite "four Pomodoros" into "three 33-minute blocks".
   const nominal = request.sessionMinutes
-    ?? (total ? Math.round(total / count) : rules.sessionMinutes)
+    ?? (total && request.sessionCount ? Math.round(total / count) : rules.sessionMinutes)
   const per = clampBlock(roundToQuarter(nominal), rules)
 
-  const lengths = Array<number>(count).fill(per)
+  // `totalMinutes` is the commitment; `sessionCount` is only a preference for how
+  // to spread it. When the method's block ceiling means the requested count cannot
+  // hold the total — "12 hours in 6 sessions" against Pomodoro's 25-minute cap —
+  // honouring the count silently delivers 2.5 hours and calls it done. That is the
+  // exact dishonesty this engine exists to remove, so the count gives way instead.
+  // If the extra sessions then don't fit the days, placement reports that honestly.
+  const sessions = total && per * count < total ? Math.ceil(total / per) : count
+
+  const lengths = Array<number>(sessions).fill(per)
   if (total) {
-    const remainder = total - per * count
+    const remainder = total - per * sessions
     const last = clampBlock(per + remainder, rules)
     if (remainder !== 0 && last >= rules.minBlock && last <= rules.maxBlock) {
       lengths[lengths.length - 1] = last
@@ -223,7 +235,15 @@ function placeRecurring(
 ): void {
   const duration = splitSessions(request, ctx.rules)[0]
 
-  const first = placeWithRepair(ctx, request, requestIndex, duration, windows, state, opts)
+  // The anchor decides where every later instance lands, so it must not be free
+  // to settle in the last week of the horizon and strand the rest of the series.
+  // Best-effort: if holding the whole series inside the horizon leaves nowhere at
+  // all to start, take what we can get and report the overflow instance by
+  // instance rather than refusing to place anything.
+  const ceiling = anchorCeiling(request.recurrence!, ctx.horizon.to)
+  const anchorWindows = ceiling ? preferNonEmpty(clipWindows(windows, undefined, ceiling, duration), windows) : windows
+
+  const first = placeWithRepair(ctx, request, requestIndex, duration, anchorWindows, state, opts)
   if (!first.ok) {
     unplaced.push({ requestIndex, code: first.code, placedCount: 0, detail: { ...first.detail, instance: 0 } })
     pending.push({ requestIndex, request, durationMinutes: duration })
@@ -236,14 +256,15 @@ function placeRecurring(
   let placedCount = 1
 
   for (const { index, day } of instanceDays(request.recurrence!, anchorDay, ctx.horizon.to)) {
-    // A series wants to keep its time, so the anchor's hour is tried first; when
-    // that exact slot is taken, the instance still gets a fair search of its day
-    // rather than being dropped.
-    const pinned = placeWithRepair(ctx, request, requestIndex, duration, windows, state, {
+    // A series wants to keep its time, so the anchor's hour is tried first — but
+    // only if it is genuinely free. Displacing someone's work to defend a habit
+    // is a worse trade than moving the instance an hour later, so repair is left
+    // to the full-day search that follows.
+    const pinned = placeOne(ctx, request, requestIndex, duration, windows, state, {
       ...opts, restrictToDay: day, pinnedStart: `${day}T${anchorTime}`,
     })
-    const outcome = pinned.ok
-      ? pinned
+    const outcome: Attempted = pinned.ok
+      ? { ok: true, block: pinned.block, displacements: [] }
       : placeWithRepair(ctx, request, requestIndex, duration, windows, state, { ...opts, restrictToDay: day })
 
     if (outcome.ok) {
@@ -316,6 +337,23 @@ function asBusy(request: PlacementRequest, block: PlacedBlock, requestIndex: num
 }
 
 // ── Recurrence ──────────────────────────────────────────────────────────────
+
+/**
+ * The latest day instance 0 may start on and still leave room for the whole
+ * series: the last permissible day, walked back by the same stride.
+ */
+function anchorCeiling(recurrence: Recurrence, horizonTo: LocalISO): LocalISO | undefined {
+  if (!recurrence.count || recurrence.count <= 1) return undefined
+  const steps = Math.min(recurrence.count, MAX_RECURRENCE_INSTANCES) - 1
+  const lastAllowed = recurrence.endDate
+    ? minDay(localDateKey(recurrence.endDate), localDateKey(horizonTo))
+    : localDateKey(horizonTo)
+  return `${shiftDay(lastAllowed, -steps, recurrence.frequency)}T23:59:59`
+}
+
+function preferNonEmpty(clipped: DayWindow[], fallback: DayWindow[]): DayWindow[] {
+  return clipped.length > 0 ? clipped : fallback
+}
 
 /** The concrete days instances 1..n-1 fall on, clipped to the horizon. */
 function instanceDays(recurrence: Recurrence, anchorDay: string, horizonTo: LocalISO): { index: number; day: string }[] {

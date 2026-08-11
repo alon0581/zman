@@ -185,12 +185,14 @@ export function scoreCandidate(input: ScoreInput): ScoreResult {
   }
 
   // BUFFER_RESPECTED — the hard filter already guaranteed the minimum gap; this
-  // rewards the slots that leave more than the minimum.
+  // rewards slots that leave more than the minimum. A day with no neighbours at
+  // all respects every buffer trivially and scores full marks: awarding it
+  // nothing made a crowded day outrank an empty one, which is exactly backwards,
+  // and it quietly dragged whole plans onto the days that were already busiest.
   const gap = nearestNeighbourGap(span, input.neighbours)
-  if (gap !== null) {
-    const comfortable = 2 * Math.max(input.bufferMinutes, 15)
-    push('BUFFER_RESPECTED', WEIGHTS.BUFFER_RESPECTED * clamp01(gap / comfortable), { gapMinutes: gap })
-  }
+  const comfortable = 2 * Math.max(input.bufferMinutes, 15)
+  const respect = gap === null ? 1 : clamp01(gap / comfortable)
+  push('BUFFER_RESPECTED', WEIGHTS.BUFFER_RESPECTED * respect, gap === null ? undefined : { gapMinutes: gap })
 
   // EARLIEST_AVAILABLE — sooner is better, all else equal.
   push('EARLIEST_AVAILABLE', WEIGHTS.EARLIEST_AVAILABLE * earliness, { earliness: round2(earliness) })

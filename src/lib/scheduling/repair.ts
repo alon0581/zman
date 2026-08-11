@@ -32,8 +32,13 @@ export const MAX_REPAIR_DEPTH = 2
 const MAX_CANDIDATES_PER_LEVEL = 4
 /** Clearing three or more commitments to seat one block is not a repair, it is a rewrite. */
 const MAX_BLOCKERS_PER_CANDIDATE = 2
-/** Occupies the slot we are clearing so a displaced block cannot simply slide into it. */
-const TARGET_PIN_ID = '__repair_target__'
+/**
+ * Occupies the slot we are clearing so a displaced block cannot simply slide
+ * into it. The span is part of the id because a depth-2 repair has two pins
+ * alive at once, and removing the wrong one would re-open the slot the outer
+ * level is still holding.
+ */
+const TARGET_PIN_PREFIX = '__repair_target__:'
 /** Blocks re-homed on behalf of an existing event are not one of the caller's requests. */
 const SYNTHETIC_REQUEST_INDEX = -1
 
@@ -65,7 +70,7 @@ export function attemptRepair(
       a.blockers.length <= MAX_BLOCKERS_PER_CANDIDATE &&
       // Everything in the way must be movable, unmoved, and not an all-day block —
       // an all-day block has no other home inside a day it already fills.
-      a.blockers.every(b => b.mobility === 'flexible' && !b.isAllDay && !alreadyMoved.has(b.id) && b.id !== TARGET_PIN_ID)
+      a.blockers.every(b => b.mobility === 'flexible' && !b.isAllDay && !alreadyMoved.has(b.id) && !b.id.startsWith(TARGET_PIN_PREFIX))
     )
     .map(a => ({
       attempt: a,
@@ -89,7 +94,8 @@ export function attemptRepair(
     const work = cloneState(state)
     const displacements: Displacement[] = []
     // Pin the slot we are freeing as immovable for the duration of the repair.
-    work.busy.push(pinFor(attempt.start, attempt.end))
+    const pin = pinFor(attempt.start, attempt.end)
+    work.busy.push(pin)
 
     let cleared = true
     for (const blocker of attempt.blockers) {
@@ -102,7 +108,8 @@ export function attemptRepair(
     }
     if (!cleared) continue
 
-    work.busy = work.busy.filter(b => b.id !== TARGET_PIN_ID)
+    // Only this level's pin comes out — an enclosing level may still be holding one.
+    work.busy = work.busy.filter(b => b.id !== pin.id)
     const placed = placeOne(ctx, request, requestIndex, durationMinutes, windows, work, {
       ...opts,
       pinnedStart: attempt.start,
@@ -180,8 +187,8 @@ function rehome(
 
 function pinFor(start: string, end: string): BusyBlock {
   return {
-    id: TARGET_PIN_ID,
-    title: TARGET_PIN_ID,
+    id: `${TARGET_PIN_PREFIX}${start}`,
+    title: 'repair target',
     start,
     end,
     mobility: 'fixed',

@@ -152,7 +152,7 @@ describe('the remaining terms', () => {
     expect(scoreCandidate(inputOf()).reasons.some(r => r.code === 'FROG_FIRST')).toBe(false)
   })
 
-  it('rewards breathing room only when there is a neighbour to keep it from', () => {
+  it('docks a slot squeezed against a neighbour', () => {
     const neighbour = {
       id: 'n', title: 'פגישה', start: '2026-08-10T10:10:00', end: '2026-08-10T11:00:00',
       mobility: 'fixed' as const, createdBy: 'user' as const, isAllDay: false,
@@ -160,7 +160,19 @@ describe('the remaining terms', () => {
     const tight = weightOf(inputOf({ neighbours: [neighbour] }), 'BUFFER_RESPECTED')
     const roomy = weightOf(inputOf({ neighbours: [{ ...neighbour, start: '2026-08-10T14:00:00', end: '2026-08-10T15:00:00' }] }), 'BUFFER_RESPECTED')
     expect(roomy).toBeGreaterThan(tight)
-    expect(scoreCandidate(inputOf()).reasons.some(r => r.code === 'BUFFER_RESPECTED')).toBe(false)
+  })
+
+  it('gives an empty day full marks, so a crowded day can never outrank it', () => {
+    // Scoring the empty day at zero here made every plan drift onto the days
+    // that were already busiest — a slot with a distant neighbour scored higher
+    // than the same slot with no neighbour at all.
+    const neighbour = {
+      id: 'n', title: 'פגישה', start: '2026-08-10T14:00:00', end: '2026-08-10T15:00:00',
+      mobility: 'fixed' as const, createdBy: 'user' as const, isAllDay: false,
+    }
+    const empty = weightOf(inputOf(), 'BUFFER_RESPECTED')
+    expect(empty).toBe(WEIGHTS.BUFFER_RESPECTED)
+    expect(empty).toBeGreaterThanOrEqual(weightOf(inputOf({ neighbours: [neighbour] }), 'BUFFER_RESPECTED'))
   })
 
   it('scores a block that matches the method session length above one that does not', () => {

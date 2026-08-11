@@ -139,7 +139,7 @@ export function placeOne(
         continue
       }
 
-      if (exceedsDayCap(ctx, windows, state, day, durationMinutes)) {
+      if (exceedsDayCap(ctx, windows, state, day, durationMinutes, opts.ignoreAskFirst ?? false)) {
         sawCap = true
         attempts.push({ start, end, blockers: [], capBlocked: true })
         continue
@@ -231,14 +231,19 @@ function exceedsDayCap(
   windows: DayWindow[],
   state: PlacementState,
   day: string,
-  durationMinutes: number
+  durationMinutes: number,
+  ignoreAskFirst: boolean
 ): boolean {
   if ((state.sessionsByDay[day] ?? 0) + 1 > ctx.rules.maxSessionsPerDay) return true
+  // An ask_first event we are pretending away must not still consume the cap —
+  // otherwise the `move_ask_first` relaxation clears the slot and then refuses
+  // to use it, and reports a payoff of zero for advice that would have worked.
+  const counted = ignoreAskFirst ? state.busy.filter(b => b.mobility !== 'ask_first') : state.busy
   // Measured against the day's FULL windows, not the ones clipped by this
   // request's deadline — otherwise a tight deadline would silently shrink the cap.
   const load = windows
     .filter(w => w.day === day)
-    .reduce((sum, w) => sum + busyMinutesIn(w, state.busy), 0)
+    .reduce((sum, w) => sum + busyMinutesIn(w, counted), 0)
   return load + durationMinutes > ctx.rules.dailyCapMinutes
 }
 
