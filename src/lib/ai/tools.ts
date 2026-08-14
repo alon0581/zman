@@ -582,6 +582,25 @@ const planProjectTool: OpenAI.ChatCompletionTool = {
   },
 }
 
+/**
+ * Redirects the tools that would otherwise swallow project work.
+ *
+ * Found by testing against the real model: asked to plan a project, it reached for
+ * `break_down_task` and produced 32 identically-titled blocks — a correct-looking
+ * schedule with no link to the project, so invested-time and next-step both stayed
+ * empty. Prompt text alone did not win, because the model picks a tool by reading
+ * tool DESCRIPTIONS, and break_down_task's was the more specific-sounding one.
+ * The redirect therefore lives here, next to the choice.
+ */
+const PROJECTS_DESCRIPTION_OVERRIDES: Record<string, string> = {
+  break_down_task:
+    'Split a SINGLE standalone task (one exam, one assignment) into scheduled sessions. ' +
+    '⚠️ If the work belongs to a project — anything you created with create_project, or that list_projects returns — use plan_project INSTEAD. ' +
+    'break_down_task treats the whole thing as one undifferentiated block of hours: every session gets the same title, and nothing is linked back to the project, so its progress, invested-time and next-step all stay empty. ' +
+    'Ask yourself "is this one task, or a project with steps?" before choosing. ' +
+    'Returns a PROPOSAL with a plan_id and writes nothing — show it, get agreement, then call apply_plan.',
+}
+
 /** In the projects world, tasks can belong to a project and can be ordered. */
 const PROJECTS_PARAMETER_EXTRAS: Record<string, Record<string, unknown>> = {
   create_task: {
@@ -602,14 +621,20 @@ const PROJECTS_PARAMETER_EXTRAS: Record<string, Record<string, unknown>> = {
 function withProjects(tools: OpenAI.ChatCompletionTool[], v2: boolean): OpenAI.ChatCompletionTool[] {
   const out = tools.map(tool => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fn = (tool as any).function as { name: string; parameters?: any }
+    const fn = (tool as any).function as { name: string; description?: string; parameters?: any }
     const extras = PROJECTS_PARAMETER_EXTRAS[fn?.name]
-    if (!extras || !fn.parameters?.properties) return tool
+    // Only redirect break_down_task when plan_project actually exists to redirect
+    // TO — otherwise the description would point at a tool that is not offered.
+    const description = v2 ? PROJECTS_DESCRIPTION_OVERRIDES[fn?.name] : undefined
+    if (!extras && !description) return tool
     return {
       ...tool,
       function: {
         ...fn,
-        parameters: { ...fn.parameters, properties: { ...fn.parameters.properties, ...extras } },
+        ...(description ? { description } : {}),
+        ...(extras && fn.parameters?.properties
+          ? { parameters: { ...fn.parameters, properties: { ...fn.parameters.properties, ...extras } } }
+          : {}),
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any

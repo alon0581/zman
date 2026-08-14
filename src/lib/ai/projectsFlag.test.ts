@@ -96,6 +96,22 @@ describe('flag on ⇒ exactly the intended surface appears', () => {
     }
   })
 
+  it('redirects break_down_task to plan_project, so project work is not flattened', () => {
+    // Regression from a real run against the model: asked to plan a project it
+    // chose break_down_task and produced 32 identically-titled blocks with no link
+    // back to the project, leaving progress/invested/next-step empty. Prompt text
+    // alone did not win — the model picks by reading tool descriptions.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bd = getCalendarTools(true, true).find(t => nameOf(t) === 'break_down_task') as any
+    expect(bd.function.description).toContain('plan_project')
+  })
+
+  it('does not redirect to plan_project when that tool is not even offered', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bd = getCalendarTools(false, true).find(t => nameOf(t) === 'break_down_task') as any
+    expect(bd.function.description).not.toContain('plan_project')
+  })
+
   it('keeps every original tool — the projects surface only adds', () => {
     const before = names(calendarTools)
     const after = names(getCalendarTools(false, true))

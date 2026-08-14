@@ -1,1 +1,20 @@
-{"version":"0.0.1","autoPort":true,"configurations":[{"name":"zman-dev","runtimeExecutable":"npm","runtimeArgs":["run","dev"],"port":3000,"autoPort":true}]}
+{
+  "version": "0.0.1",
+  "autoPort": true,
+  "configurations": [
+    {
+      "name": "zman-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
+      "name": "zman-dev-railway",
+      "runtimeExecutable": "railway",
+      "runtimeArgs": ["run", "--service", "zman", "--", "npm", "run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

@@ -443,6 +443,15 @@ export async function POST(req: NextRequest) {
             ))
           }
 
+          // Its own frame rather than a reuse of tasks_updated: refetching projects
+          // also pulls /api/projects/health, which runs a real placement pass, and
+          // making every task edit pay for that would be a poor trade.
+          if (state.projectsUpdated) {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({ type: 'projects_updated' })}\n\n`
+            ))
+          }
+
           if (lastContent) {
             const words = lastContent.split(/(?<=\s)|(?=\s)/)
             for (const word of words) {
