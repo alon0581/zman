@@ -40,7 +40,7 @@ deploys from `main`. There is no staging. Consequences:
 | Voice | OpenAI `gpt-4o-transcribe` — the *only* thing `OPENAI_API_KEY` is for |
 | Auth | File-based: `crypto.scryptSync` + HMAC cookie. No external service |
 | Storage | JSON files under `DATA_DIR` (Railway volume at `/app/data`) |
-| Tests | **Vitest — 657 passing.** `npm test` |
+| Tests | **Vitest — 687 passing.** `npm test` |
 | Notifications | ntfy (`NTFY_TOPIC_SECRET`) |
 
 **Deleted on purpose — do not reintroduce:** Supabase (and `src/proxy.ts`, which
@@ -302,7 +302,7 @@ the entire feature was dead code.
 
 ```bash
 npm run dev          # localhost:3000
-npm test             # Vitest — 657 tests
+npm test             # Vitest — 687 tests
 npx tsc --noEmit     # type check
 npm run lint         # 4 pre-existing errors, all in untouched components
 ```

@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
 import OpenAI from 'openai'
-import { getCalendarTools, getOnboardingTools, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS } from '@/lib/ai/tools'
+import { getCalendarTools, getOnboardingTools, PHASE_ONLY_TOOLS, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS } from '@/lib/ai/tools'
 import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
 import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
 import { phasesEnabled, projectsEnabled, schedulerV2Enabled } from '@/lib/ai/featureFlags'
@@ -12,8 +12,11 @@ import {
   methodTitleFormatter, planMove, planRecurring, proposePlan, recurringToolResult, SchedulerCtx,
 } from '@/lib/ai/schedulerTools'
 import { buildProjectPlanSpec } from '@/lib/ai/projectTools'
-import { CalendarEvent, UserProfile, AIMemory, Project, Task, FeedbackSignal } from '@/types'
+import { CalendarEvent, UserProfile, AIMemory, Phase, Project, Task, FeedbackSignal } from '@/types'
 import { planProjectDeletion } from '@/lib/projects/cascade'
+import { planSeriesRetirement } from '@/lib/phases/retire'
+import { defaultScopeFor, isRestoreDenied } from '@/lib/phases/scope'
+import { mirrorProfileToMemory } from '@/lib/store/profileMirror'
 import { probeCapacity, ProjectProbeResult } from '@/lib/projects/capacity'
 import { computeFacts, probeInputFor, resolveSignals } from '@/lib/projects/health'
 import {
@@ -133,6 +136,26 @@ PROJECTS:
 - If it reports a circular dependency, name the two tasks and ask the user to fix it. Do not work around it.
 - Ordering between steps is "depends_on" on the task. A step never gets scheduled before the step it depends on has finished.
 - delete_project keeps the tasks by default and NEVER clears the calendar. Prefer status "archived" unless the user actually said delete.
+`.trim()
+
+/**
+ * Appended to the DYNAMIC suffix when PHASES is on. Same cache rule as the two
+ * above: anything that varies by flag must stay out of the cached static prefix.
+ *
+ * This explains the CONCEPT. The routing — when to reach for start_phase, and why
+ * end_series rather than delete_event — lives in the tool descriptions, because
+ * prose here lost to a more specific description once already in this repo.
+ */
+const PHASES_GUIDANCE = `
+LIFE PHASES:
+- A phase is a NAMED PERIOD of the user's life, not a category: "סמסטר ב׳", "צבא", "בין עבודות", "חופשת לידה". The label is theirs, in their words. Never invent a taxonomy.
+- When they say their situation changed, call start_phase. It closes the previous phase atomically — there is no separate close tool.
+- Ask AT MOST THREE questions (hours, what matters, what recurs weekly). A phase with one field filled beats a phase not opened. Record the answers with update_profile (hours) and save_memory (everything else).
+- Call list_phases FIRST so you can reuse an existing slug. Same slug = same kind of period returning = their old settings and facts come back automatically. A near-duplicate slug silently breaks that.
+- On a RETURN, the interview is ONE question: "מה השתנה הפעם?" Do not re-ask what was restored.
+- Facts from closed phases appear under [Earlier phases]. They are NOT true now. Say "בתקופה הקודמת..." — never assert them as current.
+- Goals from a previous phase (current_goal, ongoing_task) are deliberately NOT restored. Do not greet the user with an old goal.
+- Reopening a phase NEVER recreates its calendar events. A timetable changes between semesters. Offer to rebuild and ask for the new one.
 `.trim()
 
 /** Parse an "HH:mm" string to an hour in [0,23], falling back on bad input. */
@@ -292,6 +315,7 @@ export async function POST(req: NextRequest) {
     const guidance = [
       v2 ? SCHEDULER_V2_GUIDANCE : '',
       projects ? PROJECTS_GUIDANCE : '',
+      phases ? PHASES_GUIDANCE : '',
     ].filter(Boolean).join('\n\n')
     const sys = guidance
       ? { ...rawSys, dynamicSuffix: `${rawSys.dynamicSuffix}\n\n${guidance}`.trim() }
@@ -315,7 +339,7 @@ export async function POST(req: NextRequest) {
       timezone,
       isHe: (profile?.language ?? 'he') === 'he',
     }
-    const activeTools = isOnboarding ? getOnboardingTools(v2, projects) : getCalendarTools(v2, projects)
+    const activeTools = isOnboarding ? getOnboardingTools(v2, projects, phases) : getCalendarTools(v2, projects, phases)
 
     // ── Tool-call loop ──────────────────────────────────────────────────────
 
@@ -573,6 +597,10 @@ async function executeTool(
   // able to reach a tool the flag has turned off.
   const projectsOn = projectsEnabled()
   if (!projectsOn && PROJECT_ONLY_TOOLS.has(toolName)) {
+    return { error: 'unknown_tool', message: `Unknown tool: ${toolName}` }
+  }
+
+  if (!phasesEnabled() && PHASE_ONLY_TOOLS.has(toolName)) {
     return { error: 'unknown_tool', message: `Unknown tool: ${toolName}` }
   }
 
@@ -1273,16 +1301,33 @@ async function executeTool(
           return { error: 'value_too_large', message: `value must be ≤ ${MEM_VALUE_MAX} chars` }
         }
       }
+      // Scope each fact to the current phase at WRITE time, so a fact learned now
+      // is filed correctly even if the phase is never explicitly closed. The
+      // category table decides by default; an explicit `scope` on the entry wins,
+      // for the cases the table cannot know ("I only do this while I'm enlisted").
+      // Unmatched keys stay timeless — losing a true fact is worse than keeping a
+      // stale one. See lib/phases/scope.ts.
+      const activePhaseId = phasesEnabled()
+        ? (userStore.getActivePhase(userId)?.id ?? undefined)
+        : undefined
+      const scopeOverride = str((input as Record<string, unknown>).scope)
+
       const memHelper = (existing: AIMemory[]) => {
         for (const entry of entries) {
           const idx = existing.findIndex(m => m.key === entry.key)
+          const scoped = scopeOverride === 'phase' ? true
+            : scopeOverride === 'always' ? false
+              : defaultScopeFor(entry.key) === 'phase'
           const item: AIMemory = {
             id: idx >= 0 ? existing[idx].id : crypto.randomUUID(),
             user_id: userId,
             key: entry.key,
             value: entry.value,
             learned_from: 'behavior',   // save_memory is only used in normal chat (onboarding uses complete_onboarding)
+            // created_at is FIRST seen and is preserved on overwrite everywhere.
             created_at: idx >= 0 ? existing[idx].created_at : new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            ...(activePhaseId && scoped ? { phase_id: activePhaseId } : {}),
           }
           if (idx >= 0) existing[idx] = item
           else existing.push(item)
@@ -1652,9 +1697,222 @@ async function executeTool(
       }
     }
 
+    // ── Phases ──────────────────────────────────────────────────────────────
+
+    case 'list_phases': {
+      const all = userStore.getPhases(userId)
+      const wanted = bool(input.include_closed) ? all : all.filter(p => p.status === 'active')
+      return {
+        phases: wanted.map(p => ({
+          id: p.id, label: p.label, slug: p.slug, status: p.status,
+          started_at: p.started_at, ended_at: p.ended_at, summary: p.summary,
+        })),
+        next_step: sched?.isHe
+          ? 'אם המשתמש חוזר לתקופה מסוג שכבר היה — השתמש ב-slug הקיים ב-start_phase, אחרת ההגדרות והעובדות הישנות לא יחזרו.'
+          : 'If the user is returning to a kind of period they had before, pass that existing slug to start_phase — otherwise their old settings and facts will not come back.',
+      }
+    }
+
+    case 'start_phase': {
+      const label = str(input.label).trim()
+      if (!label) return { error: 'missing_required_fields', message: 'label is required' }
+
+      const all = userStore.getPhases(userId)
+      const previous = all.find(p => p.status === 'active') ?? null
+      const today = localDayKey(now)
+      const slug = (str(input.slug).trim() || slugify(label))
+      const resumed = all.find(p => p.status === 'closed' && p.slug === slug) ?? null
+
+      // Close the previous phase FIRST, atomically with the open. There is no
+      // separate close_phase tool on purpose: two tools would let the model open a
+      // phase without closing the old one, and two active phases makes the memory
+      // phase-filter meaningless.
+      const retiredSeries: NonNullable<Phase['retired_series']> = []
+      if (previous) {
+        // Stamp the outgoing phase onto its unstamped, phase-scoped facts.
+        const memFile = path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'memory.json')
+        const rows = readJsonFile<AIMemory[]>(memFile, [])
+        let stamped = 0
+        for (const m of rows) {
+          if (!m.phase_id && defaultScopeFor(m.key) === 'phase') { m.phase_id = previous.id; stamped++ }
+        }
+        if (stamped > 0) writeJsonFileAtomic(memFile, rows)
+
+        // Retire only the series the user actually named. No heuristic, no backfill.
+        const ids = Array.isArray(input.retire_series_ids)
+          ? (input.retire_series_ids as unknown[]).filter((v): v is string => typeof v === 'string')
+          : []
+        for (const eventId of ids) {
+          const target = currentEvents.find(e => e.id === eventId || e.series_id === eventId)
+          const sid = target?.series_id
+          if (!sid) continue
+          const plan = planSeriesRetirement(currentEvents, sid, today)
+          for (const id of plan.deleteIds) { userStore.deleteEvent(id, userId); deletedEventIds.push(id) }
+          retiredSeries.push({
+            series_id: sid, title: target.title,
+            weekday: '', hour: 0, last_kept: plan.lastKept ?? '',
+          })
+        }
+
+        userStore.updatePhase(previous.id, {
+          status: 'closed',
+          ended_at: today,
+          profile_snapshot: {
+            wake_time: profile?.wake_time, sleep_time: profile?.sleep_time,
+            productivity_peak: profile?.productivity_peak,
+            schedule_weekend: profile?.schedule_weekend,
+            occupation: profile?.occupation, day_structure: profile?.day_structure,
+          },
+          ...(retiredSeries.length ? { retired_series: retiredSeries } : {}),
+        }, userId)
+      }
+
+      const phase: Phase = {
+        id: crypto.randomUUID(),
+        user_id: userId,
+        label, slug,
+        started_at: today,
+        status: 'active',
+        expected_end: str(input.expected_end) || undefined,
+        summary: {
+          priorities: str(input.priorities) || undefined,
+          commitments: str(input.commitments) || undefined,
+          hours: str(input.hours) || undefined,
+        },
+        created_at: new Date().toISOString(),
+      }
+      userStore.addPhase(phase, userId)
+
+      // Restoring is a FILTER, not an insert: the old rows were never deleted, so
+      // re-pointing them at the new phase makes them visible again.
+      let restoredFacts = 0
+      if (resumed) {
+        const memFile = path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'memory.json')
+        const rows = readJsonFile<AIMemory[]>(memFile, [])
+        for (const m of rows) {
+          // Goals were in flight and are over. Resurrecting a four-month-old
+          // "ongoing_task" is this feature's worst failure — it would make Zman
+          // less trustworthy than the flat snapshot it replaces.
+          if (m.phase_id === resumed.id && !isRestoreDenied(m.key)) { m.phase_id = phase.id; restoredFacts++ }
+        }
+        if (restoredFacts > 0) writeJsonFileAtomic(memFile, rows)
+        if (resumed.profile_snapshot) {
+          const snap = Object.fromEntries(
+            Object.entries(resumed.profile_snapshot).filter(([, v]) => v !== undefined),
+          )
+          if (Object.keys(snap).length) applyProfilePatch(userId, snap as Partial<UserProfile>)
+        }
+      }
+
+      state.memoryUpdated = true
+      return {
+        success: true,
+        phase: { id: phase.id, label: phase.label, slug: phase.slug, started_at: phase.started_at },
+        closed_phase: previous ? { label: previous.label, ended_at: today } : null,
+        resumed_from: resumed ? { label: resumed.label, restored_facts: restoredFacts } : null,
+        retired_series: retiredSeries.length,
+        interview: resumed
+          ? (sched?.isHe
+              ? ['החזרתי את ההגדרות והעובדות מהתקופה הקודמת מאותו סוג. שאל רק: מה השתנה הפעם?']
+              : ['Settings and facts from the previous period of this kind are restored. Ask only: what changed this time?'])
+          : (sched?.isHe
+              ? [
+                  'מתי אתה זמין עכשיו? (שעות/משמרות) — ואם זה השתנה, קרא ל-update_profile',
+                  'מה הכי חשוב לך בתקופה הזאת?',
+                  'מה חוזר לך כל שבוע? (משמרות, הרצאות, בסיס)',
+                ]
+              : [
+                  'What are your hours now? If they changed, call update_profile',
+                  'What matters most in this period?',
+                  'What recurs weekly?',
+                ]),
+        next_step: sched?.isHe
+          ? 'שאל לכל היותר את השאלות שלמעלה, ואז עדכן עם save_memory / update_profile. אל תמציא עובדות על התקופה החדשה.'
+          : 'Ask at most the questions above, then record answers with save_memory / update_profile. Do not invent facts about the new phase.',
+      }
+    }
+
+    case 'update_profile': {
+      // Deny-list by construction: only these keys are readable off `input`.
+      // autonomy_mode is the user's consent setting and must never be writable by
+      // the model; scheduling_method has a Settings control and drives the projects
+      // board, so a silent rewrite would fight visible UI.
+      const patch: Partial<UserProfile> = {}
+      if (str(input.wake_time)) patch.wake_time = str(input.wake_time)
+      if (str(input.sleep_time)) patch.sleep_time = str(input.sleep_time)
+      if (['morning', 'afternoon', 'evening'].includes(str(input.productivity_peak))) {
+        patch.productivity_peak = str(input.productivity_peak) as UserProfile['productivity_peak']
+      }
+      if (['none', 'friday', 'both'].includes(str(input.schedule_weekend))) {
+        patch.schedule_weekend = str(input.schedule_weekend) as UserProfile['schedule_weekend']
+      }
+      if (str(input.occupation)) patch.occupation = str(input.occupation)
+      if (['fixed', 'variable', 'mixed', 'independent'].includes(str(input.day_structure))) {
+        patch.day_structure = str(input.day_structure) as UserProfile['day_structure']
+      }
+      if (Object.keys(patch).length === 0) {
+        return { error: 'nothing_to_update', message: 'No writable field was provided.' }
+      }
+      const updated = applyProfilePatch(userId, patch)
+      state.memoryUpdated = true
+      return {
+        success: true,
+        updated: Object.keys(patch),
+        profile: { wake_time: updated.wake_time, sleep_time: updated.sleep_time, occupation: updated.occupation },
+      }
+    }
+
+    case 'end_series': {
+      const eventId = str(input.event_id)
+      if (!eventId) return { error: 'missing_required_fields', message: 'event_id is required' }
+      const target = currentEvents.find(e => e.id === eventId)
+      if (!target) return { error: 'not_found', message: `No event with id ${eventId}` }
+      if (!target.series_id) {
+        return { error: 'not_a_series', message: 'That event is not part of a recurring series — use delete_event for a single event.' }
+      }
+      const from = str(input.from_date) || localDayKey(now)
+      const plan = planSeriesRetirement(currentEvents, target.series_id, from)
+      for (const id of plan.deleteIds) { userStore.deleteEvent(id, userId); deletedEventIds.push(id) }
+      return {
+        success: true,
+        series_id: target.series_id,
+        ended_from: from,
+        removed_future: plan.deleteIds.length,
+        kept_past: plan.keptPast,
+        last_kept: plan.lastKept,
+        message: sched?.isHe
+          ? `הפסקתי את הסדרה מ-${from}. ${plan.keptPast} מופעים מהעבר נשמרו — ההיסטוריה לא נמחקה.`
+          : `Series ended as of ${from}. ${plan.keptPast} past instances kept — the history is intact.`,
+      }
+    }
+
     default:
       return { error: `Unknown tool: ${toolName}` }
   }
+}
+
+/** 'YYYY-MM-DD' for a Date, in the user's local wall clock. */
+function localDayKey(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** snake_case identity for a phase label, so recurrences can match on it. */
+function slugify(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^\w֐-׿]/g, '').slice(0, 40) || 'phase'
+}
+
+/**
+ * Writes a whitelisted profile patch and mirrors it to memory, so the two cannot
+ * drift — the same single-writer rule POST /api/profile follows.
+ */
+function applyProfilePatch(userId: string, patch: Partial<UserProfile>): UserProfile {
+  const file = path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'profile.json')
+  const previous = readJsonFile<UserProfile>(file, { user_id: userId } as UserProfile)
+  const merged: UserProfile = { ...previous, ...patch, user_id: userId }
+  writeJsonFileAtomic(file, merged)
+  mirrorProfileToMemory(userId, merged, Object.keys(patch) as (keyof UserProfile)[])
+  return merged
 }
 
 // ─── SCHEDULER_V2 storage glue ────────────────────────────────────────────────

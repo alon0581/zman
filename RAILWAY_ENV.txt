@@ -112,6 +112,20 @@ SCHEDULER_V2=1
 # dependsOn present it is a proven no-op, asserted by an identity test.
 PROJECTS=1
 
+# ── PHASES (OFF by default — leave it unset in production for now) ─────────
+# Life phases: a named period ("סמסטר ב׳", "צבא", "בין עבודות") that owns its own
+# rhythm and facts, and that can come back. When set:
+#   • start_phase / list_phases / update_profile / end_series appear
+#   • the PERSON PROFILE block filters to the CURRENT phase and labels older facts
+#     as belonging to a past period instead of asserting them as true now
+#   • memory facts are scoped at write time (lib/phases/scope.ts)
+# UNSET (the default) = byte-identical prompt and tool list. Only "1" or "true".
+#
+# Note the profile rewrite is self-gating: buildSystemPrompt takes an optional
+# phase context and returns the legacy block verbatim when it is absent, so even a
+# half-wired call site degrades to today's behaviour.
+# PHASES=1
+
 # ── Voice transcription (OpenAI — this is the ONLY thing OPENAI_API_KEY is for)
 OPENAI_API_KEY=sk-...
 # Defaults to gpt-4o-transcribe, which is markedly better on Hebrew than the old

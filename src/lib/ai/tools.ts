@@ -618,6 +618,135 @@ const PROJECTS_PARAMETER_EXTRAS: Record<string, Record<string, unknown>> = {
  * also on: it returns a plan_id that only `apply_plan` — a V2-only tool — can
  * commit, so offering it otherwise hands the model a proposal it can never apply.
  */
+// ─── PHASES tool surface ─────────────────────────────────────────────────────
+//
+// A phase is a named period of the user's life. The triggers live HERE, in the
+// description, rather than in prompt prose — prose lost to a more specific tool
+// description once already in this repo (see PROJECTS_DESCRIPTION_OVERRIDES) and
+// produced a correct-looking, wrong result.
+
+const phaseTools: OpenAI.ChatCompletionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'start_phase',
+      description:
+        'Open a new life phase and close the current one, atomically. ' +
+        'CALL THIS when the user says their situation changed: "התחלתי לעבוד", "התגייסתי", "סיימתי סמסטר", "חזרתי ללימודים", "פוטרתי", "אני בין עבודות", "יצאתי לחופשת לידה", "I started a new job", "I\'m between jobs". ' +
+        'A phase is a PERIOD, not a category — the label is the user\'s own words. ' +
+        'ASK AT MOST THREE QUESTIONS before calling: (1) what to call it and roughly until when, (2) what their hours/shifts look like now, (3) what matters most and what recurs weekly. ' +
+        'If they answered fewer, open the phase anyway with what you have — a phase with one field filled is strictly better than a phase not opened; you can fill the rest later with save_memory. ' +
+        'Pass `slug` from list_phases when this is a RETURN to a period they had before (same slug ⇒ their old settings and facts come back automatically, and you should then ask only "what changed?").',
+      parameters: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: "The user's own words: \"סמסטר ב׳\", \"צבא\", \"בין עבודות\"." },
+          slug: { type: 'string', description: 'snake_case identity across recurrences. Reuse an existing one from list_phases when the user is returning to that kind of period.' },
+          expected_end: { type: 'string', description: 'YYYY-MM-DD, if they said roughly when it ends.' },
+          priorities: { type: 'string', description: 'What matters most in this phase.' },
+          commitments: { type: 'string', description: 'What recurs weekly: shifts, lectures, base.' },
+          hours: { type: 'string', description: 'Their availability in their own words.' },
+          retire_series_ids: {
+            type: 'array', items: { type: 'string' },
+            description: 'Recurring series that ended with the OLD phase. Ask which ones; never guess. They are ended as of today and their past instances are kept.',
+          },
+        },
+        required: ['label'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_phases',
+      description:
+        'List the user\'s life phases, current and past. Call this BEFORE start_phase so you can reuse an existing `slug` instead of inventing a near-duplicate ("studies" vs "semester_1" vs "university") — a mismatched slug silently breaks the "my old settings come back" behaviour. Also answers "מה היה לי בסמסטר שעבר".',
+      parameters: { type: 'object', properties: { include_closed: { type: 'boolean' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_profile',
+      description:
+        'Update the user\'s rhythm settings — their hours, peak, weekend policy, occupation. ' +
+        'Use this when they tell you their availability changed ("עכשיו אני עובד עד 23:00", "קם ב-6"), and especially during a phase interview: you are asking about hours, so you must be able to store the answer. ' +
+        'Only these fields exist here on purpose. It cannot change their autonomy mode, language, theme, or scheduling method — those are the user\'s own controls.',
+      parameters: {
+        type: 'object',
+        properties: {
+          wake_time: { type: 'string', description: 'HH:MM' },
+          sleep_time: { type: 'string', description: 'HH:MM' },
+          productivity_peak: { type: 'string', enum: ['morning', 'afternoon', 'evening'] },
+          schedule_weekend: { type: 'string', enum: ['none', 'friday', 'both'] },
+          occupation: { type: 'string' },
+          day_structure: { type: 'string', enum: ['fixed', 'variable', 'mixed', 'independent'] },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'end_series',
+      description:
+        'Stop a recurring series from TODAY onward, keeping every past instance. ' +
+        'This is the tool for "הפסקתי ללכת ל...", "נגמר הסמסטר", "כבר לא עובד שם", "אני לא בקורס הזה יותר" — anything that ENDED rather than never happened. ' +
+        'delete_event with delete_series:true is the wrong tool for that: it has no date bound and erases the past instances too, destroying the record that this ever happened.',
+      parameters: {
+        type: 'object',
+        properties: {
+          event_id: { type: 'string', description: 'Any instance of the series.' },
+          from_date: { type: 'string', description: 'YYYY-MM-DD. Defaults to today. Instances on this date are removed.' },
+        },
+        required: ['event_id'],
+      },
+    },
+  },
+]
+
+/** Memory gains an explicit scope escape hatch when phases are on. */
+const PHASES_PARAMETER_EXTRAS: Record<string, Record<string, unknown>> = {
+  save_memory: {
+    scope: {
+      type: 'string',
+      enum: ['phase', 'always'],
+      description: 'Omit when unsure — the default keeps the fact for every period, and keeping a stale fact is recoverable while losing a true one is not. Use "phase" for facts tied to this period (a job, a course), "always" for facts about the person (a partner, a hobby).',
+    },
+  },
+}
+
+/** Same lesson as plan_project: the routing has to sit in the description. */
+const PHASES_DESCRIPTION_OVERRIDES: Record<string, string> = {
+  delete_event:
+    'Delete a calendar event. ⚠️ `delete_series: true` has NO date bound — it erases every PAST instance too, destroying the record that the user ever did this. ' +
+    'For anything that ENDED rather than never happened ("נגמר הסמסטר", "הפסקתי ללכת לחדר כושר"), use `end_series` instead, which keeps the history. ' +
+    'Use delete_series only when the series should never have existed at all.',
+}
+
+function withPhases(tools: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
+  const out = tools.map(tool => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fn = (tool as any).function as { name: string; description?: string; parameters?: any }
+    const extras = PHASES_PARAMETER_EXTRAS[fn?.name]
+    const description = PHASES_DESCRIPTION_OVERRIDES[fn?.name]
+    if (!extras && !description) return tool
+    return {
+      ...tool,
+      function: {
+        ...fn,
+        ...(description ? { description } : {}),
+        ...(extras && fn.parameters?.properties
+          ? { parameters: { ...fn.parameters, properties: { ...fn.parameters.properties, ...extras } } }
+          : {}),
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any
+  })
+  out.push(...phaseTools)
+  return out
+}
+
 function withProjects(tools: OpenAI.ChatCompletionTool[], v2: boolean): OpenAI.ChatCompletionTool[] {
   const out = tools.map(tool => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -651,22 +780,47 @@ const calendarToolsV2Projects: OpenAI.ChatCompletionTool[] = withProjects(calend
 const onboardingToolsProjects: OpenAI.ChatCompletionTool[] = withProjects(onboardingTools, false)
 const onboardingToolsV2Projects: OpenAI.ChatCompletionTool[] = withProjects(onboardingToolsV2, true)
 
+// Phases is an independent axis, so every (v2 x projects) combination gets a
+// phases variant. Built once at module load, like the others.
+const withP = (t: OpenAI.ChatCompletionTool[]) => withPhases(t)
+const calendarPhases = withP(calendarTools)
+const calendarV2Phases = withP(calendarToolsV2)
+const calendarProjectsPhases = withP(calendarToolsProjects)
+const calendarV2ProjectsPhases = withP(calendarToolsV2Projects)
+const onboardingPhases = withP(onboardingTools)
+const onboardingV2Phases = withP(onboardingToolsV2)
+const onboardingProjectsPhases = withP(onboardingToolsProjects)
+const onboardingV2ProjectsPhases = withP(onboardingToolsV2Projects)
+
 /**
- * The tool list to hand the model. With `v2` false this returns the exact same
- * array reference the app has always used — not a copy, not a rebuild.
+ * The tool list to hand the model. With every flag false this returns the exact
+ * same array reference the app has always used — not a copy, not a rebuild.
  */
-export function getCalendarTools(v2: boolean, projects = false): OpenAI.ChatCompletionTool[] {
-  if (!projects) return v2 ? calendarToolsV2 : calendarTools
-  return v2 ? calendarToolsV2Projects : calendarToolsProjects
+export function getCalendarTools(v2: boolean, projects = false, phases = false): OpenAI.ChatCompletionTool[] {
+  if (!phases) {
+    if (!projects) return v2 ? calendarToolsV2 : calendarTools
+    return v2 ? calendarToolsV2Projects : calendarToolsProjects
+  }
+  if (!projects) return v2 ? calendarV2Phases : calendarPhases
+  return v2 ? calendarV2ProjectsPhases : calendarProjectsPhases
 }
 
-export function getOnboardingTools(v2: boolean, projects = false): OpenAI.ChatCompletionTool[] {
-  if (!projects) return v2 ? onboardingToolsV2 : onboardingTools
-  return v2 ? onboardingToolsV2Projects : onboardingToolsProjects
+export function getOnboardingTools(v2: boolean, projects = false, phases = false): OpenAI.ChatCompletionTool[] {
+  if (!phases) {
+    if (!projects) return v2 ? onboardingToolsV2 : onboardingTools
+    return v2 ? onboardingToolsV2Projects : onboardingToolsProjects
+  }
+  if (!projects) return v2 ? onboardingV2Phases : onboardingPhases
+  return v2 ? onboardingV2ProjectsPhases : onboardingProjectsPhases
 }
 
 /** Tools that only exist under the flag. Used by the dispatcher to fail closed. */
 export const V2_ONLY_TOOLS = new Set(['schedule_item', 'apply_plan'])
+
+/** Same fail-closed guard, for the phases surface. */
+export const PHASE_ONLY_TOOLS = new Set([
+  'start_phase', 'list_phases', 'update_profile', 'end_series',
+])
 
 /** Same fail-closed guard, for the projects surface. */
 export const PROJECT_ONLY_TOOLS = new Set([
