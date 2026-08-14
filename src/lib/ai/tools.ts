@@ -464,20 +464,186 @@ function toV2(tools: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
   return out
 }
 
+// ─── PROJECTS tool surface ───────────────────────────────────────────────────
+//
+// Five tools, kept deliberately few because chat is the write path in this app:
+// TasksPanel's quick-add does not POST, it sends "הוסף משימה: …" through the chat
+// engine. Anything the user can say, the model needs a tool for.
+
+const projectTools: OpenAI.ChatCompletionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'create_project',
+      description:
+        'Create a project — a body of work with several steps and usually a deadline (a course, an assignment to hand in, something the user is building). ' +
+        'Use this instead of create_task when the user describes something with THREE OR MORE steps, or names a deadline for a body of work rather than a single errand. ' +
+        'Pass the steps in `tasks` in the same call rather than making N follow-up create_task calls. ' +
+        'kind matters: "course" and "deliverable" expect a deadline; "build" usually has none, and a project with no deadline is never reported as on-track — it simply has no risk to report.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          kind: { type: 'string', enum: ['course', 'deliverable', 'build'] },
+          deadline: { type: 'string', description: 'YYYY-MM-DD or a local datetime. Omit for open-ended work.' },
+          description: { type: 'string' },
+          color: { type: 'string', description: 'Hex, e.g. #6366F1' },
+          tasks: {
+            type: 'array',
+            description: 'The steps. `key` is a local label used only to express order between them in this call.',
+            items: {
+              type: 'object',
+              properties: {
+                key: { type: 'string' },
+                title: { type: 'string' },
+                estimated_hours: { type: 'number', description: 'Ask the user if you do not know. Never invent one — the risk badge is computed from these.' },
+                deadline: { type: 'string' },
+                priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+                depends_on: { type: 'array', items: { type: 'string' }, description: 'Other `key` values that must finish first.' },
+              },
+              required: ['title'],
+            },
+          },
+        },
+        required: ['title', 'kind'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_projects',
+      description:
+        'List the user\'s projects with their computed health: deadline risk, progress, next step and time invested. ' +
+        'The risk level and its explanation come from the real scheduling engine — PARAPHRASE them and never re-derive whether something fits, exactly as with schedule_item\'s reasons. ' +
+        'Use for "מה מצב הפרויקטים שלי", "איפה אני עומד", or before proposing to plan one.',
+      parameters: {
+        type: 'object',
+        properties: { status: { type: 'string', enum: ['active', 'paused', 'done', 'archived'] } },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_project',
+      description: 'Change a project\'s title, status, deadline, description or colour. Use status "archived" to put one away, "done" when it is finished.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          title: { type: 'string' },
+          status: { type: 'string', enum: ['active', 'paused', 'done', 'archived'] },
+          deadline: { type: 'string' },
+          description: { type: 'string' },
+          color: { type: 'string' },
+        },
+        required: ['project_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_project',
+      description:
+        'Delete a project. By default its tasks SURVIVE and simply stop belonging to it. Pass delete_tasks:true only if the user clearly wants the work gone too. ' +
+        'Calendar blocks are never removed by this — say so if the user expects otherwise. Prefer update_project with status "archived" unless they actually said delete.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          delete_tasks: { type: 'boolean' },
+        },
+        required: ['project_id'],
+      },
+    },
+  },
+]
+
+const planProjectTool: OpenAI.ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'plan_project',
+    description:
+      'Plan a WHOLE project at once: every open task with a time estimate goes to the scheduling engine together, so deadlines and dependencies are resolved against each other rather than one task at a time. ' +
+      'A task that depends on another is never scheduled before it finishes. ' +
+      'Returns a PROPOSAL with a plan_id and writes nothing — show it, wait for the user to agree, then call apply_plan. ' +
+      'Tasks with no time estimate come back in `skipped`: report them honestly and offer to estimate them, never guess a number and schedule against it. ' +
+      'If the task graph has a circular dependency it refuses and names the two tasks — pass that on rather than working around it.',
+    parameters: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'string' },
+        only_task_ids: { type: 'array', items: { type: 'string' }, description: 'Plan just these tasks instead of the whole project.' },
+      },
+      required: ['project_id'],
+    },
+  },
+}
+
+/** In the projects world, tasks can belong to a project and can be ordered. */
+const PROJECTS_PARAMETER_EXTRAS: Record<string, Record<string, unknown>> = {
+  create_task: {
+    project_id: { type: 'string', description: 'Attach this task to a project.' },
+    depends_on: { type: 'array', items: { type: 'string' }, description: 'Task ids that must finish first.' },
+  },
+  update_task: {
+    project_id: { type: 'string', description: 'Move this task into a project.' },
+    depends_on: { type: 'array', items: { type: 'string' }, description: 'Task ids that must finish first.' },
+  },
+}
+
+/**
+ * Adds the projects surface. `plan_project` appears only when the engine path is
+ * also on: it returns a plan_id that only `apply_plan` — a V2-only tool — can
+ * commit, so offering it otherwise hands the model a proposal it can never apply.
+ */
+function withProjects(tools: OpenAI.ChatCompletionTool[], v2: boolean): OpenAI.ChatCompletionTool[] {
+  const out = tools.map(tool => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fn = (tool as any).function as { name: string; parameters?: any }
+    const extras = PROJECTS_PARAMETER_EXTRAS[fn?.name]
+    if (!extras || !fn.parameters?.properties) return tool
+    return {
+      ...tool,
+      function: {
+        ...fn,
+        parameters: { ...fn.parameters, properties: { ...fn.parameters.properties, ...extras } },
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any
+  })
+  out.push(...projectTools)
+  if (v2) out.push(planProjectTool)
+  return out
+}
+
 const calendarToolsV2: OpenAI.ChatCompletionTool[] = toV2(calendarTools)
 const onboardingToolsV2: OpenAI.ChatCompletionTool[] = toV2(onboardingTools)
+const calendarToolsProjects: OpenAI.ChatCompletionTool[] = withProjects(calendarTools, false)
+const calendarToolsV2Projects: OpenAI.ChatCompletionTool[] = withProjects(calendarToolsV2, true)
+const onboardingToolsProjects: OpenAI.ChatCompletionTool[] = withProjects(onboardingTools, false)
+const onboardingToolsV2Projects: OpenAI.ChatCompletionTool[] = withProjects(onboardingToolsV2, true)
 
 /**
  * The tool list to hand the model. With `v2` false this returns the exact same
  * array reference the app has always used — not a copy, not a rebuild.
  */
-export function getCalendarTools(v2: boolean): OpenAI.ChatCompletionTool[] {
-  return v2 ? calendarToolsV2 : calendarTools
+export function getCalendarTools(v2: boolean, projects = false): OpenAI.ChatCompletionTool[] {
+  if (!projects) return v2 ? calendarToolsV2 : calendarTools
+  return v2 ? calendarToolsV2Projects : calendarToolsProjects
 }
 
-export function getOnboardingTools(v2: boolean): OpenAI.ChatCompletionTool[] {
-  return v2 ? onboardingToolsV2 : onboardingTools
+export function getOnboardingTools(v2: boolean, projects = false): OpenAI.ChatCompletionTool[] {
+  if (!projects) return v2 ? onboardingToolsV2 : onboardingTools
+  return v2 ? onboardingToolsV2Projects : onboardingToolsProjects
 }
 
 /** Tools that only exist under the flag. Used by the dispatcher to fail closed. */
 export const V2_ONLY_TOOLS = new Set(['schedule_item', 'apply_plan'])
+
+/** Same fail-closed guard, for the projects surface. */
+export const PROJECT_ONLY_TOOLS = new Set([
+  'create_project', 'list_projects', 'update_project', 'delete_project', 'plan_project',
+])

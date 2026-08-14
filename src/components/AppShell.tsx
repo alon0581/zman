@@ -218,6 +218,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     onEventsUpdate: handleEventsUpdate,
     onProfileUpdate: handleProfileUpdate,
     onTasksUpdate: fetchTasks,
+    onProjectsUpdate: fetchProjects,
     isOnboarding: needsOnboarding,
     chatOverlayOpen,
   })

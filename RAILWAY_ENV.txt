@@ -96,9 +96,15 @@ ANTHROPIC_API_KEY=sk-ant-...
 #     Kanban user gets a WIP cap and a Deep Work user gets a one-block board
 # UNSET (the default) = the app renders exactly as before. Only "1" or "true".
 #
-# Note the routes themselves are live and unflagged — they are authenticated and
-# additive, and a route you cannot exercise in production is a route you cannot
-# verify. Only the UI and (later) the AI tools are gated.
+#   • the assistant gains create_project / list_projects / update_project /
+#     delete_project, and — only when SCHEDULER_V2 is ALSO on — plan_project,
+#     which schedules a whole project at once so dependencies and deadlines
+#     resolve against each other. plan_project needs both flags because it
+#     returns a plan_id that only apply_plan (a V2-only tool) can commit.
+#
+# Note the REST routes themselves are live and unflagged — they are authenticated
+# and additive, and a route you cannot exercise in production is a route you
+# cannot verify. The UI and the AI tools are what the flag gates.
 #
 # The engine's dependency support (Task.depends_on) ships unconditionally: with no
 # dependsOn present it is a proven no-op, asserted by an identity test.

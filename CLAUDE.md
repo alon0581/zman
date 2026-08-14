@@ -40,7 +40,7 @@ deploys from `main`. There is no staging. Consequences:
 | Voice | OpenAI `gpt-4o-transcribe` — the *only* thing `OPENAI_API_KEY` is for |
 | Auth | File-based: `crypto.scryptSync` + HMAC cookie. No external service |
 | Storage | JSON files under `DATA_DIR` (Railway volume at `/app/data`) |
-| Tests | **Vitest — 546 passing.** `npm test` |
+| Tests | **Vitest — 587 passing.** `npm test` |
 | Notifications | ntfy (`NTFY_TOPIC_SECRET`) |
 
 **Deleted on purpose — do not reintroduce:** Supabase (and `src/proxy.ts`, which
@@ -120,7 +120,18 @@ boardRules.ts  18 methods -> board shape. 5 presets, 18 rows of copy, 1 renderer
 capacity.ts    the batched engine dry run
 health.ts      resolveSignals() — the four card signals
 cascade.ts     what deleting a project does (pure; the route just executes it)
+../ai/projectTools.ts   tasks -> PlacementRequest[] for plan_project
 ```
+
+**AI surface:** `create_project` (takes its steps inline, so one call replaces
+six), `list_projects` (returns computed health — the model paraphrases the risk,
+never re-derives it), `update_project`, `delete_project`, and `plan_project`.
+`plan_project` needs **both** `PROJECTS` and `SCHEDULER_V2`: it returns a
+`plan_id` only `apply_plan` can commit, and that tool is V2-only. It reuses the
+existing `proposePlan`/`apply_plan` two-phase flow rather than adding a second
+approval path. A dependency cycle is *refused here by name* even though the
+engine tolerates one — the engine must stay total, but this layer has a user who
+can fix the data.
 
 Five things that are load-bearing:
 
@@ -249,7 +260,7 @@ the entire feature was dead code.
 
 ```bash
 npm run dev          # localhost:3000
-npm test             # Vitest — 546 tests
+npm test             # Vitest — 587 tests
 npx tsc --noEmit     # type check
 npm run lint         # 4 pre-existing errors, all in untouched components
 ```

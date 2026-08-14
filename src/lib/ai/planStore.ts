@@ -32,6 +32,15 @@ export interface StoredPlanBlock {
   mobility: 'fixed' | 'flexible' | 'ask_first'
   /** The rendered Hebrew/English sentences, stored so the event can carry its own "why". */
   why: string[]
+  /**
+   * Which project this block's time counts towards, and which task it is for.
+   *
+   * Stamped at apply time onto the written CalendarEvent. Without these the events
+   * are not linked to anything, and both invested-time and next-step silently
+   * return nothing — the feature would look like it worked and quietly not.
+   */
+  project_id?: string
+  ref?: { kind: 'event' | 'task' | 'project'; id: string }
 }
 
 export interface StoredPlan {

@@ -1,17 +1,24 @@
 import { NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
 import OpenAI from 'openai'
-import { getCalendarTools, getOnboardingTools, V2_ONLY_TOOLS } from '@/lib/ai/tools'
+import { getCalendarTools, getOnboardingTools, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS } from '@/lib/ai/tools'
 import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
 import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
-import { schedulerV2Enabled } from '@/lib/ai/featureFlags'
+import { projectsEnabled, schedulerV2Enabled } from '@/lib/ai/featureFlags'
 import { followupPrompt, needsFollowup } from '@/lib/ai/followup'
 import { consumePlan } from '@/lib/ai/planStore'
 import {
   buildBreakdownSpec, buildScheduleItemSpec, METHOD_SESSION_HOURS, methodMobility,
   methodTitleFormatter, planMove, planRecurring, proposePlan, recurringToolResult, SchedulerCtx,
 } from '@/lib/ai/schedulerTools'
-import { CalendarEvent, UserProfile, AIMemory, Task, FeedbackSignal } from '@/types'
+import { buildProjectPlanSpec } from '@/lib/ai/projectTools'
+import { CalendarEvent, UserProfile, AIMemory, Project, Task, FeedbackSignal } from '@/types'
+import { planProjectDeletion } from '@/lib/projects/cascade'
+import { probeCapacity, ProjectProbeResult } from '@/lib/projects/capacity'
+import { computeFacts, probeInputFor, resolveSignals } from '@/lib/projects/health'
+import {
+  buildSchedulingContext, horizonDaysFor, resolveMethod, resolveNow,
+} from '@/lib/scheduling/adapter'
 import { addDays, addHours, addMinutes, format, parseISO, startOfDay, endOfDay } from 'date-fns'
 import { userStore } from '@/lib/store/userStore'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
@@ -107,6 +114,27 @@ SCHEDULING ENGINE (this overrides any earlier instruction about get_free_slots):
 - create_event stays for times the user named explicitly.
 `.trim()
 
+/**
+ * Appended to the DYNAMIC half of the system prompt when PROJECTS is on.
+ *
+ * Same rule as SCHEDULER_V2_GUIDANCE and for the same reason: the static prefix is
+ * prompt-cached, so anything that varies by flag must live in the dynamic suffix
+ * or every user pays a cache miss on every turn, flag-off ones included.
+ */
+const PROJECTS_GUIDANCE = `
+PROJECTS:
+- A project is a body of work with several steps and usually a deadline: a course, something to hand in, something the user is building. A single errand stays a task.
+- Three or more steps, or a deadline for a body of work rather than one item -> create_project, and pass the steps in "tasks" in that same call. Do not create the project and then make five create_task calls.
+- kind: "course" (has an exam/submission date), "deliverable" (one hard date), "build" (usually open-ended). A project with no deadline has no risk to report - never describe it as "on track", because there is nothing it could be on track for.
+- estimated_hours on each step is what makes the deadline-risk number possible. If you do not know, ASK. Never invent hours: a confident badge computed from a guess is worse than an honest "I cannot tell yet".
+- "מה מצב הפרויקטים" / "איפה אני עומד" -> list_projects. It returns "signals" already worded. Paraphrase them. Do NOT work out for yourself whether something fits in time — that is the engine's answer, exactly as with schedule_item's reasons.
+- "תכנן לי את הפרויקט" -> plan_project, which schedules every step together so dependencies and deadlines resolve against each other. It returns a PROPOSAL with a plan_id and writes nothing: show it, wait for agreement, then apply_plan.
+- plan_project returns "skipped" for steps with no time estimate. Report them; do not pretend they were scheduled.
+- If it reports a circular dependency, name the two tasks and ask the user to fix it. Do not work around it.
+- Ordering between steps is "depends_on" on the task. A step never gets scheduled before the step it depends on has finished.
+- delete_project keeps the tasks by default and NEVER clears the calendar. Prefer status "archived" unless the user actually said delete.
+`.trim()
+
 /** Parse an "HH:mm" string to an hour in [0,23], falling back on bad input. */
 function parseHour(value: string | undefined, fallback: number): number {
   if (!value) return fallback
@@ -193,6 +221,7 @@ export async function POST(req: NextRequest) {
 
     // One model, pinned for the whole conversation — see DEFAULT_ANTHROPIC_MODEL.
     const v2 = schedulerV2Enabled()
+    const projects = projectsEnabled()
     console.log('[chat] model:', model, 'scheduler_v2:', v2)
     // ───────────────────────────────────────────────────────────────────────
 
@@ -234,8 +263,12 @@ export async function POST(req: NextRequest) {
     // do the arithmetic itself — a tool that no longer exists. The correction goes
     // in the DYNAMIC suffix, never the static prefix, so the cached prefix is
     // byte-identical whether the flag is on or off.
-    const sys = v2
-      ? { ...rawSys, dynamicSuffix: `${rawSys.dynamicSuffix}\n\n${SCHEDULER_V2_GUIDANCE}`.trim() }
+    const guidance = [
+      v2 ? SCHEDULER_V2_GUIDANCE : '',
+      projects ? PROJECTS_GUIDANCE : '',
+    ].filter(Boolean).join('\n\n')
+    const sys = guidance
+      ? { ...rawSys, dynamicSuffix: `${rawSys.dynamicSuffix}\n\n${guidance}`.trim() }
       : rawSys
 
     const createdEvents: CalendarEvent[] = []
@@ -245,7 +278,7 @@ export async function POST(req: NextRequest) {
     // "Did this turn actually do anything" — the input to the shared retry rule.
     let toolCallsMade = 0
     let completedProfile: UserProfile | null = null
-    const state = { completedProfile: null as UserProfile | null, memoryUpdated: false, tasksUpdated: false }
+    const state = { completedProfile: null as UserProfile | null, memoryUpdated: false, tasksUpdated: false, projectsUpdated: false }
 
     // Everything the engine-backed tools need that the v1 dispatcher never carried.
     // `enabled: false` makes every v2 branch inside executeTool unreachable.
@@ -256,7 +289,7 @@ export async function POST(req: NextRequest) {
       timezone,
       isHe: (profile?.language ?? 'he') === 'he',
     }
-    const activeTools = isOnboarding ? getOnboardingTools(v2) : getCalendarTools(v2)
+    const activeTools = isOnboarding ? getOnboardingTools(v2, projects) : getCalendarTools(v2, projects)
 
     // ── Tool-call loop ──────────────────────────────────────────────────────
 
@@ -480,7 +513,7 @@ async function executeTool(
   updatedEvents: CalendarEvent[],
   deletedEventIds: string[],
   profile: UserProfile | null,
-  state: { completedProfile: UserProfile | null; memoryUpdated: boolean; tasksUpdated: boolean } = { completedProfile: null, memoryUpdated: false, tasksUpdated: false },
+  state: { completedProfile: UserProfile | null; memoryUpdated: boolean; tasksUpdated: boolean; projectsUpdated: boolean } = { completedProfile: null, memoryUpdated: false, tasksUpdated: false, projectsUpdated: false },
   pushSubscription?: string,
   fcmToken?: string,
   now: Date = new Date(),  // user-local "now" (Asia/Jerusalem), not server UTC — used for scheduling
@@ -496,6 +529,13 @@ async function executeTool(
   // A v2-only tool reached through a stale transcript when the flag is off must
   // fail loudly rather than silently doing nothing.
   if (!sched?.enabled && V2_ONLY_TOOLS.has(toolName)) {
+    return { error: 'unknown_tool', message: `Unknown tool: ${toolName}` }
+  }
+
+  // Same fail-closed rule for the projects surface: a stale transcript must not be
+  // able to reach a tool the flag has turned off.
+  const projectsOn = projectsEnabled()
+  if (!projectsOn && PROJECT_ONLY_TOOLS.has(toolName)) {
     return { error: 'unknown_tool', message: `Unknown tool: ${toolName}` }
   }
 
@@ -840,6 +880,8 @@ async function executeTool(
 
       const written: CalendarEvent[] = []
       const failed: string[] = []
+      // A project plan changes what the board shows, so the client must refetch.
+      if (plan.blocks.some(b => b.project_id)) state.projectsUpdated = true
       for (const block of plan.blocks) {
         const event: CalendarEvent = {
           id: crypto.randomUUID(),
@@ -857,6 +899,11 @@ async function executeTool(
           is_all_day: false,
           created_at: new Date().toISOString(),
           mobility_type: block.mobility,
+          // Set only for project plans. Without these the written events are not
+          // linked to anything, and both invested-time and next-step silently
+          // return nothing — the feature would look like it worked and quietly not.
+          ...(block.project_id ? { project_id: block.project_id } : {}),
+          ...(block.ref ? { ref: block.ref } : {}),
         }
         try {
           await persistEvent(event, userId)
@@ -1366,6 +1413,205 @@ async function executeTool(
       for (const id of allIds) userStore.deleteEvent(id, userId)
       deletedEventIds.push(...allIds)
       return { success: true, deleted_count: allIds.length }
+    }
+
+    // ── Projects ────────────────────────────────────────────────────────────
+    //
+    // Decisions live in lib/ai/projectTools.ts and lib/projects/*; these arms are
+    // storage glue only, the same split the engine tools already follow.
+
+    case 'create_project': {
+      const title = str(input.title).trim()
+      if (!title) return { error: 'missing_required_fields', message: 'title is required' }
+      const kind = (['course', 'deliverable', 'build'].includes(str(input.kind))
+        ? str(input.kind) : 'build') as Project['kind']
+
+      const project: Project = {
+        id: crypto.randomUUID(),
+        user_id: userId,
+        title,
+        kind,
+        status: 'active',
+        description: str(input.description) || undefined,
+        deadline: str(input.deadline) || undefined,
+        color: str(input.color) || undefined,
+        topic: title,
+        created_at: new Date().toISOString(),
+      }
+      userStore.addProject(project, userId)
+
+      // `key` is caller-local: resolve it to real ids here so the model never has
+      // to make N round trips just to express "step 3 needs step 2".
+      const raw = Array.isArray(input.tasks) ? input.tasks as Record<string, unknown>[] : []
+      const idByKey = new Map<string, string>()
+      const created: Task[] = []
+      for (const t of raw) {
+        const tTitle = str(t.title).trim()
+        if (!tTitle) continue
+        const id = crypto.randomUUID()
+        if (str(t.key)) idByKey.set(str(t.key), id)
+        created.push({
+          id,
+          user_id: userId,
+          title: tTitle,
+          priority: (['low', 'medium', 'high'].includes(str(t.priority)) ? str(t.priority) : 'medium') as Task['priority'],
+          status: 'pending',
+          estimated_hours: typeof t.estimated_hours === 'number' && t.estimated_hours > 0 ? t.estimated_hours : undefined,
+          deadline: str(t.deadline) || project.deadline,
+          topic: project.topic,
+          project_id: project.id,
+          created_at: new Date().toISOString(),
+        })
+      }
+      // Second pass, so a step may depend on one declared after it.
+      created.forEach((task, i) => {
+        const deps = Array.isArray(raw[i]?.depends_on) ? raw[i].depends_on as string[] : []
+        const resolved = deps.map(k => idByKey.get(k)).filter((v): v is string => !!v)
+        if (resolved.length) task.depends_on = resolved
+        userStore.addTask(task, userId)
+      })
+
+      state.projectsUpdated = true
+      if (created.length) state.tasksUpdated = true
+      return {
+        success: true,
+        project: { id: project.id, title: project.title, kind: project.kind, deadline: project.deadline },
+        tasks_created: created.length,
+        tasks: created.map(t => ({ id: t.id, title: t.title, estimated_hours: t.estimated_hours })),
+        next_step: sched?.isHe
+          ? 'אם למשימות אין הערכת שעות — שאל את המשתמש, כי בלי זה אי אפשר לחשב סיכון עמידה ביעד.'
+          : 'If tasks have no estimated_hours, ask the user — deadline risk cannot be computed without them.',
+      }
+    }
+
+    case 'list_projects': {
+      const wanted = str(input.status)
+      const all = userStore.getProjects(userId)
+      const filtered = wanted ? all.filter(p => p.status === wanted) : all.filter(p => p.status === 'active')
+      const allTasks = userStore.getTasks(userId)
+      const nowLocal = resolveNow(now, sched?.timezone || profile?.timezone)
+
+      // Health is computed here rather than left to the model: the risk number is
+      // the engine's answer, and the model's job is to paraphrase it.
+      const probeInputs = []
+      const factsById = new Map<string, ReturnType<typeof computeFacts>>()
+      for (const p of filtered) {
+        const f = computeFacts(p, allTasks, currentEvents, nowLocal)
+        factsById.set(p.id, f)
+        const pi = probeInputFor(p, f)
+        if (pi) probeInputs.push(pi)
+      }
+
+      let probe = new Map<string, ProjectProbeResult>()
+      if (probeInputs.length) {
+        try {
+          const horizon = probeInputs.reduce((m, i) => Math.max(m, horizonDaysFor(nowLocal, i.deadline)), 14)
+          const ctx = buildSchedulingContext(
+            profile, currentEvents, sched?.memory, sched?.feedback, sched?.timezone, now, horizon,
+          )
+          probe = probeCapacity(ctx, probeInputs, !!sched?.isHe)
+        } catch (err) {
+          console.error('[chat] project capacity probe failed:', err)
+        }
+      }
+
+      const method = resolveMethod(profile).primary
+      return {
+        projects: filtered.map(p => ({
+          id: p.id,
+          title: p.title,
+          kind: p.kind,
+          status: p.status,
+          deadline: p.deadline,
+          tasks_open: factsById.get(p.id)?.openLeafTasks.length ?? 0,
+          tasks_total: factsById.get(p.id)?.totalLeafCount ?? 0,
+          signals: resolveSignals(p, allTasks, currentEvents, probe.get(p.id), method, nowLocal)
+            .map(s => ({ signal: s.signal, state: s.state, text: sched?.isHe ? s.text.he : s.text.en, code: s.code })),
+        })),
+        next_step: sched?.isHe
+          ? 'הסתמך על signals כפי שהם. אל תחשב בעצמך אם משהו נכנס בזמן — זו התשובה של מנוע התזמון.'
+          : 'Use `signals` as given. Do not work out for yourself whether something fits — that is the engine\'s answer.',
+      }
+    }
+
+    case 'update_project': {
+      const id = str(input.project_id)
+      if (!id) return { error: 'missing_required_fields', message: 'project_id is required' }
+      const updates: Partial<Project> = {}
+      if (str(input.title)) updates.title = str(input.title)
+      if (str(input.description)) updates.description = str(input.description)
+      if (str(input.color)) updates.color = str(input.color)
+      if (str(input.deadline)) updates.deadline = str(input.deadline)
+      if (['active', 'paused', 'done', 'archived'].includes(str(input.status))) {
+        updates.status = str(input.status) as Project['status']
+        if (updates.status === 'done') updates.completed_at = new Date().toISOString()
+        if (updates.status === 'archived') updates.archived_at = new Date().toISOString()
+      }
+      const updated = userStore.updateProject(id, updates, userId)
+      if (!updated) return { error: 'not_found', message: `No project with id ${id}` }
+      state.projectsUpdated = true
+      return { success: true, project: { id: updated.id, title: updated.title, status: updated.status } }
+    }
+
+    case 'delete_project': {
+      const id = str(input.project_id)
+      if (!id) return { error: 'missing_required_fields', message: 'project_id is required' }
+      const project = userStore.getProjects(userId).find(p => p.id === id)
+      if (!project) return { error: 'not_found', message: `No project with id ${id}` }
+
+      const mode = bool(input.delete_tasks) ? 'cascade' : 'detach'
+      const plan = planProjectDeletion(project, userStore.getTasks(userId), currentEvents, mode)
+      for (const taskId of plan.deleteTaskIds) userStore.deleteTask(taskId, userId)
+      for (const taskId of plan.detachTaskIds) userStore.updateTask(taskId, { project_id: undefined }, userId)
+      userStore.deleteProject(id, userId)
+
+      state.projectsUpdated = true
+      state.tasksUpdated = true
+      return {
+        success: true,
+        deleted_tasks: plan.deleteTaskIds.length,
+        detached_tasks: plan.detachTaskIds.length,
+        calendar_blocks_kept: plan.untouchedEvents,
+        message: plan.untouchedEvents > 0
+          ? `${plan.untouchedEvents} calendar block(s) were left in place — deleting a project never clears the calendar. Tell the user, and offer to remove them separately if that is what they wanted.`
+          : undefined,
+      }
+    }
+
+    case 'plan_project': {
+      // Needs BOTH flags: the proposal it returns can only be committed by
+      // apply_plan, which is V2-only.
+      if (!sched?.enabled) {
+        return { error: 'unknown_tool', message: 'Unknown tool: plan_project' }
+      }
+      const id = str(input.project_id)
+      if (!id) return { error: 'missing_required_fields', message: 'project_id is required' }
+      const project = userStore.getProjects(userId).find(p => p.id === id)
+      if (!project) return { error: 'not_found', message: `No project with id ${id}` }
+
+      const onlyIds = Array.isArray(input.only_task_ids)
+        ? (input.only_task_ids as unknown[]).filter((v): v is string => typeof v === 'string')
+        : undefined
+
+      const build = buildProjectPlanSpec(project, userStore.getTasks(userId), profile, sched, onlyIds)
+
+      if (build.cycle) {
+        return {
+          error: 'circular_dependency',
+          message: sched.isHe
+            ? `יש תלות מעגלית בין "${build.cycle.a}" ל-"${build.cycle.b}" — תקן אותה ואז נתכנן.`
+            : `"${build.cycle.a}" and "${build.cycle.b}" depend on each other — fix that first, then we can plan.`,
+        }
+      }
+      if (!build.spec) {
+        return { error: 'nothing_to_plan', message: build.error, skipped: build.skipped }
+      }
+
+      const result = proposePlan(userId, [...currentEvents, ...createdEvents], profile, sched, now, build.spec)
+      return {
+        ...result.toolResult,
+        ...(build.skipped.length ? { skipped: build.skipped } : {}),
+      }
     }
 
     default:

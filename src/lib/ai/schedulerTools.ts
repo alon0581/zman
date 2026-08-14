@@ -120,6 +120,8 @@ export interface PlanSpec {
   mobility: Mobility
   titleFor: (title: string, index: number) => string
   deadline?: LocalISO
+  /** Set by plan_project: stamped onto every block so the events link back. */
+  projectId?: string
 }
 
 /** `schedule_item`'s arguments → an engine request. Returns null when unusable. */
@@ -258,16 +260,39 @@ export function proposePlan(
     }
   }
 
+  // Session numbering is per REQUEST, not global. With one request the two are the
+  // same, but for a project batch a global counter would render block 3 of task A
+  // and block 1 of task B as "sessions 4 and 5" of one thing. Each task gets its
+  // own 1, 2, 3.
+  const seenPerRequest = new Map<number, number>()
+  const ordinals = view.blocks.map(b => {
+    const n = seenPerRequest.get(b.request_index) ?? 0
+    seenPerRequest.set(b.request_index, n + 1)
+    return n
+  })
+  const countPerRequest = new Map<number, number>()
+  for (const b of view.blocks) {
+    countPerRequest.set(b.request_index, (countPerRequest.get(b.request_index) ?? 0) + 1)
+  }
+
   // A single block keeps the user's own words; a split gets the method's numbering.
-  const multi = view.blocks.length > 1
-  const stored: StoredPlanBlock[] = view.blocks.map((b, i) => ({
-    title: multi ? spec.titleFor(b.title, i) : b.title,
-    start: b.start,
-    end: b.end,
-    color: spec.color,
-    mobility: spec.mobility,
-    why: b.why,
-  }))
+  const stored: StoredPlanBlock[] = view.blocks.map((b, i) => {
+    const multi = (countPerRequest.get(b.request_index) ?? 1) > 1
+    const taskId = spec.requests[b.request_index]?.ref?.id
+    const refKind = spec.requests[b.request_index]?.ref?.kind
+    return {
+      title: multi ? spec.titleFor(b.title, ordinals[i]) : b.title,
+      start: b.start,
+      end: b.end,
+      color: spec.color,
+      mobility: spec.mobility,
+      why: b.why,
+      ...(spec.projectId ? { project_id: spec.projectId } : {}),
+      // PlacementRequest.ref.id is optional while CalendarEvent.ref.id is required,
+      // so this needs a guard rather than a spread.
+      ...(taskId && refKind ? { ref: { kind: refKind, id: taskId } } : {}),
+    }
+  })
 
   const plan = savePlan(userId, stored, view)
   return {

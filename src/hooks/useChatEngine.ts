@@ -155,6 +155,7 @@ export function useChatEngine({
   onEventsUpdate,
   onProfileUpdate,
   onTasksUpdate,
+  onProjectsUpdate,
   isOnboarding: initIsOnboarding,
   chatOverlayOpen,
 }: {
@@ -166,6 +167,7 @@ export function useChatEngine({
   onEventsUpdate: (events: CalendarEvent[], addedIds?: string[]) => void
   onProfileUpdate: (profile: UserProfile) => void
   onTasksUpdate?: () => void
+  onProjectsUpdate?: () => void
   isOnboarding?: boolean
   chatOverlayOpen?: boolean
 }): ChatEngineResult {
@@ -403,6 +405,10 @@ export function useChatEngine({
               streamErrored = true
             } else if (parsed.type === 'tasks_updated') {
               onTasksUpdate?.()
+            } else if (parsed.type === 'projects_updated') {
+              // Its own frame rather than a reuse of tasks_updated: refetching
+              // projects also pulls computed health, which costs a placement pass.
+              onProjectsUpdate?.()
             } else if (parsed.type === 'memory_updated') {
               fetch('/api/memory').then(r => {
                 if (!r.ok) { console.warn('[useChatEngine] memory refetch failed:', r.status); return [] }
@@ -488,7 +494,7 @@ export function useChatEngine({
       setLoading(false)
       setStreamingId(null)
     }
-  }, [loading, messages, events, tasks, profile, memory, onEventsUpdate, onTasksUpdate, language, isOnboarding, onProfileUpdate, chatOverlayOpen, addToast])
+  }, [loading, messages, events, tasks, profile, memory, onEventsUpdate, onTasksUpdate, onProjectsUpdate, language, isOnboarding, onProfileUpdate, chatOverlayOpen, addToast])
 
   // Aborts the in-flight request (if any) and clears loading state. Used by
   // the ChatOverlay "stop" affordance to escape a stalled/stuck response.
