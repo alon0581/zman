@@ -32,3 +32,18 @@ export function projectsEnabled(): boolean {
   const raw = process.env.PROJECTS
   return raw === '1' || raw === 'true'
 }
+
+/**
+ * PHASES gates the life-phase layer: the phase tools, the phase-aware PERSON
+ * PROFILE, and the phase filter on learned priors.
+ *
+ * Same contract as the two above — unset means the app behaves exactly as it did
+ * before, and only "1" or "true" turns it on. The profile rewrite is additionally
+ * self-gating: `buildSystemPrompt` takes an optional phase context, and with that
+ * argument absent it returns the legacy block byte for byte. So even a half-wired
+ * call site degrades to today's behaviour rather than to something new.
+ */
+export function phasesEnabled(): boolean {
+  const raw = process.env.PHASES
+  return raw === '1' || raw === 'true'
+}

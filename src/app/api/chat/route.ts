@@ -4,7 +4,7 @@ import OpenAI from 'openai'
 import { getCalendarTools, getOnboardingTools, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS } from '@/lib/ai/tools'
 import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
 import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
-import { projectsEnabled, schedulerV2Enabled } from '@/lib/ai/featureFlags'
+import { phasesEnabled, projectsEnabled, schedulerV2Enabled } from '@/lib/ai/featureFlags'
 import { followupPrompt, needsFollowup } from '@/lib/ai/followup'
 import { consumePlan } from '@/lib/ai/planStore'
 import {
@@ -222,6 +222,7 @@ export async function POST(req: NextRequest) {
     // One model, pinned for the whole conversation — see DEFAULT_ANTHROPIC_MODEL.
     const v2 = schedulerV2Enabled()
     const projects = projectsEnabled()
+    const phases = phasesEnabled()
     console.log('[chat] model:', model, 'scheduler_v2:', v2)
     // ───────────────────────────────────────────────────────────────────────
 
@@ -262,10 +263,28 @@ export async function POST(req: NextRequest) {
     // would be the one turn that reasons from the old ones.
     const effectiveProfile: UserProfile | null = freshProfile ?? profile
 
+    // Phase context for the PERSON PROFILE block. Absent when the flag is off,
+    // and `buildSystemPrompt` then returns the legacy block byte for byte — the
+    // parameter's presence IS the switch, so a flag-off turn cannot drift.
+    const phaseCtx = phases
+      ? (() => {
+          const all = userStore.getPhases(userId)
+          const active = all.find(p => p.status === 'active') ?? null
+          return {
+            active: active
+              ? { id: active.id, label: active.label, started_at: active.started_at }
+              : null,
+            closedLabelById: Object.fromEntries(
+              all.filter(p => p.status === 'closed').map(p => [p.id, p.label]),
+            ),
+          }
+        })()
+      : undefined
+
     // Split system prompt: stable `staticPrefix` (cacheable) + per-request `dynamicSuffix`.
     const rawSys = isOnboarding
       ? { staticPrefix: buildOnboardingSystemPrompt(effectiveProfile?.language ?? 'en', userNow), dynamicSuffix: '' }
-      : buildSystemPrompt(effectiveProfile, events, userNow, effectiveMemory, tasks, feedback)
+      : buildSystemPrompt(effectiveProfile, events, userNow, effectiveMemory, tasks, feedback, phaseCtx)
     // Under the flag the v1 prompt still tells the model to call get_free_slots and
     // do the arithmetic itself — a tool that no longer exists. The correction goes
     // in the DYNAMIC suffix, never the static prefix, so the cached prefix is

@@ -24,6 +24,12 @@ export interface CalendarEvent {
   project_id?: string
   /** The precise link. Retires title-prefix matching for project work. */
   ref?: { kind: 'event' | 'task' | 'project'; id: string }
+  /**
+   * Which life phase this event was created during. Read by exactly one thing:
+   * working out which recurring series belong to a phase that is closing, so they
+   * can be retired without a fragile date-range guess.
+   */
+  phase_id?: string
 }
 
 export interface Task {
@@ -167,6 +173,8 @@ export interface FeedbackSignal {
   toHour?: number              // new start hour (moved only)
   day?: string                 // 'EEE' weekday of the original slot
   at: string                   // ISO timestamp the signal was recorded
+  /** Which life phase this evidence came from. Signals from closed phases are dropped. */
+  phase_id?: string
 }
 
 export interface AIMemory {
@@ -175,5 +183,78 @@ export interface AIMemory {
   key: string
   value: string
   learned_from: 'onboarding' | 'behavior' | 'explicit'
+  /**
+   * FIRST seen. Deliberately preserved across overwrites at every write site — do
+   * not "fix" that. It is not a recency signal; `updated_at` is.
+   */
+  created_at: string
+  /**
+   * Which life phase this fact belongs to. Absent means timeless — true whatever
+   * the user is currently doing — or simply written before phases existed.
+   *
+   * Scoping is not deletion: a closed phase's rows stay in memory.json forever and
+   * merely stop being injected while another phase is open. That is what makes
+   * "old knowledge comes back with the phase" a filter rather than an insert.
+   */
+  phase_id?: string
+  /**
+   * Last WRITTEN. Distinct from created_at, and the only honest recency signal —
+   * on a key rewritten ten times, created_at is the date of the first version.
+   */
+  updated_at?: string
+}
+
+/**
+ * A named stretch of life that owns its own rhythm, commitments and definition of
+ * "important" — and that can come back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THERE IS DELIBERATELY NO `PhaseKind` AND NO `PHASE_RULES: Record<Kind, …>`.
+ *
+ * That exhaustive-Record pattern is right elsewhere in this codebase
+ * (METHOD_RULES, KIND_RULES, BOARD_RULES) because those case sets are CLOSED — 18
+ * methods, 3 project kinds — so "adding a case must be a compile error" is a
+ * feature. Here the case set is every kind of human life: enlisting, being laid
+ * off, parental leave, a semester, freelancing between clients. A compile error on
+ * `enlisted` would mean the app cannot describe a period until someone ships code.
+ *
+ * The structure lives in the INTERVIEW, not in the type: the questions a phase
+ * needs answered are universal even when the answers are not.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface Phase {
+  id: string
+  user_id: string
+  /** The user's own words. "סמסטר א׳", "חופש גדול", "צבא", "בין עבודות". */
+  label: string
+  /**
+   * Identity ACROSS recurrences. Two phases with the same slug are the same KIND
+   * of period at two points in time — this is the entire mechanism behind "what
+   * Zman learned about me as a student comes back in October". Matched against
+   * existing slugs before minting a new one, which is what list_phases is for.
+   */
+  slug: string
+  started_at: string
+  /** Absent ⇒ this is the open phase. At most one phase may have this absent. */
+  ended_at?: string
+  /** User-declared, surfaced, never enforced. */
+  expected_end?: string
+  status: 'active' | 'closed'
+  /** The three things that change between phases. Free text, filled by the interview. */
+  summary: { priorities?: string; commitments?: string; hours?: string }
+  /**
+   * Rhythm settings as they stood when this phase closed. Restored on reopen —
+   * and only these fields. Deliberately NOT a live override: the codebase already
+   * had one ghost field silently beating the editable controls, and a phase-level
+   * override would make that a three-deep chain. Live hours stay on the profile.
+   */
+  profile_snapshot?: Pick<UserProfile,
+    'wake_time' | 'sleep_time' | 'productivity_peak' | 'schedule_weekend' | 'occupation' | 'day_structure'>
+  /**
+   * Series retired when this phase closed. Becomes an OFFER on reopen, never an
+   * automatic recreation — a timetable changes between semesters, and recreating
+   * last semester's lecture times would be confidently, invisibly wrong.
+   */
+  retired_series?: { series_id: string; title: string; weekday: string; hour: number; last_kept: string }[]
   created_at: string
 }

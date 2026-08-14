@@ -35,8 +35,24 @@ const PROFILE_CATEGORIES: { label: string; test: (key: string) => boolean }[] = 
 ]
 const PROFILE_MAX = 40  // cap injected facts (cost guard)
 
-function buildPersonProfile(memory?: AIMemory[]): string {
-  if (!memory || memory.length === 0) return ''
+/** What the caller knows about the user's current life phase. */
+export interface ActivePhaseCtx {
+  active: { id: string; label: string; started_at: string } | null
+  /** phase_id -> label, for rendering a closed phase's facts with their era. */
+  closedLabelById?: Record<string, string>
+}
+
+/**
+ * LEGACY path — byte-for-byte what this function has always produced.
+ *
+ * It is kept verbatim, and kept SEPARATE, so "with no phase context the prompt is
+ * unchanged" is true by construction rather than by careful re-derivation. That is
+ * the same standard the SCHEDULER_V2 and PROJECTS tool arrays are held to.
+ *
+ * Its selection is, unfortunately, exactly backwards — see the note on
+ * buildPhaseAwareProfile. Do not "improve" it; it exists to be the baseline.
+ */
+function buildLegacyPersonProfile(memory: AIMemory[]): string {
   const byKey = new Map<string, string>()      // dedupe by key, latest wins
   for (const m of memory) if (m.key) byKey.set(m.key, m.value)
   const buckets: Record<string, string[]> = {}
@@ -62,13 +78,186 @@ function buildPersonProfile(memory?: AIMemory[]): string {
   return `\n👤 PERSON PROFILE (what you've learned about this user — USE it, never ask for what you already know):\n${lines.join('\n')}`
 }
 
+// ── Phase-aware profile ─────────────────────────────────────────────────────
+
+type ProfileCategory =
+  | 'Goals' | 'Commitments' | 'Patterns' | 'Rhythm'
+  | 'Preferences' | 'Identity' | 'Method fit' | 'Life' | 'Other'
+
+const PHASE_CATEGORIES: { label: ProfileCategory; test: (k: string) => boolean }[] = [
+  { label: 'Goals',       test: k => /^(current_goal|goal|ongoing_|upcoming_focus)/.test(k) },
+  { label: 'Commitments', test: k => /^(recurring_|work_hours|free_days|weekly_free|shift_)/.test(k) },
+  { label: 'Patterns',    test: k => /^pattern_/.test(k) },
+  { label: 'Rhythm',      test: k => /^(wake_time|sleep_time|productivity_peak|energy|commute|day_structure)/.test(k) },
+  { label: 'Preferences', test: k => /^(pref_|prefers_|main_challenge)/.test(k) },
+  { label: 'Identity',    test: k => /^(occupation|study_field|university|year_of_study|role|location|name|persona)/.test(k) },
+  { label: 'Method fit',  test: k => /^(scheduling_method|secondary_methods|method_feedback)/.test(k) },
+  { label: 'Life',        test: k => /^(relationship|family|hobby|hobbies|volunteer|social)/.test(k) },
+]
+
+/**
+ * Per-category floors, summing to 35 of PROFILE_MAX. The remaining 5 are filled by
+ * global recency regardless of category.
+ *
+ * Pure priority ordering — which is what the legacy path does — starves the tail
+ * no matter what order you choose; reordering alone would move the bug, not fix
+ * it. A floor per category means Patterns can never be squeezed to zero by a
+ * decade of Identity sediment, and [Other] stops being dropped first every time.
+ *
+ * Exhaustive Record on purpose: the category set genuinely IS closed, so a new
+ * category should be a compile error here. (Contrast Phase, which deliberately has
+ * no such table — see the note on the Phase type.)
+ */
+const PROFILE_RESERVE: Record<ProfileCategory, number> = {
+  Goals: 4, Commitments: 6, Patterns: 6, Rhythm: 4,
+  Preferences: 4, Identity: 4, 'Method fit': 2, Life: 3, Other: 2,
+}
+
+function categoryOf(key: string): ProfileCategory {
+  return PHASE_CATEGORIES.find(c => c.test(key))?.label ?? 'Other'
+}
+
+/** Recency for ordering. `updated_at` when present — created_at means FIRST seen. */
+function recencyOf(m: AIMemory): number {
+  const t = Date.parse(m.updated_at ?? m.created_at ?? '')
+  return Number.isFinite(t) ? t : 0
+}
+
+/** Compact human age, for the two categories where age changes the meaning. */
+function ageLabel(m: AIMemory, nowMs: number): string {
+  const t = recencyOf(m)
+  if (!t) return ''
+  const days = Math.floor((nowMs - t) / 86_400_000)
+  if (days < 0) return ''
+  if (days < 1) return ' (today)'
+  if (days < 30) return ` (~${days}d)`
+  const months = Math.round(days / 30)
+  return months < 12 ? ` (~${months}mo)` : ` (~${Math.round(days / 365)}y)`
+}
+
+const AGED_CATEGORIES: ReadonlySet<ProfileCategory> = new Set(['Goals', 'Patterns'])
+
+/**
+ * The phase-aware profile, and a deliberate reversal of the legacy selection.
+ *
+ * The legacy path preferred the OLDEST fact in each bucket (a Map keeps a key's
+ * FIRST insertion position, and emission took `slice(0, remaining)` — the head),
+ * with `Identity` as the highest-priority category and `Patterns` as the lowest.
+ * The consequence was that `occupation` / `study_field` / `persona` — precisely the
+ * facts a life change invalidates — were the most protected facts in the system,
+ * while freshly observed behaviour was the first thing dropped. The longer the app
+ * was used, the more confidently it asserted who the user used to be.
+ *
+ * Here: filter by phase first, dedupe newest-wins, order newest-first, and select
+ * by reserve-and-fill. Identity is demoted because the injected block's job is to
+ * make the next PROPOSAL right — goals, commitments and observed patterns change
+ * what to propose; identity mostly changes how it is phrased.
+ */
+function buildPhaseAwareProfile(memory: AIMemory[], ctx: ActivePhaseCtx, nowMs: number): string {
+  const activeId = ctx.active?.id
+
+  // 1. Phase filter FIRST — a closed phase's stale facts never compete for a slot.
+  const visible = memory.filter(m => m.key && (!m.phase_id || m.phase_id === activeId))
+  const archived = activeId
+    ? memory.filter(m => m.key && m.phase_id && m.phase_id !== activeId)
+    : []
+
+  // 2. Dedupe by key, newest value wins.
+  //
+  //    Map insertion order is deliberately NOT relied on here. In the legacy path
+  //    it was load-bearing and wrong — `set` on an existing key updates the value
+  //    but keeps the key's ORIGINAL position, so iteration came out oldest-first
+  //    and `slice(0, n)` then took the stalest facts. The fix is not to shuffle the
+  //    Map; it is to sort explicitly by recency in step 3, which makes insertion
+  //    order irrelevant. (A mutation test confirms this: reintroducing the Map
+  //    quirk here changes no output.)
+  const byKey = new Map<string, AIMemory>()
+  for (const m of visible) {
+    const prev = byKey.get(m.key)
+    if (prev && recencyOf(prev) > recencyOf(m)) continue
+    byKey.set(m.key, m)
+  }
+
+  // 3. Bucket, newest-first within each.
+  const buckets = new Map<ProfileCategory, AIMemory[]>()
+  for (const m of byKey.values()) {
+    const cat = categoryOf(m.key)
+    const list = buckets.get(cat) ?? []
+    list.push(m)
+    buckets.set(cat, list)
+  }
+  for (const list of buckets.values()) {
+    list.sort((a, b) => recencyOf(b) - recencyOf(a) || (a.key < b.key ? -1 : 1))
+  }
+
+  // 4. Reserve pass, then a global-recency fill for whatever is left.
+  const chosen = new Map<ProfileCategory, AIMemory[]>()
+  const leftovers: AIMemory[] = []
+  let count = 0
+  for (const [cat, list] of buckets) {
+    const take = list.slice(0, PROFILE_RESERVE[cat])
+    chosen.set(cat, take)
+    leftovers.push(...list.slice(PROFILE_RESERVE[cat]))
+    count += take.length
+  }
+  leftovers.sort((a, b) => recencyOf(b) - recencyOf(a) || (a.key < b.key ? -1 : 1))
+  for (const m of leftovers) {
+    if (count >= PROFILE_MAX) break
+    const cat = categoryOf(m.key)
+    chosen.set(cat, [...(chosen.get(cat) ?? []), m])
+    count++
+  }
+
+  const render = (m: AIMemory, cat: ProfileCategory) =>
+    `${m.key}: ${m.value}${AGED_CATEGORIES.has(cat) ? ageLabel(m, nowMs) : ''}`
+
+  const lines: string[] = []
+  for (const { label } of PHASE_CATEGORIES) {
+    const items = chosen.get(label)
+    if (items?.length) lines.push(`[${label}] ${items.map(m => render(m, label)).join(' | ')}`)
+  }
+  const other = chosen.get('Other')
+  if (other?.length) lines.push(`[Other] ${other.map(m => render(m, 'Other')).join(' | ')}`)
+
+  // 5. Archived facts, clearly labelled with the era they belong to, so the model
+  //    can say "that was true when you were a student" instead of asserting it.
+  if (archived.length && count < PROFILE_MAX) {
+    const seen = new Set<string>()
+    const past = archived
+      .sort((a, b) => recencyOf(b) - recencyOf(a))
+      .filter(m => !seen.has(m.key) && seen.add(m.key))
+      .slice(0, Math.min(4, PROFILE_MAX - count))
+      .map(m => `${ctx.closedLabelById?.[m.phase_id!] ?? 'תקופה קודמת'} — ${m.key}: ${m.value}`)
+    if (past.length) {
+      lines.push(`[Earlier phases — NOT current, do not assert as true now] ${past.join(' | ')}`)
+    }
+  }
+
+  const banner = ctx.active
+    ? `\n👤 PERSON PROFILE — current phase: "${ctx.active.label}" (since ${ctx.active.started_at})`
+    : '\n👤 PERSON PROFILE'
+  return `${banner} — USE this, never ask for what you already know:\n${lines.join('\n')}`
+}
+
+function buildPersonProfile(memory?: AIMemory[], phase?: ActivePhaseCtx, nowMs?: number): string {
+  if (!memory || memory.length === 0) return ''
+  // No phase context ⇒ the legacy path, unchanged. This is the compatibility seam.
+  if (!phase) return buildLegacyPersonProfile(memory)
+  return buildPhaseAwareProfile(memory, phase, nowMs ?? 0)
+}
+
 export function buildSystemPrompt(
   profile: UserProfile | null,
   events: CalendarEvent[],
   now: Date,
   memory?: AIMemory[],
   tasks?: Task[],
-  feedback?: FeedbackSignal[]
+  feedback?: FeedbackSignal[],
+  /**
+   * Present ⇒ the phase-aware PERSON PROFILE. Absent ⇒ byte-identical to before
+   * phases existed. This parameter IS the flag for the profile rewrite.
+   */
+  phaseCtx?: ActivePhaseCtx,
 ): { staticPrefix: string; dynamicSuffix: string } {
   const nowStr = format(now, "EEEE, MMMM d, yyyy 'at' h:mm a")
   const currentHour = now.getHours()
@@ -155,7 +344,7 @@ When the user mentions ANY task, deadline, project, or exam — apply this proto
 5. PEAK HOURS → Always place hard/creative tasks in peak hours (${peakStart}:00–${peakEnd}:00)
 6. AUTONOMY → ${profile?.autonomy_mode === 'auto' ? 'Auto mode: act immediately, don\'t ask' : profile?.autonomy_mode === 'suggest' ? 'Suggest mode: propose and wait for confirmation' : 'Hybrid mode: auto for a single create or ≤2 flexible moves; ask before 3+ moves, bulk, or delete'}`
 
-  const personProfile = buildPersonProfile(memory)
+  const personProfile = buildPersonProfile(memory, phaseCtx, now.getTime())
 
   const taskSummary = (() => {
     if (!tasks || tasks.length === 0) return ''

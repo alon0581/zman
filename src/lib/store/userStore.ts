@@ -1,4 +1,4 @@
-import { CalendarEvent, Project, Task } from '@/types'
+import { CalendarEvent, Phase, Project, Task } from '@/types'
 import path from 'path'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
@@ -30,6 +30,18 @@ function readTasks(userId: string): Task[] {
 
 function writeTasks(userId: string, tasks: Task[]) {
   writeJsonFileAtomic(tasksFile(userId), tasks)
+}
+
+function phasesFile(userId: string) {
+  return path.join(userDir(userId), 'phases.json')
+}
+
+function readPhases(userId: string): Phase[] {
+  return readJsonFile<Phase[]>(phasesFile(userId), [])
+}
+
+function writePhases(userId: string, phases: Phase[]) {
+  writeJsonFileAtomic(phasesFile(userId), phases)
 }
 
 function projectsFile(userId: string) {
@@ -121,5 +133,35 @@ export const userStore = {
     if (next.length === projects.length) return false
     writeProjects(userId, next)
     return true
+  },
+
+  // ── Phases ────────────────────────────────────────────────────────────────
+  //
+  // No migration and no bootstrap: a missing phases.json reads as [], getActivePhase
+  // returns null, and every phase-aware read path degrades to exactly today's
+  // behaviour. The first transition the user declares creates the OUTGOING phase
+  // retroactively and then opens the new one — the bootstrap path IS the close+open
+  // path, so there is only one code path to get right.
+
+  getPhases(userId = 'demo'): Phase[] {
+    return readPhases(userId)
+  },
+  /** The open phase, or null when the user has never declared one. */
+  getActivePhase(userId = 'demo'): Phase | null {
+    return readPhases(userId).find(p => p.status === 'active') ?? null
+  },
+  addPhase(phase: Phase, userId = 'demo') {
+    const phases = readPhases(userId)
+    phases.push(phase)
+    writePhases(userId, phases)
+  },
+  /** Returns the updated phase, or null if no such id — and writes nothing on a miss. */
+  updatePhase(id: string, updates: Partial<Phase>, userId = 'demo'): Phase | null {
+    const phases = readPhases(userId)
+    const idx = phases.findIndex(p => p.id === id)
+    if (idx === -1) return null
+    phases[idx] = { ...phases[idx], ...updates, id, user_id: phases[idx].user_id }
+    writePhases(userId, phases)
+    return phases[idx]
   },
 }

@@ -40,7 +40,7 @@ deploys from `main`. There is no staging. Consequences:
 | Voice | OpenAI `gpt-4o-transcribe` — the *only* thing `OPENAI_API_KEY` is for |
 | Auth | File-based: `crypto.scryptSync` + HMAC cookie. No external service |
 | Storage | JSON files under `DATA_DIR` (Railway volume at `/app/data`) |
-| Tests | **Vitest — 587 passing.** `npm test` |
+| Tests | **Vitest — 657 passing.** `npm test` |
 | Notifications | ntfy (`NTFY_TOPIC_SECRET`) |
 
 **Deleted on purpose — do not reintroduce:** Supabase (and `src/proxy.ts`, which
@@ -169,6 +169,47 @@ prerequisite's end. Ordering alone isn't enough: a greedy pass would still put A
 on Tuesday afternoon and B on Tuesday morning. With no `dependsOn` present the
 ordering is byte-identical to before, asserted by an identity test.
 
+## Life phases — `src/lib/phases/` (`PHASES`, off by default)
+
+The app's model of its user was a single flat snapshot written once at onboarding.
+Nothing aged: no expiry, no decay, no re-validation. A phase is a **named period**
+that owns its rhythm, commitments and definition of "important" — and that can
+come back.
+
+**No `PhaseKind` and no `PHASE_RULES` table, deliberately.** The exhaustive-Record
+pattern is right for closed case sets (18 methods, 3 project kinds); here the case
+set is every kind of human life — enlisting, being laid off, parental leave,
+a semester. A compile error on `enlisted` would mean the app cannot describe a
+period until someone ships code. The structure lives in the *interview*: the
+questions are universal even when the answers are not.
+
+Three things were badly wrong and are now fixed:
+
+1. **`buildPersonProfile` was inverted.** A Map keeps a key's FIRST insertion
+   position and emission took `slice(0, n)` — the head — so it preferred the
+   OLDEST fact, with `Identity` as category #1 and `Patterns` as #8. The facts a
+   life change invalidates were the most protected in the system; freshly observed
+   behaviour was dropped first. Now: phase-filter, newest-first, and
+   **reserve-and-fill** (`PROFILE_RESERVE`) so no category can be starved.
+   Reordering alone would have moved the bug, not fixed it.
+2. **`preferred_hours` was a ghost** — read in 7 places, written in 0, no UI, yet
+   it overrode the wake/sleep controls Settings does expose. Verified against the
+   production volume (no profile carries it) and removed from the precedence.
+   It stays on the type marked vestigial; do not reintroduce a read.
+3. **Settings and memory diverged forever.** Mirroring ran only at the onboarding
+   transition, so a later `productivity_peak` edit left a contradicting memory row
+   injected into every prompt. `mirrorProfileToMemory()` is now the single writer.
+
+`AIMemory` gained `phase_id` (absent = timeless) and `updated_at`. **`created_at`
+is FIRST-seen and is preserved across overwrites everywhere — it is not a recency
+signal**; that is why `updated_at` exists. Scoping is not deletion: a closed
+phase's rows stay in `memory.json` and merely stop being injected.
+
+`buildSystemPrompt` takes an optional phase context; **with it absent the block is
+byte-identical to before** (legacy path kept verbatim and separate). Priors gained
+a 30-day half-life and a 120-day floor, off unless `now` is passed — so
+`FeedbackSignal.at` finally has a reader.
+
 ## Storage — `src/lib/store/`
 
 `userStore` (synchronous read-modify-write) plus `withUserLock`. Everything goes
@@ -261,7 +302,7 @@ the entire feature was dead code.
 
 ```bash
 npm run dev          # localhost:3000
-npm test             # Vitest — 587 tests
+npm test             # Vitest — 657 tests
 npx tsc --noEmit     # type check
 npm run lint         # 4 pre-existing errors, all in untouched components
 ```
