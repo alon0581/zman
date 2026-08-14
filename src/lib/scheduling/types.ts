@@ -231,6 +231,7 @@ export type UnplacedCode =
   | 'horizon_exhausted'   // ran out of days before placing every session
   | 'no_free_space'       // only flexible work was in the way and repair could not move it
   | 'below_quality_floor' // slots existed, but all of them were bad enough to be worse than nothing
+  | 'blocked_by_dependency' // a prerequisite request failed to place, so this one cannot honestly be scheduled
 
 export interface Unplaced {
   requestIndex: number

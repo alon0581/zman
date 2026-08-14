@@ -7,6 +7,7 @@ import { DATA_DIR } from '@/lib/util/dataDir'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { withUserLock } from '@/lib/store/lock'
 import { mapToMethod, SchedulingMethod } from '@/lib/scheduling/methodMapper'
+import { projectsEnabled } from '@/lib/ai/featureFlags'
 import path from 'path'
 
 const DEFAULT_PROFILE = (userId: string): UserProfile => ({
@@ -98,5 +99,14 @@ export default async function AppPage() {
   })
 
   const user: AppUser = { id: userId, email: '', user_metadata: {} }
-  return <AppShell user={user} profile={profile} needsOnboarding={!profile.onboarding_completed} />
+  // Read server-side and passed down as a prop, rather than adding a second
+  // NEXT_PUBLIC_ twin of the same variable. One env var, one reader.
+  return (
+    <AppShell
+      user={user}
+      profile={profile}
+      needsOnboarding={!profile.onboarding_completed}
+      projectsEnabled={projectsEnabled()}
+    />
+  )
 }

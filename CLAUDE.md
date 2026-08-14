@@ -40,7 +40,7 @@ deploys from `main`. There is no staging. Consequences:
 | Voice | OpenAI `gpt-4o-transcribe` — the *only* thing `OPENAI_API_KEY` is for |
 | Auth | File-based: `crypto.scryptSync` + HMAC cookie. No external service |
 | Storage | JSON files under `DATA_DIR` (Railway volume at `/app/data`) |
-| Tests | **Vitest — 368 passing.** `npm test` |
+| Tests | **Vitest — 546 passing.** `npm test` |
 | Notifications | ntfy (`NTFY_TOPIC_SECRET`) |
 
 **Deleted on purpose — do not reintroduce:** Supabase (and `src/proxy.ts`, which
@@ -102,6 +102,61 @@ engine front-ends, and recurring `create_event` checks every instance.
 
 ---
 
+## The projects layer — `src/lib/projects/` (`PROJECTS`, off by default)
+
+A project is a body of work with steps (a course, a deliverable, something you're
+building). Tasks join one via the `project_id` that was reserved on `Task` and
+`CalendarEvent` long before anything read it.
+
+**The organising idea: the board is denominated in hours, not vibes.** Other
+tools tell you what you should do; none of them knows whether you have the time.
+So the deadline badge is a dry run of the real `planSchedule` — never a second,
+simpler capacity formula, because the moment the board and the calendar disagree
+both become untrustworthy.
+
+```
+types.ts       Project/KIND_RULES, CardSignal, SignalState, BoardRules
+boardRules.ts  18 methods -> board shape. 5 presets, 18 rows of copy, 1 renderer
+capacity.ts    the batched engine dry run
+health.ts      resolveSignals() — the four card signals
+cascade.ts     what deleting a project does (pure; the route just executes it)
+```
+
+Five things that are load-bearing:
+
+1. **The board is keyed on `scheduling_method`, not `persona`.** They aren't
+   siblings — method is *downstream*: `scheduling_method = the user's choice ??
+   mapToMethod(persona, challenge, day_structure)`. `persona` has one writer and
+   no UI to fix it; the method is backfilled on every load, changeable in
+   Settings, and already self-corrects via `method_feedback`. A wrong method is a
+   visible mismatch against a labelled control; a wrong persona is a silent
+   default.
+2. **One batched probe for all projects, never one per project.** Separate calls
+   each get a fresh `emptyState`, so two projects competing for the same Tuesday
+   would both read green.
+3. **The probe asks for 125% of the work** (`CAPACITY_SLACK`). Asking for exactly
+   the remaining work can only answer "does it fit" — and since the engine
+   *spreads* sessions across the horizon, the last block always lands near the
+   deadline, so measuring slack by its position marks every project as tight.
+4. **`remainingMinutes` subtracts work already on the calendar.** Without it,
+   scheduling a project makes its own risk look worse.
+5. **`na` ≠ `unknown`.** `na` means there's nothing to know (no deadline) → the
+   signal is dropped. `unknown` means there is and we don't → grey with a
+   tappable "?". Missing data may only ever make a state worse, never better.
+
+Numbers that exist elsewhere are **derived, never re-typed** — `BOARD_RULES`
+stores no session length. That rule exists because the codebase already carries
+the bug: `METHOD_SESSION_HOURS` and `METHOD_RULES[m].sessionMinutes` are two
+tables for one number and **disagree on 10 of 18 methods** (`the_one_thing` 180
+vs 120, `eisenhower` 90 vs 50, …). Mostly absorbed by `clampBlock`; worth fixing.
+
+**Engine change that ships unflagged:** `PlacementRequest.dependsOn` is finally
+read. `depOrder.ts` does a Kahn sort (not DFS — DFS lets a long chain jump ahead
+of a tight deadline), and `plan.ts` raises a dependent's `earliest` to its
+prerequisite's end. Ordering alone isn't enough: a greedy pass would still put A
+on Tuesday afternoon and B on Tuesday morning. With no `dependsOn` present the
+ordering is byte-identical to before, asserted by an identity test.
+
 ## Storage — `src/lib/store/`
 
 `userStore` (synchronous read-modify-write) plus `withUserLock`. Everything goes
@@ -119,9 +174,14 @@ multiple Railway replicas.
 data/
   auth/users.json                 [{id, email, passwordHash, salt, tokenVersion}]
   users/{userId}/
-    events.json  tasks.json  profile.json
+    events.json  tasks.json  profile.json  projects.json
     memory.json  feedback.json  chat-history.json
 ```
+
+`projects.json` needs no bootstrapping — a missing file reads as `[]`. Note
+`updateProject` returns `null` on a miss and writes nothing, deliberately unlike
+`updateTask`, which no-ops silently *and* writes the file back, which is why
+`PUT /api/tasks/[id]` answers `{success:true}` for an id that doesn't exist.
 
 ---
 
@@ -189,10 +249,13 @@ the entire feature was dead code.
 
 ```bash
 npm run dev          # localhost:3000
-npm test             # Vitest — 368 tests
+npm test             # Vitest — 546 tests
 npx tsc --noEmit     # type check
 npm run lint         # 4 pre-existing errors, all in untouched components
 ```
+
+`--reporter=basic` was removed in Vitest 3 and now crashes with `ERR_LOAD_URL`.
+Use `--reporter=verbose`.
 
 Print the engine's plan for the fixture week (the human acceptance gate):
 

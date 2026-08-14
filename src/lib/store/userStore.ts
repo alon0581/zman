@@ -1,4 +1,4 @@
-import { CalendarEvent, Task } from '@/types'
+import { CalendarEvent, Project, Task } from '@/types'
 import path from 'path'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
@@ -30,6 +30,18 @@ function readTasks(userId: string): Task[] {
 
 function writeTasks(userId: string, tasks: Task[]) {
   writeJsonFileAtomic(tasksFile(userId), tasks)
+}
+
+function projectsFile(userId: string) {
+  return path.join(userDir(userId), 'projects.json')
+}
+
+function readProjects(userId: string): Project[] {
+  return readJsonFile<Project[]>(projectsFile(userId), [])
+}
+
+function writeProjects(userId: string, projects: Project[]) {
+  writeJsonFileAtomic(projectsFile(userId), projects)
 }
 
 /**
@@ -75,5 +87,39 @@ export const userStore = {
   },
   deleteTask(id: string, userId = 'demo') {
     writeTasks(userId, readTasks(userId).filter(t => t.id !== id))
+  },
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+  //
+  // Same synchronous read-modify-write discipline as above, with one deliberate
+  // difference: updateProject/deleteProject REPORT whether they found anything.
+  // `updateTask` returns nothing and writes the file back even on a miss, which
+  // is why PUT /api/tasks/[id] answers `{success:true}` for an id that does not
+  // exist and the client's res.ok rollback can never fire. Not copying that.
+
+  getProjects(userId = 'demo'): Project[] {
+    return readProjects(userId)
+  },
+  addProject(project: Project, userId = 'demo') {
+    const projects = readProjects(userId)
+    projects.push(project)
+    writeProjects(userId, projects)
+  },
+  /** Returns the updated project, or null if no such id — and writes nothing on a miss. */
+  updateProject(id: string, updates: Partial<Project>, userId = 'demo'): Project | null {
+    const projects = readProjects(userId)
+    const idx = projects.findIndex(p => p.id === id)
+    if (idx === -1) return null
+    projects[idx] = { ...projects[idx], ...updates, id, user_id: projects[idx].user_id }
+    writeProjects(userId, projects)
+    return projects[idx]
+  },
+  /** Returns true if a project was actually removed. */
+  deleteProject(id: string, userId = 'demo'): boolean {
+    const projects = readProjects(userId)
+    const next = projects.filter(p => p.id !== id)
+    if (next.length === projects.length) return false
+    writeProjects(userId, next)
+    return true
   },
 }

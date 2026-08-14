@@ -354,6 +354,10 @@ const UNPLACED_TEXT: Record<UnplacedCode, { he: string; en: string }> = {
     he: 'היו חלונות פנויים, אבל כולם גרועים מספיק כדי שעדיף לא לקבוע בהם',
     en: 'Windows existed, but all of them were bad enough to be worse than nothing',
   },
+  blocked_by_dependency: {
+    he: 'משימה קודמת שצריכה להסתיים לפני זה לא הצליחה להשתבץ',
+    en: 'An earlier task this one depends on could not be scheduled',
+  },
 }
 
 /** What the user could give up, as a sentence. `delta` carries the size of the change. */
@@ -386,6 +390,14 @@ const RELAXATION_TEXT: Record<RelaxationCode, { he: (d: string) => string; en: (
 
 export interface PlanBlockView {
   index: number
+  /**
+   * Which PlacementRequest this block came from. `index` is only the position in
+   * the sorted block array, so without this a rendered block cannot be attributed
+   * back to the task it belongs to — which is invisible for a single-request plan
+   * and fatal for a batch (per-task titles, project_id stamping, per-project
+   * capacity all need it).
+   */
+  request_index: number
   title: string
   start: LocalISO
   end: LocalISO
@@ -423,6 +435,7 @@ export function planOutcomeToToolResult(
   const blocks = 'blocks' in outcome ? outcome.blocks : []
   const blockViews: PlanBlockView[] = blocks.map((b, index) => ({
     index,
+    request_index: b.requestIndex,
     title: b.title,
     start: b.start,
     end: b.end,

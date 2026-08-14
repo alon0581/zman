@@ -241,10 +241,11 @@ export default function VoiceFAB({ onSendMessage, onOpenChat, language, isRTL, i
       style={{
         position: 'fixed',
         bottom: isMobile ? 'calc(70px + env(safe-area-inset-bottom, 0px))' : 32,
-        // Desktop: tasks panel is 340px wide on the right — FAB must be left of it
+        // Desktop: the right-hand panel sits on the right — FAB must be left of it.
+        // Width comes from --panel-w so this can't drift from AppShell's panel.
         ...(micSide === 'left'
           ? { left: isMobile ? 20 : 32 }
-          : { right: isMobile ? 20 : 'calc(340px + 20px)' }),
+          : { right: isMobile ? 20 : 'calc(var(--panel-w) + 20px)' }),
         width: 56,
         height: 56,
         borderRadius: '50%',

@@ -1,9 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { UserProfile, CalendarEvent, Task, AppUser } from '@/types'
+import { UserProfile, CalendarEvent, Task, AppUser, Project } from '@/types'
 import CalendarPanel from './CalendarPanel'
 import TasksPanel from './TasksPanel'
+import ProjectsPanel, { ProjectHealthMap } from './projects/ProjectsPanel'
+import ProjectBoard from './projects/ProjectBoard'
+import { BoardRules } from '@/lib/projects/types'
 import Header from './Header'
 import SettingsClient from '@/app/settings/SettingsClient'
 import VoiceFAB from './VoiceFAB'
@@ -11,7 +14,7 @@ import ChatOverlay from './ChatOverlay'
 import MethodOnboardingModal from './MethodOnboardingModal'
 import ToastContainer from './Toast'
 import { useChatEngine } from '@/hooks/useChatEngine'
-import { CalendarDays, CheckSquare, Sun, Moon, Settings as SettingsIcon } from 'lucide-react'
+import { CalendarDays, CheckSquare, FolderKanban, Sun, Moon, Settings as SettingsIcon } from 'lucide-react'
 import { AnimatePresence } from 'motion/react'
 import { registerCapacitorPush } from '@/lib/capacitor-push'
 
@@ -19,16 +22,23 @@ interface Props {
   user: AppUser
   profile: UserProfile | null
   needsOnboarding: boolean
+  /** Server-resolved PROJECTS flag. One env var, one reader — no NEXT_PUBLIC twin. */
+  projectsEnabled?: boolean
 }
 
-export default function AppShell({ user, profile: initialProfile, needsOnboarding }: Props) {
+export default function AppShell({ user, profile: initialProfile, needsOnboarding, projectsEnabled = false }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(initialProfile)
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [newEventIds, setNewEventIds] = useState<Set<string>>(new Set())
   const [theme, setTheme] = useState<'dark' | 'light'>(initialProfile?.theme ?? 'dark')
   const [isMobile, setIsMobile] = useState(false)
-  const [mobileTab, setMobileTab] = useState<'calendar' | 'tasks'>('calendar')
+  const [mobileTab, setMobileTab] = useState<'calendar' | 'tasks' | 'projects'>('calendar')
+  const [desktopPanel, setDesktopPanel] = useState<'tasks' | 'projects'>('tasks')
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectHealth, setProjectHealth] = useState<ProjectHealthMap>({})
+  const [boardRules, setBoardRules] = useState<BoardRules | null>(null)
+  const [openProjectId, setOpenProjectId] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [chatOverlayOpen, setChatOverlayOpen] = useState(false)
   const [showMethodModal, setShowMethodModal] = useState(false)
@@ -75,9 +85,30 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     .then(data => { if (data?.tasks) setTasks(data.tasks) })
     .catch(() => {})
 
+  // Two calls on purpose: the list paints immediately, while health runs the real
+  // scheduling engine server-side and arrives a beat later. Bundling them would
+  // make every project list wait on a placement pass.
+  const fetchProjects = useCallback(() => {
+    if (!projectsEnabled) return
+    fetch('/api/projects')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.projects) setProjects(data.projects) })
+      .catch(() => {})
+    fetch('/api/projects/health')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data?.health) return
+        setProjectHealth(data.health as ProjectHealthMap)
+        const first = Object.values(data.health)[0] as { board?: BoardRules } | undefined
+        if (first?.board) setBoardRules(first.board)
+      })
+      .catch(() => {})
+  }, [projectsEnabled])
+
   useEffect(() => {
     fetchTasks()
-  }, [])
+    fetchProjects()
+  }, [fetchProjects])
 
   const handleEventsUpdate = (updatedEvents: CalendarEvent[], addedIds?: string[]) => {
     markLocalMutation()
@@ -101,6 +132,7 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         .then(data => { if (data?.events && pollAllowed()) setEvents(data.events) })
         .catch(() => {})
       fetchTasks()
+      fetchProjects()
     }
     const id = setInterval(poll, 30_000)
     // Coming back to the tab should show current data immediately rather than
@@ -111,7 +143,9 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       clearInterval(id)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [])
+    // fetchProjects is useCallback'd on the flag alone, so it is stable for the
+    // life of the session and this does not re-create the timer.
+  }, [fetchProjects])
 
   const handleEventUpdate = (id: string, changes: Partial<CalendarEvent>) => {
     markLocalMutation()
@@ -252,6 +286,49 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     />
   )
 
+  const projectsPanel = (
+    <ProjectsPanel
+      projects={projects}
+      health={projectHealth}
+      language={language}
+      onOpenProject={setOpenProjectId}
+      onCreated={() => { markLocalMutation(); fetchProjects(); fetchTasks() }}
+      onAskAi={chatEngine.sendMessage}
+    />
+  )
+
+  const openProject = projects.find(p => p.id === openProjectId) ?? null
+
+  /** Desktop Tasks/Projects switch. Mobile uses the bottom bar — two switchers for
+   *  one thing is a bug, so this is desktop-only. */
+  const desktopToggle = (
+    <div style={{
+      display: 'flex', gap: 3, margin: '10px 12px 0', padding: 3,
+      background: 'var(--bg-input)', borderRadius: 9, flexShrink: 0,
+    }}>
+      {(['tasks', 'projects'] as const).map(key => {
+        const active = desktopPanel === key
+        return (
+          <button
+            key={key}
+            onClick={() => setDesktopPanel(key)}
+            style={{
+              flex: 1, padding: '6px 8px', borderRadius: 7, border: 'none', cursor: 'pointer',
+              background: active ? 'var(--bg-card)' : 'transparent',
+              boxShadow: active ? 'var(--shadow-sm)' : 'none',
+              color: active ? 'var(--blue)' : 'var(--text-2)',
+              fontSize: 12, fontWeight: active ? 700 : 500,
+            }}
+          >
+            {key === 'tasks'
+              ? (language === 'he' ? 'משימות' : 'Tasks')
+              : (language === 'he' ? 'פרויקטים' : 'Projects')}
+          </button>
+        )
+      })}
+    </div>
+  )
+
   return (
     <div
       className={aliveActive ? 'alive-active' : ''}
@@ -309,11 +386,14 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
               {calendarPanel}
             </div>
             <div style={{
-              width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              width: 'var(--panel-w)', flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
               borderLeft: '1px solid var(--border)',
               boxShadow: '-4px 0 20px rgba(0,0,0,0.15)',
             }}>
-              {tasksPanel}
+              {projectsEnabled && desktopToggle}
+              <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {projectsEnabled && desktopPanel === 'projects' ? projectsPanel : tasksPanel}
+              </div>
             </div>
           </>
         )}
@@ -327,6 +407,11 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             <div style={{ display: mobileTab === 'tasks' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
               {tasksPanel}
             </div>
+            {projectsEnabled && (
+              <div style={{ display: mobileTab === 'projects' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
+                {projectsPanel}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -354,14 +439,28 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             onClick={() => setMobileTab('tasks')}
             badge={tasks.filter(t => t.status !== 'done').length}
           />
+          {projectsEnabled && (
+            <MobileTab
+              active={mobileTab === 'projects'}
+              label={language === 'he' ? 'פרויקטים' : 'Projects'}
+              icon={<FolderKanban size={22} />}
+              onClick={() => setMobileTab('projects')}
+              // A badge that means something: how many projects are actually at
+              // risk, not how many exist.
+              badge={Object.values(projectHealth).filter(h =>
+                h.signals.some(s => s.signal === 'deadline' && s.state === 'risk')).length}
+            />
+          )}
         </div>
       )}
 
       {/* ── Alive overlay (screen glow during recording) ── */}
       {aliveActive && <div className="alive-overlay" />}
 
-      {/* ── Voice FAB — hidden on Tasks tab, and when Settings is open ── */}
-      {(!isMobile || mobileTab !== 'tasks') && !showSettings && (
+      {/* ── Voice FAB — only over the calendar, and never on top of a sheet.
+             Tasks and Projects both have their own bottom bar, and the board has
+             its own primary action, so the mic would sit on top of them. ── */}
+      {(!isMobile || mobileTab === 'calendar') && !showSettings && !openProjectId && (
         <VoiceFAB
           onSendMessage={chatEngine.sendMessage}
           onOpenChat={() => setChatOverlayOpen(true)}
@@ -381,6 +480,23 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
         isRTL={isRTL}
         isMobile={isMobile}
       />
+
+      {/* ── Project board overlay ── */}
+      <AnimatePresence>
+        {openProject && boardRules && (
+          <ProjectBoard
+            project={openProject}
+            tasks={tasks}
+            rules={boardRules}
+            signals={projectHealth[openProject.id]?.signals ?? []}
+            language={language}
+            isMobile={isMobile}
+            onClose={() => setOpenProjectId(null)}
+            onTaskStatus={handleTaskToggle}
+            onAskAi={(msg) => { setOpenProjectId(null); chatEngine.sendMessage(msg) }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* ── Chat Overlay (double-tap to open) ── */}
       <AnimatePresence>

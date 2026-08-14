@@ -15,3 +15,20 @@ export function schedulerV2Enabled(): boolean {
   const raw = process.env.SCHEDULER_V2
   return raw === '1' || raw === 'true'
 }
+
+/**
+ * PROJECTS gates the projects layer: the third tab, the board, the projects tools
+ * in the model's list, and the prompt guidance. Same contract as above — unset
+ * means the app behaves exactly as it did before, and only "1" or "true" turns it
+ * on.
+ *
+ * Note what it does NOT gate: the scheduling engine. `planSchedule` is a pure
+ * function, and SCHEDULER_V2 gates the AI *tool surface*, not the engine — so the
+ * board's deadline-risk maths works with SCHEDULER_V2 off. Only `plan_project`
+ * needs both flags, because it returns a plan_id that only `apply_plan` (a
+ * V2-only tool) can commit.
+ */
+export function projectsEnabled(): boolean {
+  const raw = process.env.PROJECTS
+  return raw === '1' || raw === 'true'
+}

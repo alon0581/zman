@@ -39,6 +39,13 @@ export async function POST(req: NextRequest) {
     status: 'pending',
     topic: str(body.topic),
     parent_task_id: str(body.parent_task_id),
+    // Without these two a task created through the API could never join a project
+    // or carry an ordering constraint — the board would be able to show work it
+    // had no way to create.
+    project_id: str(body.project_id),
+    depends_on: Array.isArray(body.depends_on)
+      ? body.depends_on.filter((d: unknown): d is string => typeof d === 'string' && !!d.trim())
+      : undefined,
     created_at: new Date().toISOString(),
   }
 

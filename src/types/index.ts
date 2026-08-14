@@ -15,8 +15,14 @@ export interface CalendarEvent {
   series_id?: string          // groups all instances of a recurring event
   recurrence_rule?: string    // e.g. "weekly", "biweekly", "monthly"
   mobility_type?: 'fixed' | 'flexible' | 'ask_first'  // how movable this event is
-  // Reserved for a future "projects" feature — nothing reads or writes these yet.
+  /**
+   * Roll-up key: which Project this block's time counts towards. Denormalised on
+   * purpose — invested-time is then one filter rather than an event->task->project
+   * join across two JSON files, and deleting a task does not erase hours the
+   * project really consumed.
+   */
   project_id?: string
+  /** The precise link. Retires title-prefix matching for project work. */
   ref?: { kind: 'event' | 'task' | 'project'; id: string }
 }
 
@@ -33,8 +39,44 @@ export interface Task {
   topic?: string
   created_at: string
   completed_at?: string
-  // Reserved for a future "projects" feature — nothing reads or writes this yet.
+  /** Membership in a Project. `topic` remains a free-text lens; this is the real link. */
   project_id?: string
+  /**
+   * Task ids that must be done before this one can start. Optional and additive —
+   * a task written before this existed reads as having no dependencies.
+   * Consumed by the scheduling engine via PlacementRequest.dependsOn.
+   */
+  depends_on?: string[]
+}
+
+/**
+ * What kind of thing a project is. Chosen explicitly by the user at creation —
+ * never inferred from a profile field, because an inference that is wrong here
+ * silently changes what the risk badge means.
+ *
+ * It controls two things and only two: the seeded task template, and whether a
+ * deadline is expected at all. That second one is load-bearing: `build` usually
+ * has no deadline, which is exactly the case where a green "on track" badge
+ * would be a fabrication.
+ */
+export type ProjectKind = 'course' | 'deliverable' | 'build'
+
+export interface Project {
+  id: string
+  user_id: string
+  title: string
+  kind: ProjectKind
+  status: 'active' | 'paused' | 'done' | 'archived'
+  created_at: string
+  description?: string
+  /** LocalISO or 'YYYY-MM-DD'. Absent is meaningful — see ProjectKind. */
+  deadline?: string
+  /** Hex; reused as the calendar colour for blocks this project generates. */
+  color?: string
+  /** Defaults to the title, so project tasks still group sensibly in TasksPanel. */
+  topic?: string
+  completed_at?: string
+  archived_at?: string
 }
 
 export interface UserProfile {

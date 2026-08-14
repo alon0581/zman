@@ -19,6 +19,7 @@
 
 import { addMonths } from 'date-fns'
 import { LocalISO, addMinutes, localDateKey, parseLocal, toLocalISO } from './clock'
+import { topoOrder } from './depOrder'
 import { classifyMobility } from './mobilityClassifier'
 import {
   cloneState, commitBlock, emptyState, ENGINE_BLOCK_PREFIX, PlaceOptions, PlaceResult, placeOne, PlacementState,
@@ -75,20 +76,52 @@ export function planSchedule(ctx: SchedulingContext, requests: PlacementRequest[
   const unplaced: Unplaced[] = []
   const pending: PendingSession[] = []
 
-  const order = orderRequests(requests, ctx.rules)
+  // Most-constrained-first, then reordered so nothing precedes its prerequisites.
+  // With no dependsOn anywhere — which is every input the app produces today —
+  // topoOrder returns the comparator's array unchanged, so this is a no-op.
+  const preferred = orderRequests(requests, ctx.rules)
+  const { order } = topoOrder(requests, preferred)
   // eat_the_frog's claim is about one item: the hardest one, earliest. Ordering
   // already put it first, so it is simply the head of the queue.
   const frogIndex = ctx.rules.hardestFirst && order.length > 0 ? order[0] : -1
 
+  // Dependency bookkeeping, keyed by ref.id because that is what dependsOn names.
+  const placedEndByRefId = new Map<string, LocalISO>()
+  const failedRefIds = new Set<string>()
+
   for (const requestIndex of order) {
-    const request = requests[requestIndex]
+    const raw = requests[requestIndex]
+
+    // A prerequisite that did not fit means this one cannot honestly be placed
+    // either — scheduling step 2 when step 1 has no slot is a lie the caller
+    // would have no way to see.
+    if (raw.dependsOn?.some(id => failedRefIds.has(id))) {
+      unplaced.push({ requestIndex, code: 'blocked_by_dependency', placedCount: 0 })
+      if (raw.ref?.id) failedRefIds.add(raw.ref.id)
+      continue
+    }
+
+    const request = withDependencyFloor(raw, placedEndByRefId)
     const windows = windowsFor(request, baseWindows, ctx)
     const opts: PlaceOptions = { isFrog: requestIndex === frogIndex }
 
+    const blocksBefore = blocks.length
     if (request.recurrence) {
       placeRecurring(ctx, request, requestIndex, windows, state, opts, blocks, displacements, unplaced, pending)
     } else {
       placeSessions(ctx, request, requestIndex, windows, state, opts, blocks, displacements, unplaced, pending)
+    }
+
+    // Record where this request actually landed, so its dependents can start after
+    // its LAST session rather than its first.
+    const refId = raw.ref?.id
+    if (refId) {
+      let latest: LocalISO | undefined
+      for (let i = blocksBefore; i < blocks.length; i++) {
+        if (!latest || blocks[i].end > latest) latest = blocks[i].end
+      }
+      if (latest) placedEndByRefId.set(refId, latest)
+      else failedRefIds.add(refId)
     }
   }
 
@@ -557,6 +590,39 @@ function countPlaceable(
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 /** hardWindows are a user constraint ("only in the evening") and replace the profile's. */
+/**
+ * Raises a request's `earliest` to the latest end among its prerequisites.
+ *
+ * Ordering alone only guarantees "A is CONSIDERED before B" — the greedy pass puts
+ * A in its best slot, which may be Monday afternoon while B lands Monday morning.
+ * This is what turns consideration order into actual "B starts after A ends".
+ *
+ * Nothing in place.ts, score.ts or repair.ts changes for this, because
+ * `place.ts` already does the right thing with the field:
+ *     const floor = maxISO(ctx.now, request.earliest)
+ *     const admissible = clipWindows(dayScoped, floor, request.deadline, ...)
+ * That is the whole payoff for `earliest` having existed from day one.
+ *
+ * LocalISO is naive and fixed-width, so string comparison IS chronological order —
+ * the same assumption byStartThenTitle below already relies on.
+ */
+function withDependencyFloor(
+  request: PlacementRequest,
+  placedEndByRefId: Map<string, LocalISO>,
+): PlacementRequest {
+  if (!request.dependsOn?.length) return request
+
+  let floor: LocalISO | undefined
+  for (const depId of request.dependsOn) {
+    const end = placedEndByRefId.get(depId)
+    if (end && (!floor || end > floor)) floor = end
+  }
+  if (!floor) return request
+  if (request.earliest && request.earliest >= floor) return request
+
+  return { ...request, earliest: floor }
+}
+
 function windowsFor(request: PlacementRequest, baseWindows: DayWindow[], ctx: SchedulingContext): DayWindow[] {
   if (!request.hardWindows || request.hardWindows.length === 0) return baseWindows
   const horizonDays = new Set(eachDayKey(ctx.horizon.from, ctx.horizon.to))
