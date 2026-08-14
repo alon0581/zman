@@ -92,9 +92,10 @@ Arithmetic in `clock.ts` runs through a UTC-backed instant specifically so the
 host machine's DST rules cannot leak in — that bug was real: the same code gave
 different answers on a developer machine and on the UTC server.
 
-### `SCHEDULER_V2`
+### `SCHEDULER_V2` — **on in production since 2026-08-14**
 
-Off by default. Unset = the old behaviour byte for byte (proved by identity, not
+Off by *default*, but now SET on Railway, so the engine path is the live one.
+Unset = the old behaviour byte for byte (proved by identity, not
 just equality, in the tests). When on: `get_free_slots` disappears from the tool
 list, `schedule_item` / `apply_plan` appear (propose then confirm, so a plan can't
 drift between showing and committing), `break_down_task` and `move_event` become
@@ -102,7 +103,7 @@ engine front-ends, and recurring `create_event` checks every instance.
 
 ---
 
-## The projects layer — `src/lib/projects/` (`PROJECTS`, off by default)
+## The projects layer — `src/lib/projects/` (`PROJECTS`, **on in production since 2026-08-14**)
 
 A project is a body of work with steps (a course, a deliverable, something you're
 building). Tasks join one via the `project_id` that was reserved on `Task` and

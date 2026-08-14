@@ -73,19 +73,20 @@ ANTHROPIC_API_KEY=sk-ant-...
 #    ENCRYPTION_KEY is likewise no longer read: it existed to encrypt per-user
 #    API keys, and there are none. Safe to delete.
 
-# ── SCHEDULER_V2 (OFF by default — leave it unset in production for now) ────
+# ── SCHEDULER_V2 — ⚡ ON IN PRODUCTION since 2026-08-14 ──────────────────────
 # Routes scheduling through the deterministic engine in src/lib/scheduling
 # instead of letting the model do free-slot arithmetic. When set:
 #   • get_free_slots is removed from the tool list entirely
 #   • schedule_item / apply_plan appear (propose, then confirm — two phase)
 #   • break_down_task and move_event become engine front-ends
 #   • recurring create_event checks every instance and reports clashes
-# UNSET (the default) = the previous behaviour, byte for byte. Only "1" or
-# "true" turns it on. Note plans are held in process memory for ~10 minutes, so
+# UNSET = the previous behaviour, byte for byte. Only "1" or "true" turns it on.
+# It is now SET on Railway (project truthful-love, service zman), so the engine
+# path is the live one. To roll back it is a variable change, not a redeploy. Note plans are held in process memory for ~10 minutes, so
 # a redeploy between a proposal and its confirmation makes the user re-ask.
-# SCHEDULER_V2=1
+SCHEDULER_V2=1
 
-# ── PROJECTS (OFF by default — leave it unset in production for now) ────────
+# ── PROJECTS — ⚡ ON IN PRODUCTION since 2026-08-14 ─────────────────────────
 # Turns on the projects layer: a third mobile tab, a Tasks/Projects toggle in the
 # desktop panel, and a full-screen board. When set:
 #   • /api/projects and /api/projects/health start being read by the UI
@@ -94,7 +95,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 #     scheduling engine, so the board can never disagree with the calendar
 #   • the board's shape follows the user's scheduling_method (BOARD_RULES), so a
 #     Kanban user gets a WIP cap and a Deep Work user gets a one-block board
-# UNSET (the default) = the app renders exactly as before. Only "1" or "true".
+# UNSET = the app renders exactly as before. Only "1" or "true" turns it on.
+# It is now SET on Railway alongside SCHEDULER_V2, which is what plan_project needs.
 #
 #   • the assistant gains create_project / list_projects / update_project /
 #     delete_project, and — only when SCHEDULER_V2 is ALSO on — plan_project,
@@ -108,7 +110,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 #
 # The engine's dependency support (Task.depends_on) ships unconditionally: with no
 # dependsOn present it is a proven no-op, asserted by an identity test.
-# PROJECTS=1
+PROJECTS=1
 
 # ── Voice transcription (OpenAI — this is the ONLY thing OPENAI_API_KEY is for)
 OPENAI_API_KEY=sk-...
