@@ -20,7 +20,12 @@ If a signal repeats, honour it immediately (don't propose times the user keeps r
 // bounded so it stays cheap (it's injected on every request). ───────────────
 const PROFILE_CATEGORIES: { label: string; test: (key: string) => boolean }[] = [
   { label: 'Identity',          test: k => /^(occupation|study_field|university|year_of_study|role|location|name|persona)/.test(k) },
-  { label: 'Rhythm',            test: k => /^(wake_time|sleep_time|productivity_peak|energy|commute)/.test(k) },
+  // day_structure belongs here: it matched NO category, so it fell into the
+  // low-signal [Other] bucket, which is emitted only if room remains after all
+  // eight categories — i.e. it was the first fact dropped, despite being mirrored
+  // from the profile on purpose. It describes the shape of the user's day, which
+  // is what Rhythm is.
+  { label: 'Rhythm',            test: k => /^(wake_time|sleep_time|productivity_peak|energy|commute|day_structure)/.test(k) },
   { label: 'Fixed commitments', test: k => /^(recurring_|work_hours|free_days|weekly_free)/.test(k) },
   { label: 'Preferences',       test: k => /^(pref_|prefers_|main_challenge)/.test(k) },
   { label: 'Life',              test: k => /^(relationship|family|hobby|hobbies|volunteer|social)/.test(k) },
@@ -114,7 +119,7 @@ User preferences:
   })
 - Peak productivity: ${profile.productivity_peak ?? 'morning'} (${peakStart}:00–${peakEnd}:00)
 - Sleep: ${profile.sleep_time ?? '23:00'} – Wake: ${profile.wake_time ?? '07:00'}
-- Work hours: ${profile.preferred_hours ? `${profile.preferred_hours.start}:00–${profile.preferred_hours.end}:00` : 'flexible'}
+- Available hours: ${profile.wake_time || profile.sleep_time ? `${profile.wake_time ?? '09:00'}–${profile.sleep_time ?? '22:00'}` : 'flexible'}
 - Language: ${profile.language === 'he' ? 'Hebrew (עברית)' : profile.language}
 ${profile.occupation ? `- Occupation: ${profile.occupation}` : ''}
 ${profile.scheduling_method ? `- Primary scheduling method: ${METHOD_LABELS[profile.scheduling_method as SchedulingMethod]?.en ?? profile.scheduling_method} ${METHOD_LABELS[profile.scheduling_method as SchedulingMethod]?.emoji ?? ''}` : ''}

@@ -117,8 +117,15 @@ function parseHour(value: string | undefined, fallback: number): number {
  * peak is worse than a slightly-off one.
  */
 export function buildSchedulingProfile(profile: UserProfile | null | undefined, timezone?: string): SchedulingProfile {
-  const dayStartHour = profile?.preferred_hours?.start ?? parseHour(profile?.wake_time, 9)
-  const dayEndHour = profile?.preferred_hours?.end ?? parseHour(profile?.sleep_time, 22)
+  // wake_time/sleep_time are the single source of truth for the day window.
+  //
+  // `preferred_hours` used to win here, which made it a ghost: it has no UI, no
+  // tool, and no writer anywhere in the app, yet a value present on a profile
+  // silently overrode the wake/sleep controls Settings *does* expose — so editing
+  // your hours had no effect on scheduling and nothing said why. Verified against
+  // the production volume: no profile carries it. See UserProfile.preferred_hours.
+  const dayStartHour = parseHour(profile?.wake_time, 9)
+  const dayEndHour = parseHour(profile?.sleep_time, 22)
 
   const peak = profile?.productivity_peak ?? 'morning'
   const rawPeakStart = peak === 'morning' ? 6 : peak === 'afternoon' ? 12 : 18

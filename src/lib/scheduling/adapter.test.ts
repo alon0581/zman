@@ -102,13 +102,17 @@ describe('instantToLocalISO', () => {
 })
 
 describe('buildSchedulingProfile', () => {
-  it('prefers preferred_hours over wake/sleep, matching getFreeSlots', () => {
+  // This test used to assert the opposite — that preferred_hours WINS — which
+  // pinned a bug as correct. preferred_hours has no UI, no tool and no writer
+  // anywhere in the app, so a value on a profile silently beat the wake/sleep
+  // controls Settings does expose, and editing your hours changed nothing.
+  it('ignores the vestigial preferred_hours, so the editable controls actually win', () => {
     const p = buildSchedulingProfile(
-      { ...BASE_PROFILE, preferred_hours: { start: 8, end: 23 }, wake_time: '06:00', sleep_time: '01:00' },
+      { ...BASE_PROFILE, preferred_hours: { start: 8, end: 23 }, wake_time: '06:00', sleep_time: '21:00' },
       'Asia/Jerusalem',
     )
-    expect(p.dayStartHour).toBe(8)
-    expect(p.dayEndHour).toBe(23)
+    expect(p.dayStartHour).toBe(6)
+    expect(p.dayEndHour).toBe(21)
   })
 
   it('falls back to wake_time / sleep_time', () => {
@@ -125,21 +129,21 @@ describe('buildSchedulingProfile', () => {
   })
 
   it('maps productivity_peak to the same windows getFreeSlots uses', () => {
-    const evening = buildSchedulingProfile({ ...BASE_PROFILE, productivity_peak: 'evening', preferred_hours: { start: 8, end: 23 } })
+    const evening = buildSchedulingProfile({ ...BASE_PROFILE, productivity_peak: 'evening', wake_time: '08:00', sleep_time: '23:00' })
     expect(evening.peakStartHour).toBe(18)
     expect(evening.peakEndHour).toBe(23)
   })
 
   it('clamps the peak into the available day, so PEAK_MATCH can never name an unreachable hour', () => {
     // Morning peak is 06:00-12:00, but this user's day starts at 09:00.
-    const p = buildSchedulingProfile({ ...BASE_PROFILE, productivity_peak: 'morning', preferred_hours: { start: 9, end: 22 } })
+    const p = buildSchedulingProfile({ ...BASE_PROFILE, productivity_peak: 'morning', wake_time: '09:00', sleep_time: '22:00' })
     expect(p.peakStartHour).toBe(9)
     expect(p.peakEndHour).toBe(12)
   })
 
   it('keeps the raw peak rather than collapsing it to nothing', () => {
     // Day starts at 13:00; a morning peak cannot be clamped into it at all.
-    const p = buildSchedulingProfile({ ...BASE_PROFILE, productivity_peak: 'morning', preferred_hours: { start: 13, end: 22 } })
+    const p = buildSchedulingProfile({ ...BASE_PROFILE, productivity_peak: 'morning', wake_time: '13:00', sleep_time: '22:00' })
     expect(p.peakEndHour).toBeGreaterThan(p.peakStartHour)
   })
 
@@ -236,7 +240,7 @@ describe('buildSchedulingContext', () => {
 
   it('assembles a context the engine can actually plan against', () => {
     const ctx = buildSchedulingContext(
-      { ...BASE_PROFILE, preferred_hours: { start: 8, end: 23 }, productivity_peak: 'morning', scheduling_method: 'pomodoro' },
+      { ...BASE_PROFILE, wake_time: '08:00', sleep_time: '23:00', productivity_peak: 'morning', scheduling_method: 'pomodoro' },
       events, [], [], 'Asia/Jerusalem', new Date('2026-08-16T04:30:00.000Z'), 14,
     )
     expect(ctx.now).toBe('2026-08-16T07:30:00')
@@ -280,7 +284,7 @@ describe('buildSchedulingContext', () => {
 
   it('produces a context that plans deterministically', () => {
     const build = () => buildSchedulingContext(
-      { ...BASE_PROFILE, preferred_hours: { start: 8, end: 23 }, scheduling_method: 'pomodoro' },
+      { ...BASE_PROFILE, wake_time: '08:00', sleep_time: '23:00', scheduling_method: 'pomodoro' },
       events, [], [], 'Asia/Jerusalem', new Date('2026-08-16T04:30:00.000Z'), 10,
     )
     const request: PlacementRequest[] = [{ ref: { kind: 'task' }, title: 'לימוד', totalMinutes: 50, sessionCount: 2 }]

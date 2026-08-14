@@ -255,10 +255,17 @@ export async function POST(req: NextRequest) {
         ? serverMemory
         : (memory as AIMemory[] | undefined)
 
+    // The server's profile wins over the client's, for the same reason
+    // effectiveMemory does above: the client's copy is a snapshot from page load,
+    // and Settings writes go to the server. This mattered nowhere until a tool
+    // could write profile fields mid-turn — then the turn that changes your hours
+    // would be the one turn that reasons from the old ones.
+    const effectiveProfile: UserProfile | null = freshProfile ?? profile
+
     // Split system prompt: stable `staticPrefix` (cacheable) + per-request `dynamicSuffix`.
     const rawSys = isOnboarding
-      ? { staticPrefix: buildOnboardingSystemPrompt(profile?.language ?? 'en', userNow), dynamicSuffix: '' }
-      : buildSystemPrompt(profile, events, userNow, effectiveMemory, tasks, feedback)
+      ? { staticPrefix: buildOnboardingSystemPrompt(effectiveProfile?.language ?? 'en', userNow), dynamicSuffix: '' }
+      : buildSystemPrompt(effectiveProfile, events, userNow, effectiveMemory, tasks, feedback)
     // Under the flag the v1 prompt still tells the model to call get_free_slots and
     // do the arithmetic itself — a tool that no longer exists. The correction goes
     // in the DYNAMIC suffix, never the static prefix, so the cached prefix is
@@ -353,7 +360,9 @@ export async function POST(req: NextRequest) {
                   createdEvents,
                   updatedEvents,
                   deletedEventIds,
-                  profile,
+                  // The server's copy, not the client's — every scheduling call
+                  // inside the dispatcher reads this for hours and method.
+                  effectiveProfile,
                   state,
                   freshProfile?.push_subscription,
                   freshProfile?.fcm_token,
@@ -1099,8 +1108,9 @@ async function executeTool(
       const sleepHour = parseHour(profile?.sleep_time, 23)
       // Active-day bounds (same source as getFreeSlots) — used to avoid midday-lunch
       // false positives for shift/night workers whose day doesn't span noon.
-      const dayStartHour = profile?.preferred_hours?.start ?? parseHour(profile?.wake_time, 9)
-      const dayEndHour = profile?.preferred_hours?.end ?? parseHour(profile?.sleep_time, 22)
+      // wake/sleep only — see the note on UserProfile.preferred_hours.
+      const dayStartHour = parseHour(profile?.wake_time, 9)
+      const dayEndHour = parseHour(profile?.sleep_time, 22)
       const hasMiddayWindow = dayStartHour <= 12 && dayEndHour >= 14
       const mob = (e: CalendarEvent) => e.mobility_type ?? classifyMobility(e.title, e.created_by, true)
 
@@ -1790,8 +1800,9 @@ function getFreeSlots(
   const to = parseISO(toDate)
 
   // Determine day bounds from profile
-  const dayStartHour = profile?.preferred_hours?.start ?? parseHour(profile?.wake_time, 9)
-  const dayEndHour = profile?.preferred_hours?.end ?? parseHour(profile?.sleep_time, 22)
+  // wake/sleep only — see the note on UserProfile.preferred_hours.
+  const dayStartHour = parseHour(profile?.wake_time, 9)
+  const dayEndHour = parseHour(profile?.sleep_time, 22)
 
   // Peak productivity window
   const peak = profile?.productivity_peak ?? 'morning'

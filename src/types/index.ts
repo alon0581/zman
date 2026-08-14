@@ -81,6 +81,16 @@ export interface Project {
 
 export interface UserProfile {
   user_id: string
+  /**
+   * VESTIGIAL — read by nothing, written by nothing. Do not reintroduce a read.
+   *
+   * It had no UI, no tool, and was absent from complete_onboarding's parameters,
+   * yet it took precedence over wake_time/sleep_time in three places — so a value
+   * on a profile silently beat the controls the user can actually edit. No profile
+   * on the production volume carries it. The field is kept (not deleted) only so
+   * that an older profile.json still parses; the day window comes from
+   * wake_time/sleep_time alone.
+   */
   preferred_hours?: { start: number; end: number }
   productivity_peak?: 'morning' | 'afternoon' | 'evening'
   sleep_time?: string
