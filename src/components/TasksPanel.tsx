@@ -146,7 +146,18 @@ function SwipeableTask({
 }
 
 export default function TasksPanel({ tasks, events = [], language = 'en', onTaskToggle, onScheduleTask, onAddTask, onDeleteTask }: Props) {
-  const [collapsedTopics, setCollapsedTopics] = useState<Set<string>>(new Set())
+  // Topics that belong to a project start COLLAPSED.
+  //
+  // A project's steps are the same task rows as the board's — one truth, two
+  // views — so the list stays the single place that shows everything you owe
+  // yourself. But a project drops six steps in at once, and six rows you only
+  // act on one at a time is noise in a daily list. Collapsed keeps the header
+  // and its progress bar ("FitLon 0/4"), which is the part you actually scan,
+  // and costs one tap to open. Loose tasks are unaffected and stay expanded.
+  //
+  // `userCollapsed` holds only the explicit toggles, so a project's group can be
+  // opened and stays open — the default must not fight the user every render.
+  const [userCollapsed, setUserCollapsed] = useState<Map<string, boolean>>(new Map())
   const [showDone, setShowDone] = useState(false)
   const [addText, setAddText] = useState('')
   const lang = T[language as keyof typeof T] ?? T.en
@@ -235,11 +246,23 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
     return map
   }, [pending, language])
 
+  /** Topics whose tasks belong to a project — these default to collapsed. */
+  const projectTopics = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of tasks) {
+      if (t.project_id) set.add(t.topic ?? (language === 'he' ? 'כללי' : 'General'))
+    }
+    return set
+  }, [tasks, language])
+
+  /** Explicit toggle wins; otherwise a project topic starts closed and a loose one open. */
+  const isTopicCollapsed = (topic: string): boolean =>
+    userCollapsed.get(topic) ?? projectTopics.has(topic)
+
   const toggleTopic = (topic: string) => {
-    setCollapsedTopics(prev => {
-      const next = new Set(prev)
-      if (next.has(topic)) next.delete(topic)
-      else next.add(topic)
+    setUserCollapsed(prev => {
+      const next = new Map(prev)
+      next.set(topic, !isTopicCollapsed(topic))
       return next
     })
   }
@@ -290,7 +313,7 @@ export default function TasksPanel({ tasks, events = [], language = 'en', onTask
 
             <AnimatePresence initial={false}>
             {topicEntries.map(([topic, topicTasks]) => {
-              const isCollapsed = collapsedTopics.has(topic)
+              const isCollapsed = isTopicCollapsed(topic)
               const doneCount = doneCountByTopic[topic] ?? 0
               const totalCount = topicTasks.length + doneCount
               const progress = totalCount > 0 ? Math.round(doneCount / totalCount * 100) : 0
