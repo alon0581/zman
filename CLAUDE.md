@@ -327,4 +327,4 @@ npx vitest run preview --reporter=verbose --disable-console-intercept
 | `PlacedBlock.requestIndex` is `-1` for repair-created blocks | Ugly, not wrong |
 | Plans held in process memory (10 min) | A redeploy between propose and confirm makes the user re-ask |
 | The v1 system prompt still references `get_free_slots` | Overridden by the dynamic suffix under the flag rather than rewritten |
-| `google-services.json` is a real Firebase project but `FIREBASE_SERVICE_ACCOUNT` is unset | Native push does not work; ntfy is the working path |
+| `NTFY_TOPIC_SECRET` and `ADMIN_USER_IDS` are unset on Railway | Verified 2026-08-16. Nothing is ever delivered (ntfy is the working channel and it has no secret), and `/api/admin/*` 403s even for the owner. `FIREBASE_SERVICE_ACCOUNT` **is** set — an earlier note here claiming otherwise was stale |
