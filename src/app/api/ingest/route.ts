@@ -147,9 +147,22 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Parsed before the main try so that a malformed body answers 400 and not the
+  // 500 the catch-all would give it. Verified against the live route: a POST with
+  // no multipart boundary at all makes `formData()` throw, and "the server broke"
+  // is the wrong thing to tell a caller that sent a bad request.
+  let form: FormData
+  try {
+    form = await req.formData()
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: 'bad_request', reply: 'הבקשה לא הגיעה כטופס תקין.' },
+      { status: 400 },
+    )
+  }
+
   try {
     // ── What was said ────────────────────────────────────────────────────────
-    const form = await req.formData()
     const typed = field(form, 'text')
     const lang = field(form, 'lang') || 'he'
     const timezone = field(form, 'timezone') || DEFAULT_TIMEZONE

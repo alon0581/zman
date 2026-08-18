@@ -261,6 +261,22 @@ describe('input', () => {
     expect(runTurnMock).not.toHaveBeenCalled()
   })
 
+  // Caught live: a POST with no multipart boundary makes formData() throw, and
+  // before this it fell through to the catch-all and answered 500 — telling the
+  // caller the server broke when the caller had sent a bad request.
+  it('answers 400, not 500, when the body is not a readable form', async () => {
+    const POST = await load()
+    const bad = {
+      headers: new Headers({ authorization: `Bearer ${TOKEN}` }),
+      formData: async () => { throw new TypeError('Could not parse content as FormData') },
+    } as unknown as NextRequest
+    const res = await POST(bad)
+
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('bad_request')
+    expect(runTurnMock).not.toHaveBeenCalled()
+  })
+
   // A Shortcut cannot wait as long as a browser tab.
   it('caps the tool loop well below the 90s the browser path allows', async () => {
     const POST = await load()
