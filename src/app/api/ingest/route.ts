@@ -91,11 +91,34 @@ function profileFile(userId: string) {
   return path.join(DATA_DIR, 'users', assertSafeUserId(userId), 'profile.json')
 }
 
-/** `Bearer <token>`, case-insensitive scheme, nothing else accepted. */
-function bearerFrom(req: NextRequest): string | null {
-  const raw = req.headers.get('authorization') ?? ''
-  const m = /^Bearer\s+(.+)$/i.exec(raw.trim())
-  return m ? m[1].trim() : null
+/**
+ * The token, from whichever of three places it arrived.
+ *
+ * `Authorization: Bearer <token>` is the right way and stays first. The other
+ * two exist because of what actually happened in practice: the Shortcuts app
+ * dropped the header list when the request method was changed, so the phone sent
+ * `auth=no` and every failure looked like a network problem. A credential the
+ * user cannot reliably attach is not a security control, it is a broken feature.
+ *
+ * `?t=` is a deliberate, documented trade and NOT a pattern to copy: a secret in
+ * a query string is written to every access log it passes through. It is here
+ * because this is a single-user personal deployment, the token is scoped to this
+ * one route, and rotating it is one command. Prefer a header wherever the client
+ * can be trusted to send one.
+ */
+function tokenFrom(req: NextRequest): { token: string | null; via: string } {
+  const auth = (req.headers.get('authorization') ?? '').trim()
+  const bearer = /^Bearer\s+(.+)$/i.exec(auth)
+  if (bearer) return { token: bearer[1].trim(), via: 'bearer' }
+
+  // No scheme prefix to get wrong, for clients whose header UI is fiddly.
+  const custom = (req.headers.get('x-zman-token') ?? '').trim()
+  if (custom) return { token: custom, via: 'header' }
+
+  const query = (req.nextUrl?.searchParams?.get('t') ?? '').trim()
+  if (query) return { token: query, via: 'query' }
+
+  return { token: null, via: 'none' }
 }
 
 function field(form: FormData, name: string): string {
@@ -176,13 +199,13 @@ async function readIncoming(req: NextRequest): Promise<Incoming | null> {
  * never left the phone.
  */
 export async function GET(req: NextRequest) {
-  console.log(`[ingest] <- GET probe auth=${req.headers.get('authorization') ? 'yes' : 'no'}`)
+  const probe = tokenFrom(req)
+  console.log(`[ingest] <- GET probe token_via=${probe.via}`)
 
   if (!TOKEN || !USER_EMAIL) {
     return NextResponse.json({ ok: false, reply: 'השרת לא מוגדר לקיצור.' }, { status: 401 })
   }
-  const presented = bearerFrom(req)
-  if (!presented || !safeEqual(presented, TOKEN)) {
+  if (!probe.token || !safeEqual(probe.token, TOKEN)) {
     // Deliberately answers 200 with ok:false rather than 401. The point of this
     // endpoint is to be READ by a human through a Shortcut, and Shortcuts turns
     // a non-2xx into a generic failure that hides the sentence explaining what
@@ -209,7 +232,8 @@ export async function POST(req: NextRequest) {
   const startedAt = Date.now()
   const ct = req.headers.get('content-type') ?? '(none)'
   const len = req.headers.get('content-length') ?? '?'
-  console.log(`[ingest] <- content-type=${ct} bytes=${len} auth=${req.headers.get('authorization') ? 'yes' : 'no'}`)
+  const presentedToken = tokenFrom(req)
+  console.log(`[ingest] <- content-type=${ct} bytes=${len} token_via=${presentedToken.via}`)
   const done = (status: number, note = '') =>
     console.log(`[ingest] -> ${status} in ${Date.now() - startedAt}ms ${note}`)
 
@@ -221,10 +245,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'not_configured' }, { status: 401 })
   }
 
-  const presented = bearerFrom(req)
   // `safeEqual` returns false on a length mismatch rather than throwing, so a
   // wrong-length token is a 401 and not a 500.
-  if (!presented || !safeEqual(presented, TOKEN)) {
+  if (!presentedToken.token || !safeEqual(presentedToken.token, TOKEN)) {
     done(401, 'unauthorized')
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }

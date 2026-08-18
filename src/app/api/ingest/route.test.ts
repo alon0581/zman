@@ -79,7 +79,7 @@ function request(form: Record<string, string | Blob>, auth: string | null = `Bea
   for (const [k, v] of Object.entries(form)) fd.append(k, v)
   const headers = new Headers({ 'content-type': 'multipart/form-data; boundary=abc' })
   if (auth !== null) headers.set('authorization', auth)
-  return { headers, formData: async () => fd } as unknown as NextRequest
+  return { headers, nextUrl: new URL('https://x/api/ingest'), formData: async () => fd } as unknown as NextRequest
 }
 
 /** A raw-body request — what "Request Body: File" in Shortcuts actually sends. */
@@ -91,6 +91,7 @@ function rawRequest(
   const headers = new Headers({ 'content-type': contentType, authorization: `Bearer ${TOKEN}`, ...extra })
   return {
     headers,
+    nextUrl: new URL('https://x/api/ingest'),
     text: async () => (typeof body === 'string' ? body : ''),
     arrayBuffer: async () => (typeof body === 'string' ? new ArrayBuffer(0) : body),
     formData: async () => { throw new TypeError('not a form') },
@@ -284,6 +285,7 @@ describe('input', () => {
     const POST = await load()
     const bad = {
       headers: new Headers({ authorization: `Bearer ${TOKEN}`, 'content-type': 'multipart/form-data; boundary=x' }),
+      nextUrl: new URL('https://x/api/ingest'),
       formData: async () => { throw new TypeError('Could not parse content as FormData') },
     } as unknown as NextRequest
     const res = await POST(bad)
@@ -460,6 +462,7 @@ describe('raw body (Request Body: File)', () => {
     const POST = await load()
     const noAuth = {
       headers: new Headers({ 'content-type': 'audio/m4a' }),
+      nextUrl: new URL('https://x/api/ingest'),
       arrayBuffer: async () => clip(),
     } as unknown as NextRequest
     expect((await POST(noAuth)).status).toBe(401)
@@ -469,10 +472,10 @@ describe('raw body (Request Body: File)', () => {
 // ── The reachability probe ──────────────────────────────────────────────────
 
 describe('GET probe', () => {
-  const getReq = (auth: string | null = `Bearer ${TOKEN}`) => {
+  const getReq = (auth: string | null = `Bearer ${TOKEN}`, url = 'https://x/api/ingest') => {
     const headers = new Headers()
     if (auth !== null) headers.set('authorization', auth)
-    return { headers } as unknown as NextRequest
+    return { headers, nextUrl: new URL(url) } as unknown as NextRequest
   }
 
   it('confirms reachability and a good token', async () => {
@@ -502,5 +505,52 @@ describe('GET probe', () => {
     const mod = await (async () => { await load(); return import('./route') })()
     await mod.GET(getReq())
     expect(runTurnMock).not.toHaveBeenCalled()
+  })
+})
+
+// ── Where the token may come from ───────────────────────────────────────────
+//
+// The Shortcuts app dropped the header list when the request method changed, so
+// the phone sent no Authorization at all and every failure looked like a network
+// problem. These pin the two fallbacks that exist because of that.
+
+describe('token sources', () => {
+  const req = (headers: Record<string, string>, url = 'https://x/api/ingest') =>
+    ({ headers: new Headers(headers), nextUrl: new URL(url) }) as unknown as NextRequest
+
+  it('accepts Authorization: Bearer', async () => {
+    await load()
+    const { GET } = await import('./route')
+    expect((await (await GET(req({ authorization: `Bearer ${TOKEN}` }))).json()).ok).toBe(true)
+  })
+
+  it('accepts X-Zman-Token, which has no scheme prefix to get wrong', async () => {
+    await load()
+    const { GET } = await import('./route')
+    expect((await (await GET(req({ 'x-zman-token': TOKEN }))).json()).ok).toBe(true)
+  })
+
+  it('accepts ?t= in the URL, so no header UI is involved at all', async () => {
+    await load()
+    const { GET } = await import('./route')
+    const res = await GET(req({}, `https://x/api/ingest?t=${TOKEN}`))
+    expect((await res.json()).ok).toBe(true)
+  })
+
+  it('still refuses a wrong token from any of the three', async () => {
+    await load()
+    const { GET } = await import('./route')
+    expect((await (await GET(req({ 'x-zman-token': 'nope-nope-nope-nope' }))).json()).ok).toBe(false)
+    expect((await (await GET(req({}, 'https://x/api/ingest?t=nope-nope-nope-nope'))).json()).ok).toBe(false)
+    expect((await (await GET(req({}))).json()).ok).toBe(false)
+  })
+
+  // Order matters only so the log line names the right source; a caller sending
+  // both is not an error, and the header is the documented one.
+  it('prefers the Authorization header when more than one is present', async () => {
+    await load()
+    const { GET } = await import('./route')
+    const res = await GET(req({ authorization: `Bearer ${TOKEN}` }, 'https://x/api/ingest?t=wrong-wrong-wrong'))
+    expect((await res.json()).ok).toBe(true)
   })
 })
