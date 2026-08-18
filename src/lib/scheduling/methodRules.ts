@@ -8,6 +8,15 @@
  *
  * METHOD_RULES is an exhaustive Record over SchedulingMethod, so adding a 19th
  * method to that union is a compile error here until it gets configured.
+ *
+ * This is THE table. Every number below has exactly one home and is read, never
+ * copied: `breakMinutes` / `breakAfterMinutes` by place.ts and plan.ts,
+ * `kanban.maxSessionsPerDay` also by boardRules.ts as the board's WIP limit, and
+ * the pomodoro / 52-17 / time_boxing / theme_days numbers by systemPrompt.ts,
+ * which interpolates them rather than restating them. A second copy of any of
+ * these has already gone wrong twice in this codebase (METHOD_SESSION_HOURS,
+ * and three different values for Kanban's WIP limit), so if you need one of
+ * these numbers somewhere new, import it.
  */
 
 import { SchedulingMethod, METHOD_LABELS } from './methodMapper'
@@ -21,11 +30,23 @@ import { MethodRules, Weekday, Category } from './types'
 // urgency and importance", "capture, clarify, organize, review, engage"), so
 // there is no user-facing promise to keep here — we pick sensible general-
 // purpose block numbers instead of inventing a shape the method never claimed.
-// A 50-minute default session, capped between 25 and 90 minutes, mirrors a
+// A 45-minute default session, capped between 25 and 90 minutes, mirrors a
 // normal work-block length without implying pomodoro-style breaks or
 // deep-work-style contiguity, since neither is part of these methods' pitch.
+//
+// 45, not 50, and that is a correction rather than a preference. plan.ts snaps
+// every nominal length with `roundToQuarter` before `clampBlock`, because
+// candidate starts live on a 15-minute grid (place.ts, GRANULARITY_MINUTES) and
+// a schedule that reads 10:00–10:50, 11:05–11:55 is noise a person has to
+// decode. roundToQuarter(50) is 45, so the configured 50 could never be
+// delivered by any of these four methods — the number was decoration. Fixing the
+// rounding instead would have been the wrong half to change: the grid is the
+// engine's whole notion of a legible time, whereas "a normal work block" is
+// happy at 45. The one number a method configures must be the one it schedules,
+// which is also what makes METHOD_FIT (score.ts) able to score a full mark
+// instead of permanently topping out at 0.9 of its weight.
 const NEUTRAL_PRIORITIZATION_DEFAULTS: Omit<MethodRules, 'hardestFirst'> = {
-  sessionMinutes: 50,
+  sessionMinutes: 45,
   minBlock: 25,
   maxBlock: 90,
   maxSessionsPerDay: 6,
@@ -35,6 +56,11 @@ const NEUTRAL_PRIORITIZATION_DEFAULTS: Omit<MethodRules, 'hardestFirst'> = {
 
 export const METHOD_RULES: Record<SchedulingMethod, MethodRules> = {
   // "25-min focused sessions with 5-min breaks" — METHOD_LABELS.pomodoro
+  //
+  // The break is real: consecutive sessions land exactly 5 minutes apart and
+  // nothing may be booked into that gap. It costs neither a session slot nor a
+  // minute of dailyCapMinutes, because it is empty time rather than a block —
+  // which is what keeps maxSessionsPerDay honest at eight actual sessions.
   pomodoro: {
     sessionMinutes: 25,
     minBlock: 25,
@@ -170,7 +196,11 @@ export const METHOD_RULES: Record<SchedulingMethod, MethodRules> = {
     sessionMinutes: 60,
     minBlock: 30,
     maxBlock: 120,
-    maxSessionsPerDay: 4, // small number, echoing "limit work-in-progress"
+    // "Limit work-in-progress" as a number, and it has TWO readers: the engine's
+    // per-day session ceiling and BOARD_RULES.kanban.wipLimit, which imports it.
+    // The board and the calendar have to agree — a board that refuses a 4th card
+    // while the engine schedules a 4th block is the same lie in two windows.
+    maxSessionsPerDay: 4,
     preferContiguous: false,
     hardestFirst: false,
     dailyCapMinutes: 300,

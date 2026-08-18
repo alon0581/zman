@@ -40,7 +40,7 @@ deploys from `main`. There is no staging. Consequences:
 | Voice | OpenAI `gpt-4o-transcribe` — the *only* thing `OPENAI_API_KEY` is for |
 | Auth | File-based: `crypto.scryptSync` + HMAC cookie. No external service |
 | Storage | JSON files under `DATA_DIR` (Railway volume at `/app/data`) |
-| Tests | **Vitest — 687 passing.** `npm test` |
+| Tests | **Vitest — 774 passing.** `npm test` |
 | Notifications | ntfy (`NTFY_TOPIC_SECRET`) |
 
 **Deleted on purpose — do not reintroduce:** Supabase (and `src/proxy.ts`, which
@@ -83,6 +83,29 @@ Three properties the design rests on. Breaking any of them breaks the engine:
 3. **Every choice is explainable.** Blocks carry the `ScoredReason`s that won
    them. **The AI paraphrases those sentences and is forbidden to invent its
    own** — the reason is data, not narration.
+
+### Breaks are spacing, not blocks (2026-08-18)
+
+`MethodRules.breakMinutes` / `breakAfterMinutes` had **no reader anywhere**, so
+Pomodoro never scheduled its 5 minutes and 52/17 never scheduled its 17 — the UI
+promised a cycle and the calendar delivered 25 minutes of work followed by
+whatever hole the scorer left (35 minutes, typically). Now:
+
+- `spacingAround` (place.ts) inflates *the plan's own* blocks by the method's
+  break instead of `profile.bufferMinutes`. The buffer is breathing room around
+  the user's **existing** commitments; between two sessions of the method's own
+  rhythm the break governs. It cuts both ways — looser for Pomodoro (5 < 15),
+  tighter for 52/17 (17 > 15).
+- `placeCycled` (plan.ts) offers the next session the slot exactly one break
+  later, reusing `pinnedStart` the same way `placeRecurring` defends a series'
+  anchor time. Spacing alone was not enough: the *scorer* picks the slot, and
+  `BUFFER_RESPECTED` rewards distance.
+
+A break is **never a `PlacedBlock`** — it would have to ship without reasons
+(breaking invariant 3), and it would eat a `maxSessionsPerDay` slot and
+`dailyCapMinutes` minutes, halving Pomodoro's promised eight sessions. It is also
+not part of the block length, so `clampBlock`'s bounds still describe work only.
+Inert for the other 16 methods, asserted by digest identity in `breaks.test.ts`.
 
 ### Time: `LocalISO` or nothing
 
@@ -157,10 +180,13 @@ Five things that are load-bearing:
    tappable "?". Missing data may only ever make a state worse, never better.
 
 Numbers that exist elsewhere are **derived, never re-typed** — `BOARD_RULES`
-stores no session length. That rule exists because the codebase already carries
-the bug: `METHOD_SESSION_HOURS` and `METHOD_RULES[m].sessionMinutes` are two
-tables for one number and **disagree on 10 of 18 methods** (`the_one_thing` 180
-vs 120, `eisenhower` 90 vs 50, …). Mostly absorbed by `clampBlock`; worth fixing.
+stores no session length, and `BOARD_RULES.kanban.wipLimit` imports
+`METHOD_RULES.kanban.maxSessionsPerDay` instead of restating it. That rule exists
+because the codebase carried the bug twice: `METHOD_SESSION_HOURS` was a second
+session-length table disagreeing with `METHOD_RULES[m].sessionMinutes` on 10 of
+18 methods (**deleted 2026-08-17 — do not reintroduce one anywhere, including in
+the prompt**), and Kanban's WIP limit existed as three different values (rules 4,
+board 3, prompt "max 3") until 2026-08-18.
 
 **Engine change that ships unflagged:** `PlacementRequest.dependsOn` is finally
 read. `depOrder.ts` does a Kahn sort (not DFS — DFS lets a long chain jump ahead
@@ -169,7 +195,7 @@ prerequisite's end. Ordering alone isn't enough: a greedy pass would still put A
 on Tuesday afternoon and B on Tuesday morning. With no `dependsOn` present the
 ordering is byte-identical to before, asserted by an identity test.
 
-## Life phases — `src/lib/phases/` (`PHASES`, off by default)
+## Life phases — `src/lib/phases/` (`PHASES`, **on in production since 2026-08-17**)
 
 The app's model of its user was a single flat snapshot written once at onboarding.
 Nothing aged: no expiry, no decay, no re-validation. A phase is a **named period**
@@ -206,9 +232,16 @@ signal**; that is why `updated_at` exists. Scoping is not deletion: a closed
 phase's rows stay in `memory.json` and merely stop being injected.
 
 `buildSystemPrompt` takes an optional phase context; **with it absent the block is
-byte-identical to before** (legacy path kept verbatim and separate). Priors gained
-a 30-day half-life and a 120-day floor, off unless `now` is passed — so
-`FeedbackSignal.at` finally has a reader.
+byte-identical to before** (legacy path kept verbatim and separate).
+
+Priors carry a 30-day half-life and a 120-day floor, applied before the ±3 clamp
+and inert unless `now` is passed. **That parameter went unpassed for two days**:
+`adapter.ts` called `buildPriors(feedback, memory)` with no `opts`, so decay and
+the closed-phase filter were unreachable in production while 13 tests asserted
+them. Fixed 2026-08-17 — `buildSchedulingContext` now forwards `now` and
+`closedPhaseIds`. If you add another `buildPriors` call site, forward both, or
+you have silently reintroduced "a three-month-old signal weighs as much as
+yesterday's".
 
 ## Storage — `src/lib/store/`
 
@@ -302,9 +335,9 @@ the entire feature was dead code.
 
 ```bash
 npm run dev          # localhost:3000
-npm test             # Vitest — 687 tests
+npm test             # Vitest — 774 tests
 npx tsc --noEmit     # type check
-npm run lint         # 4 pre-existing errors, all in untouched components
+npm run lint         # 2 pre-existing errors / 35 warnings, all in untouched components
 ```
 
 `--reporter=basic` was removed in Vitest 3 and now crashes with `ERR_LOAD_URL`.
@@ -322,9 +355,10 @@ npx vitest run preview --reporter=verbose --disable-console-intercept
 
 | Gap | Note |
 |---|---|
-| Friday/Saturday held clear by default | Now a profile setting: `schedule_weekend` = `none` \| `friday` \| `both`, read by `weekendDaysFor` in `adapter.ts`. Measured on the fixture week: 15 sessions default, 19 with Friday, 23 with both. Awaiting the owner's answer, but it is a settings change now, not a code change |
+| Friday/Saturday held clear by default | Now a profile setting: `schedule_weekend` = `none` \| `friday` \| `both`, read by `weekendDaysFor` in `adapter.ts`. Measured on the fixture week: 16 sessions default, 21 with Friday, 26 with both — remeasured 2026-08-18, since making Pomodoro's break real fits more work into the same days. Awaiting the owner's answer, but it is a settings change now, not a code change |
 | ~~No `extend_horizon` relaxation~~ | **Closed.** Proposes `+7d` and measures the payoff; reports 0 for deadline-bound work, which is the honest answer |
 | `PlacedBlock.requestIndex` is `-1` for repair-created blocks | Ugly, not wrong |
 | Plans held in process memory (10 min) | A redeploy between propose and confirm makes the user re-ask |
 | The v1 system prompt still references `get_free_slots` | Overridden by the dynamic suffix under the flag rather than rewritten |
+| `buildMethodContext` still hand-writes the other 13 methods' copy | The five that stated a number the engine owns (pomodoro, rule_5217, theme_days, time_boxing, kanban) now interpolate it from `METHOD_RULES`. The rest state no number, so there is nothing to drift — but add a number there and you must derive it |
 | `NTFY_TOPIC_SECRET` and `ADMIN_USER_IDS` are unset on Railway | Verified 2026-08-16. Nothing is ever delivered (ntfy is the working channel and it has no secret), and `/api/admin/*` 403s even for the owner. `FIREBASE_SERVICE_ACCOUNT` **is** set — an earlier note here claiming otherwise was stale |

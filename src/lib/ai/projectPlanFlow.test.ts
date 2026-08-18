@@ -29,7 +29,7 @@ const sched: SchedulerCtx = { enabled: true, memory: [], feedback: [], timezone:
 
 function profileWith(method: string): UserProfile {
   return {
-    user_id: USER, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false,
+    user_id: USER, autonomy_mode: 'hybrid', theme: 'dark',
     language: 'he', onboarding_completed: true, productivity_peak: 'morning',
     preferred_hours: { start: 9, end: 20 },
     scheduling_method: method,

@@ -1,6 +1,8 @@
 import { UserProfile, CalendarEvent, AIMemory, Task, FeedbackSignal } from '@/types'
 import { format } from 'date-fns'
 import { METHOD_LABELS, type SchedulingMethod } from '@/lib/scheduling/methodMapper'
+import { METHOD_RULES } from '@/lib/scheduling/methodRules'
+import type { Weekday } from '@/lib/scheduling/types'
 import { classifyMobility } from '@/lib/scheduling/mobilityClassifier'
 
 // Compact "learn from actions" block — the last few rejection/move signals.
@@ -770,24 +772,68 @@ ${upcomingEvents || '(no upcoming events)'}`
   return { staticPrefix, dynamicSuffix }
 }
 
+// ── Method numbers the prompt is allowed to state ───────────────────────────
+//
+// Everything below is READ OFF `METHOD_RULES`, never restated. The prompt used
+// to carry its own copies and all three had drifted away from the engine:
+// theme_days listed Sun=focus/Mon=meetings/Tue=ops/Wed=projects/Thu=learning/
+// Fri=review while `themeDays` maps Sun/Tue to study, Mon/Wed to work, Thu to
+// admin and leaves Fri–Sat themeless; time_boxing offered the user 30/60/90-min
+// boxes while the rules clamp every box to exactly 45; kanban said "max 3" while
+// the rules say 4. In each case the ENGINE is what the user's calendar actually
+// gets, so the prompt is the side that was wrong — and a derived string cannot
+// drift again. Same rule methodRules.ts and boardRules.ts already state:
+// a number that exists elsewhere is derived, never re-typed.
+const WEEKDAY_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+/** "Sun=study, Mon=work, …" for the weekdays that actually carry a theme. */
+function themeDayMap(): { themed: string; free: string } {
+  const themes = METHOD_RULES.theme_days.themeDays ?? {}
+  const themed: string[] = []
+  const free: string[] = []
+  for (let day = 0; day < WEEKDAY_EN.length; day++) {
+    const theme = themes[day as Weekday]
+    if (theme) themed.push(`${WEEKDAY_EN[day]}=${theme}`)
+    else free.push(WEEKDAY_EN[day])
+  }
+  return { themed: themed.join(', '), free: free.join('/') }
+}
+
+/**
+ * One work+break cycle, for the two methods that promise one.
+ *
+ * The engine schedules the break as empty time between consecutive session
+ * blocks rather than as a calendar entry of its own (see `spacingAround` in
+ * place.ts), so that is what the model is told — otherwise it would describe a
+ * "break event" the user will never find on their calendar.
+ */
+function cycleCopy(method: 'pomodoro' | 'rule_5217'): string {
+  const { sessionMinutes, breakMinutes } = METHOD_RULES[method]
+  return `${sessionMinutes}-min focus + ${breakMinutes}-min break (one cycle = ${sessionMinutes + (breakMinutes ?? 0)} min). The break is the GAP the engine leaves between blocks, not an event on the calendar`
+}
+
 /** Returns method-specific AI behavior instructions — compact version */
 function buildMethodContext(method: string, secondary: string[] = []): string {
+  const theme = themeDayMap()
+  const wip = METHOD_RULES.kanban.maxSessionsPerDay
+  const box = METHOD_RULES.time_boxing.sessionMinutes
+
   const m: Record<string, string> = {
-    pomodoro: `METHOD: Pomodoro 🍅 — Split work into 25-min focus + 5-min break cycles. After 4 → long 15-30 min break. Refer to sessions as "פומודורו". All blocks are flexible.`,
+    pomodoro: `METHOD: Pomodoro 🍅 — Split work into ${cycleCopy('pomodoro')}. Refer to sessions as "פומודורו". All blocks are flexible.`,
     deep_work: `METHOD: Deep Work 🧠 — Schedule 2-3h UNINTERRUPTED blocks in PEAK hours only. No meetings/calls during. Blocks are fixed (never move). Batch shallow tasks separately.`,
     eisenhower: `METHOD: Eisenhower 📊 — Classify tasks: Q1(urgent+important)→NOW, Q2(important)→peak hours, Q3(urgent only)→delegate/quick, Q4→eliminate. Ask "דחוף? חשוב?" if unclear.`,
     gtd: `METHOD: GTD 📥 — Capture→Clarify→Organize→Review→Engage. 2-min rule: do immediately if quick. Ask "מה הפעולה הבאה?" for vague tasks. Weekly review Friday/Saturday.`,
     time_blocking: `METHOD: Time Blocking 📅 — Every task gets a calendar block. No unstructured time during work hours. Group similar tasks. Morning=deep thinking, afternoon=meetings.`,
     ivy_lee: `METHOD: Ivy Lee 📝 — Each day: pick TOP 6 tasks, rank 1-6. Work #1 until done, then #2, etc. Never multitask. Unfinished→tomorrow's list. Max 6 visible sessions.`,
     eat_the_frog: `METHOD: Eat the Frog 🐸 — Hardest task FIRST in morning (1-2h after wake). Call it "הצפרדע". Never schedule dreaded tasks for afternoon. Rest of day is lighter.`,
-    theme_days: `METHOD: Theme Days 🗓️ — Each day=one theme (Sun=focus, Mon=meetings, Tue=ops, Wed=projects, Thu=learning, Fri=review). Only schedule matching tasks per day.`,
+    theme_days: `METHOD: Theme Days 🗓️ — Each day=one theme (${theme.themed}). ${theme.free} carry no theme — the weekend is kept clear. Only schedule matching tasks per day.`,
     the_one_thing: `METHOD: The One Thing 🎯 — Ask "מה הדבר האחד?" Schedule that in peak hours (2-4h block) FIRST. Everything else serves it. Push back on scattered scheduling.`,
     weekly_review: `METHOD: Weekly Review 🔄 — Friday/Sunday 45-60 min: clear inboxes, review tasks, check calendar, set 3 goals. When overwhelmed→"בוא נעשה review קצר".`,
     okr: `METHOD: OKR 🏆 — Link every task to a KR. Ask "לאיזה KR זה מקדם?" Weekly 15-min check-in. Question tasks that don't advance any KR.`,
-    kanban: `METHOD: Kanban 🗂️ — WIP limit: max 3 in-progress. "כבר 3 בתהליך — נסיים אחת קודם". Pull new work only when slot opens. Remove blockers immediately.`,
-    time_boxing: `METHOD: Time Boxing ⏱️ — Hard timeboxes: when time's up, STOP. Sizes: 30min(small), 60min(medium), 90min(large max). "כשהטיימר נגמר, עוצרים".`,
+    kanban: `METHOD: Kanban 🗂️ — WIP limit: max ${wip} in-progress. "כבר ${wip} בתהליך — נסיים אחת קודם". Pull new work only when slot opens. Remove blockers immediately.`,
+    time_boxing: `METHOD: Time Boxing ⏱️ — Hard timeboxes: when time's up, STOP. Every box is exactly ${box} min — no small/medium/large, no drift. "כשהטיימר נגמר, עוצרים".`,
     moscow: `METHOD: MoSCoW 🎯 — Must(week fails without)/Should(important)/Could(nice)/Won't(not now). Only Must+Should on calendar. Could→only if time remains.`,
-    rule_5217: `METHOD: 52/17 ⏲️ — EXACTLY 52 min work + 17 min REAL break (full disconnect). Cycle=70 min. After 3 cycles→longer 30+ min rest.`,
+    rule_5217: `METHOD: 52/17 ⏲️ — EXACTLY ${cycleCopy('rule_5217')}. The break is a FULL disconnect, not a lighter task.`,
     scrum: `METHOD: Scrum 🏃 — 1-2 week sprints with committed goal. Daily: "מה עשיתי? מה אעשה? מה חוסם?" Sprint review at end. Blockers→solve immediately.`,
     energy_management: `METHOD: Energy ⚡ — Match task to energy: HIGH(peak)=deep work, MEDIUM=meetings/routine, LOW=admin/filing. Guard recovery time. Flag 13-15 energy dip.`,
     twelve_week_year: `METHOD: 12 Week Year 📆 — 12 weeks = a full year. Define 1-3 goals per cycle. Weekly scorecard (≥85% execution). Every week counts — no "there's still time".`,
@@ -796,22 +842,25 @@ function buildMethodContext(method: string, secondary: string[] = []): string {
   const primaryContext = m[method] ?? ''
   if (!primaryContext) return ''
 
+  // Same derivation rule as above: a complementary hint is still the prompt
+  // stating a number, so it reads it from METHOD_RULES too. kanban's copy here
+  // said "max 3 WIP" — the third of the three values that number had.
   const secondaryHints: Record<string, string> = {
     eat_the_frog: '🐸 Complement: hardest task FIRST every morning',
     theme_days: '🗓️ Complement: align tasks with day theme',
     the_one_thing: '🎯 Complement: identify ONE thing that makes everything else easier',
     weekly_review: '🔄 Complement: 45-min weekly review Friday/Sunday',
     okr: '🏆 Complement: link tasks to quarterly KRs',
-    kanban: '🗂️ Complement: max 3 WIP, finish before starting new',
-    time_boxing: '⏱️ Complement: hard time limits, stop when box ends',
-    pomodoro: '🍅 Complement: 25-min focus + 5-min break cycles',
+    kanban: `🗂️ Complement: max ${wip} WIP, finish before starting new`,
+    time_boxing: `⏱️ Complement: hard ${box}-min boxes, stop when the box ends`,
+    pomodoro: `🍅 Complement: ${METHOD_RULES.pomodoro.sessionMinutes}-min focus + ${METHOD_RULES.pomodoro.breakMinutes}-min break cycles`,
     deep_work: '🧠 Complement: protect 2-3h uninterrupted peak-hour blocks',
     eisenhower: '📊 Complement: classify by urgency+importance before scheduling',
     gtd: '📥 Complement: capture everything, clarify next action, weekly review',
     time_blocking: '📅 Complement: every task on calendar, no unscheduled time',
     ivy_lee: '📝 Complement: pick 6 tasks daily, work in priority order',
     moscow: '🎯 Complement: Must/Should/Could/Won\'t classification',
-    rule_5217: '⏲️ Complement: 52-min work + 17-min real break cycles',
+    rule_5217: `⏲️ Complement: ${METHOD_RULES.rule_5217.sessionMinutes}-min work + ${METHOD_RULES.rule_5217.breakMinutes}-min real break cycles`,
     scrum: '🏃 Complement: work in sprints with committed goals',
     energy_management: '⚡ Complement: match task difficulty to energy level',
     twelve_week_year: '📆 Complement: frame in 12-week goals, every week counts',

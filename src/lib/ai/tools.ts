@@ -13,13 +13,28 @@ import OpenAI from 'openai'
  * pattern that produced the bug the engine exists to fix — the model reaches for
  * the arithmetic tool, does the arithmetic itself, and lands a study block inside
  * an all-day reserve-duty event. A tool that is not offered cannot be called.
+ *
+ * NOTE ON SESSION LENGTHS. Three descriptions here used to order the model to
+ * "consult the METHOD SESSION SIZES table in your system prompt". No such table
+ * has ever been in the prompt, so the instruction sent the model to look up a
+ * number that did not exist and then invent one — with example values baked into
+ * the sentence (Pomodoro=30, Deep Work=150) that disagreed with METHOD_RULES
+ * anyway. The instruction was removed rather than the table written, because
+ * `METHOD_SESSION_HOURS` — the last attempt at a second session-length table —
+ * was deliberately deleted from schedulerTools.ts for disagreeing with
+ * `METHOD_RULES[m].sessionMinutes` on ten of eighteen methods. Writing the table
+ * into the prompt would recreate exactly that bug in the one place it cannot be
+ * type-checked. The model is instead pointed at the METHOD line the prompt does
+ * emit (buildMethodContext), which is itself derived from METHOD_RULES; and
+ * under SCHEDULER_V2 it should not be choosing a length at all, since omitting
+ * `session_length_hours` is what tells the engine to use the method's own.
  */
 export const calendarTools: OpenAI.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
       name: 'create_event',
-      description: "Create a new calendar event. ALWAYS call list_events first to check for duplicates before creating. The server automatically detects time conflicts and returns { error: 'conflict', conflictingEvent, alternatives } if there is an overlap — in that case, check the conflicting event's mobility_type: if flexible (🟡) move it first via move_event then retry; if ask_first (🔵) ask user; if fixed (🔒) use alternatives. Also returns buffer_warnings if back-to-back. When the user doesn't specify duration: use the METHOD SESSION SIZES table. Set mobility_type from the same table. Prefer peak hours for hard tasks.",
+      description: "Create a new calendar event. ALWAYS call list_events first to check for duplicates before creating. The server automatically detects time conflicts and returns { error: 'conflict', conflictingEvent, alternatives } if there is an overlap — in that case, check the conflicting event's mobility_type: if flexible (🟡) move it first via move_event then retry; if ask_first (🔵) ask user; if fixed (🔒) use alternatives. Also returns buffer_warnings if back-to-back. When the user doesn't specify duration: use the session length named on the METHOD line of your system prompt. Prefer peak hours for hard tasks.",
       parameters: {
         type: 'object',
         properties: {
@@ -100,7 +115,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'get_free_slots',
-      description: 'Find available time slots between two dates. Call this BEFORE any scheduling decision. Set prefer_peak=true for study/deep work tasks. Use min_duration_minutes matching the user\'s method from the METHOD SESSION SIZES table (e.g. Pomodoro=30, Deep Work=150, Time Boxing=45). Each slot includes is_peak=true if in peak window.',
+      description: 'Find available time slots between two dates. Call this BEFORE any scheduling decision. Set prefer_peak=true for study/deep work tasks. Set min_duration_minutes to the session length named on the METHOD line of your system prompt. Each slot includes is_peak=true if in peak window.',
       parameters: {
         type: 'object',
         properties: {
@@ -117,7 +132,7 @@ export const calendarTools: OpenAI.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'break_down_task',
-      description: 'Break a big task (exam, project, deadline) into multiple scheduled sessions. CRITICAL: Consult the METHOD SESSION SIZES table in your system prompt — use the user\'s scheduling_method to choose session_length_hours and title format (e.g. Pomodoro=0.5h, Deep Work=2.5h, Time Boxing=0.75h). The server has a safety net but you should pass correct values. Automatically uses peak-hour slots.',
+      description: 'Break a big task (exam, project, deadline) into multiple scheduled sessions. OMIT session_length_hours unless the user named a length themselves — the server then uses the session length of their scheduling_method, which is the same number the METHOD line of your system prompt describes. Do not guess one. Automatically uses peak-hour slots.',
       parameters: {
         type: 'object',
         properties: {

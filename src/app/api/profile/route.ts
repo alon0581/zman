@@ -13,7 +13,6 @@ const DEFAULT_PROFILE = (userId: string): UserProfile => ({
   user_id: userId,
   autonomy_mode: 'hybrid',
   theme: 'dark',
-  voice_response_enabled: false,
   language: 'en',
   onboarding_completed: true,
   productivity_peak: 'morning',
@@ -51,16 +50,6 @@ export async function POST(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json() as Record<string, unknown>
-
-  // Handle disconnect: clear all AI credentials (legacy fields — per-user API
-  // keys were removed; Settings never shipped a UI to set one)
-  if (body.ai_api_key_clear) {
-    delete body.ai_api_key_clear
-    body.ai_api_key_encrypted = undefined
-    body.ai_api_key_masked = undefined
-    body.ai_provider = undefined
-    body.ai_model = undefined
-  }
 
   // A mutex only works if every writer joins it. This read-modify-write is
   // synchronous and therefore safe on its own, but the cron takes the same lock

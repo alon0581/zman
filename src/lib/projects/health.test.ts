@@ -10,6 +10,8 @@
  *    worse the moment you plan the project (the double-count trap)
  *  - reporting "on track" for a project that has no deadline to be on track for
  *  - reporting "on track" from estimates that do not exist
+ *  - reporting "no time estimate" once a plan has already scheduled everything
+ *  - reporting "on track" for a project that has no tasks at all
  *  - reporting hours a user never worked
  */
 
@@ -210,6 +212,44 @@ describe('deadline risk — unknown must never render as fine', () => {
 
     expect(d?.state).toBe('unknown')
     expect(d?.code).toBe('no_estimates')
+  })
+
+  it('reads as ok, not no_estimates, when remaining hits zero because the plan already covers it', () => {
+    // Pins the regression: remainingMinutes also lands on 0 right after a
+    // SUCCESSFUL plan_project -> apply_plan, once every task's estimate is fully
+    // covered by a future calendar block. That must not render as the same grey
+    // "no time estimate" failure as a project nobody ever estimated.
+    const tasks = [task({ id: 't1', estimated_hours: 2 })]
+    const events = [
+      event({ id: 'e1', start_time: '2026-08-18T09:00:00', end_time: '2026-08-18T11:00:00', ref: { kind: 'task', id: 't1' } }),
+    ]
+    const sigs = resolveSignals(project(), tasks, events, undefined, 'time_blocking', NOW)
+    const d = findSignal(sigs, 'deadline')
+
+    expect(d?.state).toBe('ok')
+    expect(d?.code).toBeUndefined()
+  })
+
+  it('does not report on track for a project that has no tasks at all', () => {
+    // An empty project is not a finished project. This must match the progress
+    // card's own 'no_tasks' signal, not read better than it.
+    const sigs = resolveSignals(project(), [], [], undefined, 'time_blocking', NOW)
+    const d = findSignal(sigs, 'deadline')
+
+    expect(d?.state).not.toBe('ok')
+    expect(d?.state).toBe('unknown')
+    expect(d?.code).toBe('no_tasks')
+  })
+
+  it('still reports ok "All done" when every task that ever existed is finished', () => {
+    // Distinguishes the empty-project case above from genuine completion: here
+    // totalLeafCount is nonzero and every leaf is done.
+    const tasks = [task({ id: 't1', status: 'done' }), task({ id: 't2', status: 'done' })]
+    const sigs = resolveSignals(project(), tasks, [], undefined, 'time_blocking', NOW)
+    const d = findSignal(sigs, 'deadline')
+
+    expect(d?.state).toBe('ok')
+    expect(d?.text.he).toBe('הכול סגור')
   })
 
   it('caps the state at warn when only some tasks are estimated, and says so', () => {

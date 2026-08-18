@@ -85,6 +85,40 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     .then(data => { if (data?.tasks) setTasks(data.tasks) })
     .catch(() => {})
 
+  // Guards fetchProjectHealth against overlapping requests: a rapid sequence of
+  // task-status taps (each wanting a fresh signal strip) must not open one
+  // health request per tap. A fetch already in flight absorbs later callers by
+  // queuing a single follow-up, so the result always catches up to the latest
+  // write without ever running two requests at once.
+  const healthFetchStateRef = useRef({ inFlight: false, queued: false })
+  const fetchProjectHealth = useCallback(() => {
+    if (!projectsEnabled) return
+    if (healthFetchStateRef.current.inFlight) {
+      healthFetchStateRef.current.queued = true
+      return
+    }
+    // The drain loop lives inside the callback rather than the callback calling
+    // itself from .finally() — a self-reference would read the binding before it
+    // is declared, so a later render's version would never be the one that runs.
+    const drain = async () => {
+      healthFetchStateRef.current.inFlight = true
+      try {
+        do {
+          healthFetchStateRef.current.queued = false
+          const res = await fetch('/api/projects/health')
+          if (!res.ok) continue
+          const data = await res.json()
+          if (!data?.health) continue
+          setProjectHealth(data.health as ProjectHealthMap)
+          const first = Object.values(data.health)[0] as { board?: BoardRules } | undefined
+          if (first?.board) setBoardRules(first.board)
+        } while (healthFetchStateRef.current.queued)
+      } catch { /* the 30s poller is the fallback */ }
+      finally { healthFetchStateRef.current.inFlight = false }
+    }
+    void drain()
+  }, [projectsEnabled])
+
   // Two calls on purpose: the list paints immediately, while health runs the real
   // scheduling engine server-side and arrives a beat later. Bundling them would
   // make every project list wait on a placement pass.
@@ -94,16 +128,8 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.projects) setProjects(data.projects) })
       .catch(() => {})
-    fetch('/api/projects/health')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!data?.health) return
-        setProjectHealth(data.health as ProjectHealthMap)
-        const first = Object.values(data.health)[0] as { board?: BoardRules } | undefined
-        if (first?.board) setBoardRules(first.board)
-      })
-      .catch(() => {})
-  }, [projectsEnabled])
+    fetchProjectHealth()
+  }, [projectsEnabled, fetchProjectHealth])
 
   useEffect(() => {
     fetchTasks()
@@ -168,6 +194,9 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
       body: JSON.stringify({ status: newStatus, ...(completedAt ? { completed_at: completedAt } : {}) }),
     }).then(res => {
       if (!res.ok) throw new Error('task_update_failed')
+      // The board's columns already re-sorted from local state above; the signal
+      // strip reads project health, which only the server can recompute.
+      fetchProjectHealth()
     }).catch(() => {
       // Roll back the optimistic update — the write never actually landed.
       if (prevTask) setTasks(prev => prev.map(t => t.id === id ? prevTask : t))
@@ -249,9 +278,13 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
     }
   }, [needsOnboarding, chatEngine.isOnboarding])
 
-  // Show method selection modal when user has no scheduling method yet
+  // Show method selection modal when the user has no scheduling method yet.
+  // `method_prompt_dismissed` is what stops this from returning on every login
+  // for someone who closed it without choosing — the backfill used to prevent
+  // that by writing a guessed method, which is the behaviour we removed.
   useEffect(() => {
-    if (profile && profile.onboarding_completed && !profile.scheduling_method && !needsOnboarding) {
+    if (profile && profile.onboarding_completed && !profile.scheduling_method
+        && !profile.method_prompt_dismissed && !needsOnboarding) {
       const timer = setTimeout(() => setShowMethodModal(true), 800)
       return () => clearTimeout(timer)
     }
@@ -538,7 +571,19 @@ export default function AppShell({ user, profile: initialProfile, needsOnboardin
             handleProfileUpdate(updated)
             setShowMethodModal(false)
           }}
-          onSkip={() => setShowMethodModal(false)}
+          onSkip={() => {
+            setShowMethodModal(false)
+            // Persist the decline, or this returns on the next load. Fire and
+            // forget: the worst case is being asked once more, which is a far
+            // smaller failure than silently scheduling them by a guess.
+            fetch('/api/profile', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ method_prompt_dismissed: true }),
+            })
+              .then(res => { if (res.ok) handleProfileUpdate({ ...profile, method_prompt_dismissed: true }) })
+              .catch(() => { /* asked again next time; nothing is lost */ })
+          }}
         />
       )}
     </div>

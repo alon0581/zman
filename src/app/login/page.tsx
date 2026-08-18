@@ -1,6 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import Link from 'next/link'
+import { useState, useSyncExternalStore } from 'react'
+
+/**
+ * True only inside the Capacitor shell. Detected the same way capacitor-push.ts
+ * does, but read through useSyncExternalStore rather than an effect: the server
+ * snapshot is `false`, so the markup React hydrates against always matches, and
+ * no setState-in-effect is needed to correct it afterwards.
+ */
+const subscribeToNothing = () => () => {}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const isNativeNow = () => !!(globalThis as any).Capacitor?.isNativePlatform?.()
+const isNativeOnServer = () => false
 
 type Mode = 'login' | 'register'
 
@@ -22,6 +34,10 @@ export default function LoginPage() {
   const [confirm, setConfirm]   = useState('')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
+
+  // Inside the native shell the marketing page is a dead end: it drops the user
+  // onto a website inside their own installed app with no way back out.
+  const isNative = useSyncExternalStore(subscribeToNothing, isNativeNow, isNativeOnServer)
 
   const switchMode = (m: Mode) => { setMode(m); setError('') }
 
@@ -59,19 +75,21 @@ export default function LoginPage() {
       <div style={{ width: '100%', maxWidth: 380 }}>
 
         <div style={{ textAlign: 'center', marginBottom: 36 }}>
-          <a href="/" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            fontSize: 13, color: 'var(--text-2)', textDecoration: 'none',
-            marginBottom: 24, opacity: 0.7, transition: 'opacity 0.15s',
-          }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 12H5M12 5l-7 7 7 7"/>
-            </svg>
-            חזרה לדף הבית
-          </a>
+          {!isNative && (
+            <Link href="/" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 13, color: 'var(--text-2)', textDecoration: 'none',
+              marginBottom: 24, opacity: 0.7, transition: 'opacity 0.15s',
+            }}
+              onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 5l-7 7 7 7"/>
+              </svg>
+              חזרה לדף הבית
+            </Link>
+          )}
           <div style={{
             width: 60, height: 60, borderRadius: 18,
             background: 'linear-gradient(135deg,#3B7EF7,#6366F1)',

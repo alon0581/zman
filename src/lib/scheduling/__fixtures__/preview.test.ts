@@ -14,7 +14,10 @@ import { localDateKey, parseLocal } from '../clock'
  * in Hebrew, exactly as the assistant would explain it, for a human to read and
  * say "yes, that's how I'd have done it" — or not.
  *
- * Run it on its own with:  npx vitest run preview --reporter=basic
+ * Run it on its own with:
+ *   npx vitest run preview --reporter=verbose --disable-console-intercept
+ *
+ * (`--reporter=basic` was removed in Vitest 3 and now crashes with ERR_LOAD_URL.)
  */
 
 const HE_DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']

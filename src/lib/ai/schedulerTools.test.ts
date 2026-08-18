@@ -4,7 +4,11 @@ import {
   planMove, planRecurring, proposePlan, recurringToolResult,
 } from './schedulerTools'
 import { __resetPlanStore, getPlan } from './planStore'
+import { getMethodRules } from '@/lib/scheduling/methodRules'
+import { METHOD_LABELS, SchedulingMethod } from '@/lib/scheduling/methodMapper'
 import { CalendarEvent, UserProfile } from '@/types'
+
+const ALL_METHODS = Object.keys(METHOD_LABELS) as SchedulingMethod[]
 
 /**
  * The engine-backed tools, tested without Next.js, a database, or a model.
@@ -27,7 +31,6 @@ const PROFILE: UserProfile = {
   user_id: 'u1',
   autonomy_mode: 'hybrid',
   theme: 'dark',
-  voice_response_enabled: false,
   language: 'he',
   onboarding_completed: true,
   preferred_hours: { start: 8, end: 23 },
@@ -104,11 +107,31 @@ describe('buildScheduleItemSpec', () => {
 })
 
 describe('buildBreakdownSpec', () => {
-  it('takes the session length from the user\'s method, keeping the UI\'s promise', () => {
-    // Pomodoro's label says 25-minute sessions; METHOD_SESSION_HOURS says 0.5h.
+  it('leaves the session length to the method\'s own rules, keeping the UI\'s promise', () => {
+    // This test used to assert 30, and named that "keeping the UI's promise" while
+    // doing the opposite: Pomodoro's label promises 25-minute sessions, and the
+    // 30 came from a second table (METHOD_SESSION_HOURS) that overrode
+    // METHOD_RULES in the engine. It disagreed on ten of eighteen methods.
+    // Omitting sessionMinutes is the documented way to say "the method decides",
+    // so the promise on screen and the block on the calendar are one number.
     const spec = buildBreakdownSpec({ task_title: 'פרויקט', total_hours: 4, deadline: '2026-08-27T09:00:00' }, PROFILE, SCHED)!
-    expect(spec.requests[0].sessionMinutes).toBe(30)
+    expect(spec.requests[0].sessionMinutes).toBeUndefined()
     expect(spec.requests[0].totalMinutes).toBe(240)
+    // And what the engine then actually hands the user is the label's 25.
+    expect(getMethodRules('pomodoro').sessionMinutes).toBe(25)
+  })
+
+  it('never lets a second table outrank METHOD_RULES for any of the 18 methods', () => {
+    // The regression guard: any reintroduced session-length table would have to
+    // set sessionMinutes here, and this fails the moment one does.
+    for (const method of ALL_METHODS) {
+      const spec = buildBreakdownSpec(
+        { task_title: 'x', total_hours: 4 },
+        { ...PROFILE, scheduling_method: method },
+        SCHED,
+      )!
+      expect(spec.requests[0].sessionMinutes).toBeUndefined()
+    }
   })
 
   it('lets an explicit session_length_hours win', () => {

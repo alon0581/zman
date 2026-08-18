@@ -32,7 +32,6 @@ const BASE_PROFILE: UserProfile = {
   user_id: 'u1',
   autonomy_mode: 'hybrid',
   theme: 'dark',
-  voice_response_enabled: false,
   language: 'he',
   onboarding_completed: true,
 }
@@ -266,6 +265,42 @@ describe('buildSchedulingContext', () => {
     const ctx = buildSchedulingContext(BASE_PROFILE, [], [], feedback, 'Asia/Jerusalem', new Date('2026-08-16T04:30:00.000Z'))
     expect(ctx.priors.hourWeight[8]).toBeLessThan(0)
     expect(ctx.priors.hourWeight[20]).toBeGreaterThan(0)
+  })
+
+  // The regression this pins: priors.ts carried a fully tested 30-day half-life
+  // and a 120-day floor, and buildSchedulingContext called buildPriors with no
+  // opts — so `now` never arrived, decay was inert, and every assertion in
+  // priors.decay.test.ts described behaviour no user could reach. These two
+  // tests fail if the forwarding is ever dropped again.
+  it('forwards `now`, so an old signal weighs less than a fresh identical one', () => {
+    const signal = (at: string): FeedbackSignal[] =>
+      [{ type: 'rejected', title: 'לימוד', fromHour: 8, day: 'Mon', at }]
+    const now = new Date('2026-08-16T04:30:00.000Z')
+    const weightAt = (at: string) =>
+      buildSchedulingContext(BASE_PROFILE, [], [], signal(at), 'Asia/Jerusalem', now).priors.hourWeight[8] ?? 0
+
+    const fresh   = weightAt('2026-08-15T00:00:00.000Z')  // ~1 day
+    const middle  = weightAt('2026-06-17T00:00:00.000Z')  // ~60 days, two half-lives
+    const ancient = weightAt('2026-03-01T00:00:00.000Z')  // ~168 days, past the floor
+
+    // All three are the same rejection. Only their age differs.
+    expect(fresh).toBeLessThan(0)
+    expect(middle).toBeGreaterThan(fresh)   // weaker, i.e. closer to zero
+    expect(middle).toBeLessThan(0)
+    expect(ancient).toBe(0)                 // past floorDays it contributes nothing
+  })
+
+  it('forwards closedPhaseIds, so a closed phase stops steering the plan', () => {
+    const feedback: FeedbackSignal[] = [
+      { type: 'rejected', title: 'לימוד', fromHour: 8, day: 'Mon', at: '2026-08-15T00:00:00.000Z', phase_id: 'ph_studies' },
+    ]
+    const now = new Date('2026-08-16T04:30:00.000Z')
+
+    const open   = buildSchedulingContext(BASE_PROFILE, [], [], feedback, 'Asia/Jerusalem', now)
+    const closed = buildSchedulingContext(BASE_PROFILE, [], [], feedback, 'Asia/Jerusalem', now, undefined, ['ph_studies'])
+
+    expect(open.priors.hourWeight[8]).toBeLessThan(0)
+    expect(closed.priors.hourWeight[8] ?? 0).toBe(0)
   })
 
   it('starts from empty priors for a user with no history', () => {

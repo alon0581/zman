@@ -1,5 +1,10 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
+// Per-project Railway origin. Set CAPACITOR_SERVER_URL at build/sync time so a
+// copy of this repo never silently points at another project (e.g. dad's).
+const ORIGIN = (process.env.CAPACITOR_SERVER_URL ?? 'https://REPLACE-WITH-YOUR-RAILWAY-URL.up.railway.app')
+  .replace(/\/+$/, '')
+
 const config: CapacitorConfig = {
   appId: 'com.zman.app',
   appName: 'Zman',
@@ -8,11 +13,13 @@ const config: CapacitorConfig = {
   // to next.config.ts — that would break the Next.js server runtime on Railway.
   webDir: 'out',
   server: {
-    // Per-project Railway URL — set CAPACITOR_SERVER_URL at build/sync time so a
-    // copy of this repo never silently points at another project (e.g. dad's).
-    // Each separate Railway project has its own URL; this is the ONLY place the
-    // native shell decides which backend to load.
-    url: process.env.CAPACITOR_SERVER_URL ?? 'https://REPLACE-WITH-YOUR-RAILWAY-URL.up.railway.app',
+    // This is the ONLY place the native shell decides which backend to load, and
+    // it does NOT read public/manifest.json — so the manifest's `start_url:"/app"`
+    // does not apply here. Landing on the bare origin renders the marketing page
+    // when logged out (src/app/page.tsx), which is wrong inside an installed app.
+    // `/app` is the front door every other entry surface already uses (the
+    // manifest and public/sw.js), and it redirects to /login without a cookie.
+    url: `${ORIGIN}/app`,
     cleartext: false,
     androidScheme: 'https',
   },

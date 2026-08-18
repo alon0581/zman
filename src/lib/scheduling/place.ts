@@ -16,7 +16,7 @@ import { LocalISO, addMinutes, localDateKey, minutesBetween } from './clock'
 import { buildDayScoreContext, MIN_ACCEPTABLE_SCORE, scoreCandidate } from './score'
 import { busyMinutesIn, inflate, overlaps, Span } from './timeline'
 import {
-  BusyBlock, DayWindow, PlacedBlock, PlacementRequest, SchedulingContext, UnplacedCode,
+  BusyBlock, DayWindow, MethodRules, PlacedBlock, PlacementRequest, SchedulingContext, UnplacedCode,
 } from './types'
 import { clipWindows, minutesOf } from './windows'
 
@@ -149,7 +149,7 @@ export function placeOne(
   // thousands of timestamp rebuilds per plan. Sorting here also means the
   // blockers reported for any candidate come out in a stable order for free.
   const inflated = state.busy
-    .map(b => ({ block: b, span: inflate(b, buffer) }))
+    .map(b => ({ block: b, span: inflate(b, spacingAround(b, buffer, rules)) }))
     .sort((a, b) =>
       (a.block.start < b.block.start ? -1 : a.block.start > b.block.start ? 1 : 0) ||
       (a.block.id < b.block.id ? -1 : a.block.id > b.block.id ? 1 : 0)
@@ -234,6 +234,74 @@ export function placeOne(
     (a.block.title < b.block.title ? -1 : a.block.title > b.block.title ? 1 : 0)
   )
   return { ok: true, block: survivors[0].block }
+}
+
+/**
+ * How much empty time must sit on each side of one commitment while we search.
+ *
+ * ── Why a break is spacing, and not a block ────────────────────────────────
+ *
+ * `MethodRules.breakMinutes` / `breakAfterMinutes` describe a promise the UI has
+ * already made the user: METHOD_LABELS.pomodoro says "25-min focused sessions
+ * with 5-min breaks", rule_5217 says "52 min work + 17 min real break". There
+ * were three ways to keep it, and only one of them survives contact with the
+ * rest of the engine:
+ *
+ *   (a) A break as its own PlacedBlock. Rejected. A PlacedBlock carries the
+ *       ScoredReasons that won its slot (types.ts, invariant 3) and a break wins
+ *       nothing — it is a consequence of the session before it, so it would have
+ *       to ship with either no reasons (an unexplained block, which the invariant
+ *       forbids) or invented ones (which is exactly the narration the engine
+ *       exists to abolish). It also collides with every number next to it:
+ *       `commitBlock` would charge it to `sessionsByDay`, halving pomodoro's
+ *       maxSessionsPerDay of 8 to four real sessions; `busyMinutesIn` would
+ *       charge it to `dailyCapMinutes`; and on apply_plan it would become a real
+ *       CalendarEvent the user has to delete eight times a day. Nobody wants
+ *       "הפסקה" written on their calendar eight times. They want the gap.
+ *
+ *   (b) Spacing — what this function does. A break IS empty time between two
+ *       work blocks, and timeline.ts already owns exactly that concept: a block
+ *       inflated by N minutes cannot be scheduled against within N minutes.
+ *       Nothing new is invented, nothing new is stored, and there is no second
+ *       copy of the numbers — METHOD_RULES stays the one table.
+ *
+ *   (c) A longer block with the break inside it. Rejected: it would make
+ *       clampBlock's bounds mean "work plus rest", so pomodoro's promised 25
+ *       minutes would land on the calendar as 30 and METHOD_FIT would score the
+ *       length the user was never promised.
+ *
+ * ── Why it REPLACES the buffer rather than adding to it ───────────────────
+ *
+ * `profile.bufferMinutes` is breathing room around the user's *existing
+ * commitments* — 15 minutes to walk out of a lecture. Between two sessions of
+ * the method's own rhythm the right separation is the method's break, which is a
+ * different and deliberately chosen number. Taking the max, or the sum, would
+ * mean pomodoro's 5-minute break could never happen at all, because a 15-minute
+ * buffer forbids it: the promise would stay unkept in the name of respecting it.
+ * So for the plan's own blocks the break governs, and it cuts both ways — it
+ * loosens pomodoro (5 < 15) and tightens rule_5217 (17 > 15).
+ *
+ * Scoped to engine blocks (`ENGINE_BLOCK_PREFIX`) because those are precisely the
+ * blocks this method shaped. A lecture on the user's calendar was not sized by
+ * pomodoro and gets the buffer it always got, which is also what keeps this inert
+ * for the sixteen methods that configure no break.
+ *
+ * `breakAfterMinutes` is the threshold it says it is: a block that did not reach
+ * that much continuous work has not earned a break, and keeps the buffer.
+ *
+ * One consequence worth stating: the `drop_buffer` relaxation (bufferMinutes: 0)
+ * does NOT drop the break. Dropping breathing room is the user's trade to make;
+ * dropping a break would quietly cancel the promise METHOD_LABELS made them, and
+ * `Relaxation.wouldPlace` stays honest either way because it re-runs this same
+ * filter rather than estimating.
+ */
+export function spacingAround(block: BusyBlock, bufferMinutes: number, rules: MethodRules): number {
+  const { breakMinutes, breakAfterMinutes } = rules
+  // Cheapest discriminator first: 16 of 18 methods leave here immediately, and
+  // the string test runs before any timestamp is parsed.
+  if (breakMinutes === undefined || breakAfterMinutes === undefined) return bufferMinutes
+  if (!isEngineBlock(block.id) || block.isAllDay) return bufferMinutes
+  return blockMinutes(block) >= breakAfterMinutes ? breakMinutes : bufferMinutes
 }
 
 /** Records a placement in the state so every later decision can see it. */

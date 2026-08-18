@@ -24,13 +24,16 @@
  * eighteen implementations.
  *
  * The number rule, inherited from methodRules.ts: anything that already exists
- * elsewhere is DERIVED, never re-typed here. `METHOD_SESSION_HOURS` and
- * `METHOD_RULES[m].sessionMinutes` are already two tables for one number that
- * disagree on 10 of 18 methods. This file does not become the third copy — which
- * is why there is no session length and no default task size below.
+ * elsewhere is DERIVED, never re-typed here. That rule is written in blood —
+ * `METHOD_SESSION_HOURS` was a second session-length table that disagreed with
+ * `METHOD_RULES[m].sessionMinutes` on 10 of 18 methods, and it was deleted rather
+ * than synced, because a second table can drift again and a deleted one cannot.
+ * So there is no session length and no default task size below, and `wipLimit`
+ * for kanban is read from METHOD_RULES rather than restated (see FLOW).
  */
 
 import { SchedulingMethod } from '@/lib/scheduling/methodMapper'
+import { METHOD_RULES } from '@/lib/scheduling/methodRules'
 import { BoardColumn, BoardRules, CardSignal } from './types'
 
 // ── Column constructors ─────────────────────────────────────────────────────
@@ -60,10 +63,21 @@ const URGENT = (he = 'עכשיו', en = 'Now') => col('urgent', 'derived:urgent'
 
 type Structure = Pick<BoardRules, 'columns' | 'wipLimit' | 'signalOrder' | 'nextStep' | 'investedUnit'>
 
-/** Work pulled through stages, with a cap on how much is in flight. */
+/**
+ * Work pulled through stages, with a cap on how much is in flight.
+ *
+ * The cap is READ from `METHOD_RULES.kanban.maxSessionsPerDay`, not typed here.
+ * "Limit work-in-progress" is one commitment the user made, and it had grown
+ * three different values: the rules said 4, this preset said 3, and the system
+ * prompt said "max 3" twice more. The rules table wins because it is the one the
+ * calendar obeys — a board that caps you at 3 while the engine happily schedules
+ * a 4th block that day is the same class of lie as a promised break that never
+ * gets scheduled. FLOW is Kanban's own preset; scrum reuses its columns and
+ * overrides the number, so this is not a hidden default for anyone else.
+ */
 const FLOW: Structure = {
   columns: [PENDING(), DOING(), BLOCKED(), DONE()],
-  wipLimit: 3,
+  wipLimit: METHOD_RULES.kanban.maxSessionsPerDay,
   signalOrder: ['progress', 'next', 'invested', 'deadline'],
   nextStep: 'oldest_in_progress',
   investedUnit: 'hours',
@@ -102,11 +116,15 @@ const PRIORITY: Structure = {
 
 /**
  * The honest answer for methods with no natural board: a list with a counter.
- * Pomodoro does not have stages, it has sessions — so pending and in_progress
- * merge, and what the card leads with is the next scheduled block.
+ * Pomodoro does not have stages, it has sessions — but the status circle in the
+ * board UI still writes pending -> in_progress on the very first tap, regardless
+ * of method. Every status the UI can set needs a column to land in, or the task
+ * disappears from the board with no way back. So this preset keeps its own
+ * in_progress column too, even though the method's own vocabulary does not
+ * otherwise distinguish "doing" from "to do".
  */
 const SESSION: Structure = {
-  columns: [PENDING('לעשות', 'To do'), DONE()],
+  columns: [PENDING('לעשות', 'To do'), DOING(), DONE()],
   wipLimit: null,
   signalOrder: ['next', 'invested', 'progress', 'deadline'],
   nextStep: 'next_scheduled_block',
@@ -153,8 +171,10 @@ const make = (s: Structure, c: Copy, cycleDays: number | null = null, over: Part
 export const BOARD_RULES: Record<SchedulingMethod, BoardRules> = {
   kanban: make(FLOW, copy(
     'לוח קנבן', 'Kanban board', 'כרטיס', 'card', 'הוסף כרטיס', 'Add card',
-    'אין כאן כלום עדיין. משוך משימה אחת ל"בתהליך" — לא יותר מ-3 בו-זמנית.',
-    'Nothing here yet. Pull one task into In Progress — no more than 3 at a time.',
+    // Interpolated for the same reason FLOW.wipLimit is: a number spelled out in
+    // copy is still a copy of the number, and this one was the fourth.
+    `אין כאן כלום עדיין. משוך משימה אחת ל"בתהליך" — לא יותר מ-${FLOW.wipLimit} בו-זמנית.`,
+    `Nothing here yet. Pull one task into In Progress — no more than ${FLOW.wipLimit} at a time.`,
   )),
 
   scrum: make({ ...FLOW, wipLimit: 5, signalOrder: ['deadline', 'progress', 'next', 'invested'] }, copy(

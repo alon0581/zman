@@ -112,7 +112,9 @@ SCHEDULER_V2=1
 # dependsOn present it is a proven no-op, asserted by an identity test.
 PROJECTS=1
 
-# ── PHASES (OFF by default — leave it unset in production for now) ─────────
+# ── PHASES ⚡ ON IN PRODUCTION since 2026-08-17 ────────────────────────────
+# SET on Railway (project truthful-love, service zman). Off by DEFAULT in code —
+# unset still means the legacy behaviour, byte for byte.
 # Life phases: a named period ("סמסטר ב׳", "צבא", "בין עבודות") that owns its own
 # rhythm and facts, and that can come back. When set:
 #   • start_phase / list_phases / update_profile / end_series appear
@@ -124,7 +126,11 @@ PROJECTS=1
 # Note the profile rewrite is self-gating: buildSystemPrompt takes an optional
 # phase context and returns the legacy block verbatim when it is absent, so even a
 # half-wired call site degrades to today's behaviour.
-# PHASES=1
+#
+# There is deliberately NO settings screen for this — the declaration is
+# conversational ("התחלתי לעבוד", "נגמר לי הסמסטר"). Settings shows the current
+# phase read-only.
+PHASES=1
 
 # ── Voice transcription (OpenAI — this is the ONLY thing OPENAI_API_KEY is for)
 OPENAI_API_KEY=sk-...

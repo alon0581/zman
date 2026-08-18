@@ -98,15 +98,24 @@ export interface UserProfile {
    * wake_time/sleep_time alone.
    */
   preferred_hours?: { start: number; end: number }
-  productivity_peak?: 'morning' | 'afternoon' | 'evening'
+  /**
+   * No Settings control — `priors.ts` already builds a 24-bucket,
+   * evidence-weighted model of when this person actually works, and a 3-bucket
+   * declaration only gets clamped by wake/sleep anyway. Still read wherever it
+   * was read before; only settable via chat now (`update_profile`), and clearable
+   * from the Settings memory viewer (which nulls this out so it does not come
+   * back on the next mirror).
+   */
+  productivity_peak?: 'morning' | 'afternoon' | 'evening' | null
   sleep_time?: string
   wake_time?: string
   autonomy_mode: 'suggest' | 'auto' | 'hybrid'
   theme: 'dark' | 'light'
-  voice_response_enabled: boolean
   language: string
   onboarding_completed: boolean
-  occupation?: string
+  /** `null` is an explicit clear (from the Settings memory viewer), distinct from
+   *  `undefined` meaning never set. */
+  occupation?: string | null
   // Anthropic is the only provider now, so the type narrows to that. The field stays
   // present + optional (not removed) because real profiles on the production volume
   // still contain values written by earlier, now-deleted providers — a required-shape
@@ -137,6 +146,16 @@ export interface UserProfile {
     | 'eat_the_frog' | 'theme_days' | 'the_one_thing' | 'weekly_review' | 'okr' | 'kanban' | 'time_boxing'
     | 'moscow' | 'rule_5217' | 'scrum' | 'energy_management' | 'twelve_week_year'
   secondary_methods?: string[]
+  /**
+   * The user was offered the method-selection modal and closed it without
+   * choosing. Absent = never asked, which is what makes the modal fire.
+   *
+   * This exists because `scheduling_method` no longer gets a guessed default
+   * written into it: leaving it unset is how the app knows to ask, so "unset"
+   * had to stop doubling as "asked and declined" or the modal would return on
+   * every login. Declining is a decision and gets recorded; guessing is not.
+   */
+  method_prompt_dismissed?: boolean
   challenge?: 'procrastination' | 'overwhelmed' | 'focus' | 'scattered' | 'goals'
   day_structure?: 'fixed' | 'variable' | 'mixed' | 'independent'
   /**

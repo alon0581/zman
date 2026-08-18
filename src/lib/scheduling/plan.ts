@@ -22,7 +22,8 @@ import { LocalISO, addMinutes, localDateKey, parseLocal, toLocalISO } from './cl
 import { topoOrder } from './depOrder'
 import { classifyMobility } from './mobilityClassifier'
 import {
-  cloneState, commitBlock, emptyState, ENGINE_BLOCK_PREFIX, PlaceOptions, PlaceResult, placeOne, PlacementState,
+  blockMinutes, cloneState, commitBlock, emptyState, ENGINE_BLOCK_PREFIX, PlaceOptions, PlaceResult,
+  placeOne, PlacementState,
 } from './place'
 import { attemptRepair, MAX_REPAIR_DEPTH } from './repair'
 import { overlaps } from './timeline'
@@ -244,11 +245,14 @@ function placeSessions(
   pending: PendingSession[]
 ): void {
   const lengths = splitSessions(request, ctx.rules)
+  /** The session this one would follow, for a method whose rhythm is a cycle. */
+  let previous: PlacedBlock | undefined
 
   for (let i = 0; i < lengths.length; i++) {
-    const outcome = placeWithRepair(ctx, request, requestIndex, lengths[i], windows, state, opts)
+    const outcome = placeCycled(ctx, request, requestIndex, lengths[i], windows, state, opts, previous)
     if (outcome.ok) {
       adopt(state, requestIndex, request, outcome.block, outcome.displacements, blocks, displacements)
+      previous = outcome.block
       continue
     }
     // The first failure ends the request: later sessions face a strictly tighter
@@ -332,6 +336,67 @@ function placeRecurring(
 type Attempted =
   | { ok: true; block: PlacedBlock; displacements: Displacement[] }
   | { ok: false; code: UnplacedCode; detail?: Record<string, string | number> }
+
+/**
+ * One session, tried first at exactly one break after the previous one ended.
+ *
+ * place.ts's `spacingAround` makes the break room EXIST — nothing may be booked
+ * into it. That alone does not make it happen: scoring, not the hard filter,
+ * picks where a block goes, and BUFFER_RESPECTED rewards distance, so the second
+ * pomodoro of the day drifted 35 minutes out and the user got "25 minutes of
+ * work, then a hole" rather than the cycle METHOD_LABELS sold them. So a method
+ * that promises a break gets its cadence offered first.
+ *
+ * This is the same move `placeRecurring` already makes one function below — a
+ * series is tried at its anchor's time before the open search — for the same
+ * reason: some shapes are the user's promise rather than the scorer's opinion. It
+ * reuses `pinnedStart`, so nothing about attribution changes. The pinned attempt
+ * is an ordinary `placeOne`: it faces the same hard filter, the same day caps and
+ * the same MIN_ACCEPTABLE_SCORE, and the block it returns carries the reasons it
+ * actually scored. When it does not survive any of those, we simply fall through
+ * to the normal search — a failed cadence costs the plan nothing and hides no
+ * rejection, because the fallback is the exact call that ran here before.
+ *
+ * Deliberately NOT applied through repair: displacing someone's real commitment
+ * to defend a rhythm is the same bad trade `placeRecurring` refuses for a habit.
+ * And deliberately not applied to recurrence instances, which are anchored to
+ * separate days, where a five-minute break means nothing.
+ */
+function placeCycled(
+  ctx: SchedulingContext,
+  request: PlacementRequest,
+  requestIndex: number,
+  durationMinutes: number,
+  windows: DayWindow[],
+  state: PlacementState,
+  opts: PlaceOptions,
+  previous: PlacedBlock | undefined
+): Attempted {
+  const cadence = nextCycleStart(ctx.rules, previous)
+  if (cadence) {
+    const pinned = placeOne(ctx, request, requestIndex, durationMinutes, windows, state, {
+      ...opts, pinnedStart: cadence,
+    })
+    if (pinned.ok) return { ok: true, block: pinned.block, displacements: [] }
+  }
+  return placeWithRepair(ctx, request, requestIndex, durationMinutes, windows, state, opts)
+}
+
+/**
+ * Where the next session of a cycle starts: the previous end plus the break.
+ *
+ * Undefined for the sixteen methods that configure no break, and for a session
+ * that did not run long enough to have earned one — `breakAfterMinutes` is the
+ * amount of continuous work that triggers the break, and a block shorter than it
+ * is not the end of a cycle.
+ */
+function nextCycleStart(rules: MethodRules, previous: PlacedBlock | undefined): LocalISO | undefined {
+  if (!previous) return undefined
+  const { breakMinutes, breakAfterMinutes } = rules
+  if (breakMinutes === undefined || breakAfterMinutes === undefined) return undefined
+  if (blockMinutes(previous) < breakAfterMinutes) return undefined
+  return addMinutes(previous.end, breakMinutes)
+}
 
 function placeWithRepair(
   ctx: SchedulingContext,

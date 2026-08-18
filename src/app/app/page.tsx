@@ -2,11 +2,11 @@ import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import AppShell from '@/components/AppShell'
 import { UserProfile, AIMemory, CalendarEvent, AppUser } from '@/types'
-import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
+import { getUserIdFromCookie, COOKIE_NAME, getUserEmail } from '@/lib/auth'
 import { DATA_DIR } from '@/lib/util/dataDir'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { withUserLock } from '@/lib/store/lock'
-import { mapToMethod, SchedulingMethod } from '@/lib/scheduling/methodMapper'
+import { mapToMethod } from '@/lib/scheduling/methodMapper'
 import { projectsEnabled } from '@/lib/ai/featureFlags'
 import path from 'path'
 
@@ -14,7 +14,6 @@ const DEFAULT_PROFILE = (userId: string): UserProfile => ({
   user_id: userId,
   autonomy_mode: 'hybrid',
   theme: 'dark',
-  voice_response_enabled: false,
   language: 'en',
   onboarding_completed: false,
   productivity_peak: 'morning',
@@ -67,38 +66,38 @@ export default async function AppPage() {
       } catch { /* ignore write errors */ }
     }
 
-    // Backfill a scheduling method so the method-selection modal stops appearing on
-    // EVERY login. The modal only clears when the AI reliably calls complete_onboarding;
-    // if that ever fails, scheduling_method stays empty and the user gets nagged forever.
-    // Derive a method from what we already learned (persona/challenge/day in memory),
-    // else fall back to a sensible default. The user can still change it in Settings.
+    // Backfill a scheduling method from what we already learned — but ONLY when we
+    // genuinely learned it. This used to fall back to `time_blocking` when
+    // persona/challenge/day_structure were missing and then PERSIST that guess,
+    // which is why essentially every existing profile carries `time_blocking`
+    // without anyone ever choosing it: nothing outside onboarding collects those
+    // three fields, so the mapping never ran and the default was always written.
+    //
+    // A guess that is written to disk is indistinguishable from a decision, and it
+    // also runs before AppShell renders — so it suppressed the one screen designed
+    // to ask (MethodOnboardingModal, gated on `!scheduling_method`). Leaving the
+    // field unset is what makes that modal the real classifier.
     if (prof.onboarding_completed && !prof.scheduling_method) {
       const mem = loadMemory(uid)
       const val = (k: string) => mem.find(m => m.key === k)?.value
       const persona = val('persona_type')
       const challenge = val('main_challenge')
       const day = val('day_structure')
-      let primary: SchedulingMethod = 'time_blocking'
-      let secondary: SchedulingMethod[] = []
       if (persona && challenge && day) {
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const r = mapToMethod(persona as any, challenge as any, day as any)
-          primary = r.primary
-          secondary = r.secondary
-        } catch { /* keep default */ }
+          prof = { ...prof, scheduling_method: r.primary, secondary_methods: r.secondary }
+          const profFile = path.join(DATA_DIR, 'users', uid, 'profile.json')
+          writeJsonFileAtomic(profFile, prof)
+        } catch { /* leave it unset; the modal will ask */ }
       }
-      prof = { ...prof, scheduling_method: primary, secondary_methods: secondary }
-      try {
-        const profFile = path.join(DATA_DIR, 'users', uid, 'profile.json')
-        writeJsonFileAtomic(profFile, prof)
-      } catch { /* ignore write errors */ }
     }
 
     return prof
   })
 
-  const user: AppUser = { id: userId, email: '', user_metadata: {} }
+  const user: AppUser = { id: userId, email: getUserEmail(userId) ?? '', user_metadata: {} }
   // Read server-side and passed down as a prop, rather than adding a second
   // NEXT_PUBLIC_ twin of the same variable. One env var, one reader.
   return (

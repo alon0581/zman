@@ -32,22 +32,30 @@ export interface SchedulerCtx {
   feedback: FeedbackSignal[]
   timezone?: string
   isHe: boolean
+  /**
+   * Phases the user has closed. Feedback stamped with one of them stops steering
+   * the plan — last semester's evidence is about a calendar that no longer exists.
+   * Undefined when PHASES is off, which keeps every signal, as before.
+   */
+  closedPhaseIds?: string[]
 }
 
 // ── Method-aware shaping ────────────────────────────────────────────────────
 //
-// Lifted verbatim from break_down_task so the v1 and v2 paths shape sessions
-// identically. Session length and title are what METHOD_LABELS promised the user
-// on screen; which code path ran must not change them.
-
-/** Method-aware session length safety net (all 18 methods), in hours. */
-export const METHOD_SESSION_HOURS: Record<string, number> = {
-  pomodoro: 0.5, deep_work: 2.5, eisenhower: 1.5, gtd: 1,
-  time_blocking: 1.5, ivy_lee: 1, eat_the_frog: 1.5, theme_days: 2,
-  the_one_thing: 3, weekly_review: 1.25, okr: 1.5, kanban: 1,
-  time_boxing: 0.75, moscow: 1.5, rule_5217: 0.87, scrum: 1.5,
-  energy_management: 1.5, twelve_week_year: 1.5,
-}
+// Titles are shaped here. Session LENGTH deliberately is not.
+//
+// There used to be a `METHOD_SESSION_HOURS` table here that set `sessionMinutes`
+// on every PlacementRequest, which OVERRODE `METHOD_RULES[m].sessionMinutes` in
+// the engine. The two disagreed on ten of eighteen methods and nine of those
+// disagreements survived `clampBlock`, so the user got a block their method never
+// promised: `the_one_thing` 180 instead of 120, and `time_blocking` — the default
+// everyone lands on — 90 instead of 60. methodRules.ts states the contract in its
+// own header: "The UI is the promise; this file is the thing that has to keep it."
+//
+// It was deleted rather than synced, because a second table can drift again and a
+// deleted one cannot. Omitting `sessionMinutes` is already the documented way to
+// say "the method decides", and it is what plan_project has always done.
+// Do not reintroduce a session-length table here.
 
 /** Method-aware title format (all 18 methods). */
 export const METHOD_TITLE: Record<string, (t: string, i: number) => string> = {
@@ -174,9 +182,11 @@ export function buildBreakdownSpec(
   if (!title || totalHours <= 0) return null
 
   const method = profile?.scheduling_method as string | undefined
+  // Only an explicit request survives. With none, `sessionMinutes` is omitted and
+  // METHOD_RULES decides — one table for one number. See the note at the top.
   const sessionHours = num(input.session_length_hours) > 0
     ? num(input.session_length_hours)
-    : (method ? METHOD_SESSION_HOURS[method] : undefined)
+    : undefined
   const mobility = methodMobility(method)
   const deadline = normalizeToLocalISO(str(input.deadline), sched.timezone) ?? undefined
 
@@ -227,7 +237,7 @@ export function proposePlan(
 
   let ctx
   try {
-    ctx = buildSchedulingContext(profile, events, sched.memory, sched.feedback, sched.timezone, now, horizonDays)
+    ctx = buildSchedulingContext(profile, events, sched.memory, sched.feedback, sched.timezone, now, horizonDays, sched.closedPhaseIds)
   } catch (err) {
     return {
       toolResult: { error: 'context_failed', message: `Could not read the calendar for planning: ${(err as Error)?.message}` },
@@ -344,7 +354,7 @@ export function planMove(
 
   let view: PlanToolResult
   try {
-    const ctx = buildSchedulingContext(profile, others, sched.memory, sched.feedback, sched.timezone, now)
+    const ctx = buildSchedulingContext(profile, others, sched.memory, sched.feedback, sched.timezone, now, undefined, sched.closedPhaseIds)
     view = planOutcomeToToolResult(planSchedule({
       ...ctx,
       // A move is a relocation, not a re-plan. The method's block bounds shape

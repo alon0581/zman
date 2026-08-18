@@ -66,7 +66,6 @@ function profile(over: Partial<UserProfile> = {}): UserProfile {
     user_id: USER,
     autonomy_mode: 'hybrid',
     theme: 'dark',
-    voice_response_enabled: false,
     language: 'he',
     onboarding_completed: true,
     ...over,

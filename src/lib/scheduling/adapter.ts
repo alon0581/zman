@@ -251,6 +251,13 @@ export function buildSchedulingContext(
   timezone?: string,
   now?: Date | LocalISO,
   horizonDays: number = DEFAULT_HORIZON_DAYS,
+  /**
+   * Ids of phases the user has since closed. Signals stamped with one of these
+   * stop steering the plan — last semester's evidence is about a calendar that
+   * no longer exists. Omitted (or empty) keeps every signal, which is the
+   * pre-PHASES behaviour and stays correct when the flag is off.
+   */
+  closedPhaseIds?: string[],
 ): SchedulingContext {
   const schedulingProfile = buildSchedulingProfile(profile, timezone)
   const nowLocal = resolveNow(now, schedulingProfile.timezone)
@@ -264,8 +271,12 @@ export function buildSchedulingContext(
     method,
     rules: getMethodRules(method.primary),
     busy: toEngineBusy(events, schedulingProfile.timezone).busy,
+    // `now` is what switches the half-life on. It was omitted here for two days
+    // while priors.ts carried a fully tested 30-day decay and a 120-day floor —
+    // so a three-month-old signal weighed exactly as much as yesterday's, and
+    // priors.decay.test.ts asserted behaviour no user could reach. Forward it.
     priors: feedback?.length || memory?.length
-      ? buildPriors(feedback ?? [], memory ?? [])
+      ? buildPriors(feedback ?? [], memory ?? [], { now: nowLocal, closedPhaseIds })
       : emptyPriors(),
   }
 }

@@ -38,7 +38,6 @@ export async function POST(req: NextRequest) {
       user_id: result.userId,
       autonomy_mode: 'hybrid',
       theme: 'dark',
-      voice_response_enabled: false,
       language: detectedLang,
       onboarding_completed: false,
       productivity_peak: 'morning',

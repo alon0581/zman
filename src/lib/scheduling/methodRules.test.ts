@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { METHOD_RULES, getMethodRules } from './methodRules'
 import { SchedulingMethod, METHOD_LABELS } from './methodMapper'
+import { splitSessions } from './plan'
 
 const ALL_METHODS = Object.keys(METHOD_LABELS) as SchedulingMethod[]
 
@@ -83,6 +84,22 @@ describe('rules match their METHOD_LABELS description exactly', () => {
     const rules = METHOD_RULES.time_boxing
     expect(rules.minBlock).toBe(rules.maxBlock)
   })
+})
+
+describe('every configured sessionMinutes is a length the engine can actually deliver', () => {
+  // A number in this table that placement can never produce is decoration, and
+  // this is not hypothetical: eisenhower/gtd/okr/moscow were configured at 50,
+  // but plan.ts snaps a nominal length with roundToQuarter before clampBlock and
+  // roundToQuarter(50) is 45 — so those four methods could never once schedule
+  // the block they claimed. The table now says 45, and this is the test that
+  // stops a future edit from re-introducing an undeliverable number anywhere.
+  for (const method of ALL_METHODS) {
+    it(`${method}: a one-session request lands on exactly sessionMinutes`, () => {
+      const rules = METHOD_RULES[method]
+      const [only] = splitSessions({ ref: { kind: 'task' }, title: 'x' }, rules)
+      expect(only).toBe(rules.sessionMinutes)
+    })
+  }
 })
 
 describe('prioritisation frameworks get documented neutral defaults', () => {

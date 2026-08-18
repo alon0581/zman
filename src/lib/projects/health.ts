@@ -194,14 +194,34 @@ function deadlineSignal(
       `On a ${cycleDays}-day cycle`)
   }
 
+  // Open tasks is empty two different ways, and only one of them is 'ok': a
+  // project with zero tasks has nothing to be on track FOR, so it must not read
+  // better than the progress card's own 'no_tasks' — an empty project is not a
+  // finished one. Only a project that actually had tasks and finished them all
+  // earns the green chip.
   if (facts.openLeafTasks.length === 0) {
+    if (facts.totalLeafCount === 0) {
+      return sig('deadline', 'unknown',
+        'אי אפשר להעריך סיכון — אין עדיין משימות',
+        'Cannot estimate risk — no tasks yet',
+        'no_tasks')
+    }
     return sig('deadline', 'ok', 'הכול סגור', 'All done')
   }
   if (facts.remainingMinutes <= 0) {
-    return sig('deadline', 'unknown',
-      `אי אפשר להעריך סיכון — אין הערכת זמן ל-${facts.unestimatedCount} משימות`,
-      `Cannot estimate risk — ${facts.unestimatedCount} tasks have no time estimate`,
-      'no_estimates')
+    // remainingMinutes also lands on 0 after a SUCCESSFUL plan_project ->
+    // apply_plan, once every open task's estimate is fully covered by a future
+    // calendar block. That is the opposite of "no estimates" — distinguish by
+    // whether anything is actually unestimated before blaming missing data.
+    if (facts.unestimatedCount > 0) {
+      return sig('deadline', 'unknown',
+        `אי אפשר להעריך סיכון — אין הערכת זמן ל-${facts.unestimatedCount} משימות`,
+        `Cannot estimate risk — ${facts.unestimatedCount} tasks have no time estimate`,
+        'no_estimates')
+    }
+    return sig('deadline', 'ok',
+      'כל שעות העבודה שנותרו כבר משובצות ביומן',
+      'All remaining work is already on the calendar')
   }
   if (!probe) {
     return sig('deadline', 'unknown', 'לא הצלחתי לחשב סיכון כרגע', 'Could not compute risk right now', 'plan_unavailable')

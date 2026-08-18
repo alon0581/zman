@@ -6,15 +6,18 @@
  * moment the table and the methods fall out of step, rather than discovering it
  * when a user picks a method whose board is `undefined`.
  *
- * The second theme is the anti-drift rule. This app already carries one defect of
+ * The second theme is the anti-drift rule. This app already carried a defect of
  * exactly the kind being guarded against here — METHOD_SESSION_HOURS and
- * METHOD_RULES[m].sessionMinutes are two tables for one number and they disagree
- * on 10 of 18 methods. So these tests also assert that BOARD_RULES never grew a
- * copy of a number that lives somewhere else.
+ * METHOD_RULES[m].sessionMinutes were two tables for one number, disagreeing on
+ * 10 of 18 methods, and the second table was deleted rather than synced. So these
+ * tests also assert that BOARD_RULES never grew a copy of a number that lives
+ * somewhere else, and that the one number it needs — kanban's WIP limit — is
+ * derived from METHOD_RULES rather than typed again.
  */
 
 import { describe, expect, it } from 'vitest'
 import { METHOD_LABELS, SchedulingMethod } from '@/lib/scheduling/methodMapper'
+import { METHOD_RULES } from '@/lib/scheduling/methodRules'
 import { BOARD_RULES, boardRulesFor, signalOrderFor } from './boardRules'
 import { CardSignal } from './types'
 
@@ -47,6 +50,15 @@ describe('every row is structurally sane', () => {
   it.each(ALL_METHODS)('%s always offers somewhere to finish work', (method) => {
     // A board with no done column can never show completion, which breaks progress.
     expect(BOARD_RULES[method].columns.some(c => c.source === 'status:done')).toBe(true)
+  })
+
+  it.each(ALL_METHODS)('%s always offers somewhere for in_progress to land', (method) => {
+    // The status circle in the board UI writes pending -> in_progress on the
+    // very first tap, regardless of which method the user is on. A board with
+    // no in_progress column makes that tap vanish the task with no way back —
+    // the bug the SESSION preset had (pomodoro, rule_5217, time_blocking,
+    // time_boxing, theme_days, energy_management) before it grew a DOING column.
+    expect(BOARD_RULES[method].columns.some(c => c.source === 'status:in_progress')).toBe(true)
   })
 
   it.each(ALL_METHODS)('%s has non-empty copy in both languages', (method) => {
@@ -106,6 +118,24 @@ describe('rows keep the promise their method label makes on screen', () => {
   it('leads kanban with progress and caps work in flight, which is the method itself', () => {
     expect(BOARD_RULES.kanban.signalOrder[0]).toBe('progress')
     expect(BOARD_RULES.kanban.wipLimit).toBeGreaterThan(0)
+  })
+
+  it('derives kanban\'s WIP limit from METHOD_RULES instead of keeping a second copy', () => {
+    // "Limit work-in-progress" had grown three values — the rules said 4, this
+    // file said 3, the system prompt said "max 3". The rules win because they
+    // are what the calendar obeys, and this asserts the derivation rather than
+    // the number, so moving it in METHOD_RULES moves the board with it.
+    expect(BOARD_RULES.kanban.wipLimit).toBe(METHOD_RULES.kanban.maxSessionsPerDay)
+  })
+
+  it('states that same number in kanban\'s empty state, in both languages', () => {
+    const wip = METHOD_RULES.kanban.maxSessionsPerDay
+    expect(BOARD_RULES.kanban.emptyState.he).toContain(`${wip}`)
+    expect(BOARD_RULES.kanban.emptyState.en).toContain(`${wip}`)
+  })
+
+  it('does not let FLOW\'s cap leak into scrum, which sets its own', () => {
+    expect(BOARD_RULES.scrum.wipLimit).toBe(5)
   })
 
   it('leads gtd with the next action, which is literally its question', () => {

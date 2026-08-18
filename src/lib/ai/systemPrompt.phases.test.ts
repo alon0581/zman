@@ -22,7 +22,7 @@ const DAY = 86_400_000
 
 const PROFILE: UserProfile = {
   user_id: 'u1', autonomy_mode: 'hybrid', theme: 'dark',
-  voice_response_enabled: false, language: 'he', onboarding_completed: true,
+  language: 'he', onboarding_completed: true,
 } as UserProfile
 
 const NO_EVENTS: CalendarEvent[] = []

@@ -83,9 +83,17 @@ export interface MethodRules {
   minBlock: number
   /** Never place a block longer than this. */
   maxBlock: number
-  /** Insert a break after this much continuous work (pomodoro 25, rule_5217 52). */
+  /**
+   * Insert a break after this much continuous work (pomodoro 25, rule_5217 52).
+   *
+   * Read by `spacingAround` (place.ts) as the threshold a block must reach to
+   * have earned its break, and by `nextCycleStart` (plan.ts), which offers the
+   * next session the slot exactly one break later. A break is EMPTY TIME between
+   * two work blocks, never a block of its own — see the design note on
+   * `spacingAround` for why the alternatives were rejected.
+   */
   breakAfterMinutes?: number
-  /** Length of that break (pomodoro 5, rule_5217 17). */
+  /** Length of that break (pomodoro 5, rule_5217 17). Absent ⇒ this method promises none. */
   breakMinutes?: number
   maxSessionsPerDay: number
   /** deep_work wants one long block, pomodoro is happy with several short ones. */

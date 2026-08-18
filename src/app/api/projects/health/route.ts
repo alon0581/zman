@@ -14,6 +14,7 @@ import {
 import { probeCapacity, ProjectProbeInput } from '@/lib/projects/capacity'
 import { computeFacts, probeInputFor, resolveSignals } from '@/lib/projects/health'
 import { boardRulesFor } from '@/lib/projects/boardRules'
+import { phasesEnabled } from '@/lib/ai/featureFlags'
 
 async function getAuthUserId(): Promise<string | null> {
   const cookieStore = await cookies()
@@ -43,6 +44,13 @@ export async function GET() {
   const tasks = userStore.getTasks(userId)
   const events = userStore.getEvents(userId)
 
+  // The board's badge is a dry run of the REAL planSchedule, so it has to see the
+  // same priors the chat route does — otherwise the card and the calendar would
+  // disagree about the same week, which is the one thing this layer must never do.
+  const closedPhaseIds = phasesEnabled()
+    ? userStore.getPhases(userId).filter(p => p.status === 'closed').map(p => p.id)
+    : undefined
+
   const isHe = (profile?.language ?? 'en') === 'he'
   const timezone = profile?.timezone
   const now = resolveNow(undefined, timezone)
@@ -65,7 +73,7 @@ export async function GET() {
     14,
   )
 
-  const ctx = buildSchedulingContext(profile, events, memory, feedback, timezone, now, horizonDays)
+  const ctx = buildSchedulingContext(profile, events, memory, feedback, timezone, now, horizonDays, closedPhaseIds)
   const probe = probeCapacity(ctx, probeInputs, isHe)
 
   const method = resolveMethod(profile).primary

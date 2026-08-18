@@ -207,6 +207,16 @@ export function getUserIdFromCookie(cookieValue: string | undefined): string | n
   return verifyToken(cookieValue)
 }
 
+/**
+ * Email for a signed-in user, for display only (the Account card in Settings).
+ * Never returns `passwordHash` or `salt` — callers get exactly this string.
+ * Null when the user record is missing (e.g. a still-valid session for a
+ * since-deleted account).
+ */
+export function getUserEmail(userId: string): string | null {
+  return readUsers().find(u => u.id === userId)?.email ?? null
+}
+
 /** Path helpers for per-user data */
 export function userDataPath(userId: string) {
   const dir = path.join(DATA_DIR, 'users', userId)

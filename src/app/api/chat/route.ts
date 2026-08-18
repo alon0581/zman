@@ -8,9 +8,10 @@ import { phasesEnabled, projectsEnabled, schedulerV2Enabled } from '@/lib/ai/fea
 import { followupPrompt, needsFollowup } from '@/lib/ai/followup'
 import { consumePlan } from '@/lib/ai/planStore'
 import {
-  buildBreakdownSpec, buildScheduleItemSpec, METHOD_SESSION_HOURS, methodMobility,
+  buildBreakdownSpec, buildScheduleItemSpec, methodMobility,
   methodTitleFormatter, planMove, planRecurring, proposePlan, recurringToolResult, SchedulerCtx,
 } from '@/lib/ai/schedulerTools'
+import { getMethodRules } from '@/lib/scheduling/methodRules'
 import { buildProjectPlanSpec } from '@/lib/ai/projectTools'
 import { CalendarEvent, UserProfile, AIMemory, Phase, Project, Task, FeedbackSignal } from '@/types'
 import { planProjectDeletion } from '@/lib/projects/cascade'
@@ -338,6 +339,9 @@ export async function POST(req: NextRequest) {
       feedback: feedback as FeedbackSignal[],
       timezone,
       isHe: (profile?.language ?? 'he') === 'he',
+      // Derived from the same read `phaseCtx` already did, so a closed phase's
+      // feedback stops steering the plan the moment its facts stop being injected.
+      closedPhaseIds: phaseCtx ? Object.keys(phaseCtx.closedLabelById ?? {}) : undefined,
     }
     const activeTools = isOnboarding ? getOnboardingTools(v2, projects, phases) : getCalendarTools(v2, projects, phases)
 
@@ -1007,9 +1011,15 @@ async function executeTool(
       }
 
       const userMethod = profile?.scheduling_method as string | undefined
+      // The method's own rules are the single source for session length — the same
+      // table the engine reads on the v2 path above. This used to consult a second
+      // table (METHOD_SESSION_HOURS) that disagreed with METHOD_RULES on ten of
+      // eighteen methods, so which code path ran silently changed the block the
+      // user got. Deleted; both paths now answer from METHOD_RULES.
+      // resolveMethod sanitizes a garbage stored value instead of letting it reach
+      // getMethodRules, which is the same guard the engine path relies on.
       const effectiveSessionLength = session_length_hours
-        ?? (userMethod ? METHOD_SESSION_HOURS[userMethod] : undefined)
-        ?? 2
+        ?? getMethodRules(resolveMethod(profile).primary).sessionMinutes / 60
 
       const formatTitle = methodTitleFormatter(userMethod)
       const defaultMobility = methodMobility(userMethod)
@@ -1363,6 +1373,29 @@ async function executeTool(
         parent_task_id: input.parent_task_id ? str(input.parent_task_id) : undefined,
         created_at: new Date().toISOString(),
       }
+      // project_id / depends_on exist as parameters only when PROJECTS is on
+      // (PROJECTS_PARAMETER_EXTRAS in lib/ai/tools.ts). With the flag off, this
+      // block never runs and create_task behaves byte-identically to before.
+      if (projectsOn) {
+        const projectId = str(input.project_id)
+        if (projectId) {
+          const project = userStore.getProjects(userId).find(p => p.id === projectId)
+          // A project_id that does not resolve must not be dropped silently: that
+          // is the exact bug this fixes, {success:true} with the task landing
+          // outside the project, invisible on the board and uncounted in progress.
+          if (!project) return { error: 'not_found', message: `No project with id ${projectId}` }
+          task.project_id = project.id
+        }
+        if (Array.isArray(input.depends_on)) {
+          // A task can never depend on itself (same rule depOrder.ts applies to
+          // the engine's own input), so drop that id rather than deadlocking the
+          // graph. task.id is freshly generated here, so this only matters if the
+          // model somehow echoes it back, but it keeps the guard symmetric with
+          // update_task below.
+          const deps = (input.depends_on as unknown[]).filter((d): d is string => typeof d === 'string' && d !== task.id)
+          if (deps.length) task.depends_on = deps
+        }
+      }
       userStore.addTask(task, userId)
       state.tasksUpdated = true
       return { success: true, task }
@@ -1377,6 +1410,24 @@ async function executeTool(
       if (input.topic) updates.topic = str(input.topic)
       if (input.deadline) updates.deadline = str(input.deadline)
       if (input.estimated_hours) updates.estimated_hours = num(input.estimated_hours)
+
+      // Same gate as create_task: project_id / depends_on are parameters only
+      // when PROJECTS is on. Off, this is dead code and update_task is unchanged.
+      if (projectsOn) {
+        const projectId = str(input.project_id)
+        if (projectId) {
+          const project = userStore.getProjects(userId).find(p => p.id === projectId)
+          if (!project) return { error: 'not_found', message: `No project with id ${projectId}` }
+          updates.project_id = project.id
+        }
+        if (Array.isArray(input.depends_on)) {
+          // Drop a self-reference rather than refusing the whole call: the same
+          // treatment depOrder.ts gives the engine's own dependsOn input, since a
+          // task depending on itself is always a data bug, never a real ordering.
+          updates.depends_on = (input.depends_on as unknown[])
+            .filter((d): d is string => typeof d === 'string' && d !== taskId)
+        }
+      }
 
       userStore.updateTask(taskId, updates, userId)
       state.tasksUpdated = true
@@ -1423,15 +1474,15 @@ async function executeTool(
         } else {
           (input as Record<string, unknown>).memory_entries = extraEntries
         }
-      } else if (!pu.scheduling_method) {
-        // Fallback: never finish onboarding without a method, or MethodOnboardingModal
-        // re-triggers forever. Default to time_blocking (general-purpose).
-        pu.scheduling_method = 'time_blocking'
-        pu.secondary_methods = pu.secondary_methods ?? []
-        const fallbackEntry = { key: 'scheduling_method', value: 'time_blocking' }
-        if (memory_entries) memory_entries.push(fallbackEntry)
-        else (input as Record<string, unknown>).memory_entries = [fallbackEntry]
       }
+      // No `else` that stamps a default. This branch used to write
+      // `scheduling_method = 'time_blocking'` whenever the three inputs were
+      // missing, which made a guess indistinguishable from a choice — and since
+      // nothing else in the app ever collects persona/challenge/day_structure,
+      // that guess was what essentially every user ended up scheduled by.
+      // Leaving it unset is what lets MethodOnboardingModal fire and actually ask.
+      // The "nagged forever" risk that justified the default is handled where it
+      // belongs: skipping the modal now records `method_prompt_dismissed`.
 
       const safeId = assertSafeUserId(userId)
       // Save memory entries
@@ -1454,7 +1505,7 @@ async function executeTool(
       // Update profile
       const profFile = path.join(DATA_DIR, 'users',safeId, 'profile.json')
       const existing = readJsonFile<UserProfile>(profFile,
-        { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', voice_response_enabled: false, language: 'en', onboarding_completed: false, productivity_peak: 'morning' })
+        { user_id: userId, autonomy_mode: 'hybrid', theme: 'dark', language: 'en', onboarding_completed: false, productivity_peak: 'morning' })
       const updated: UserProfile = { ...existing, ...(profile_updates ?? {}), onboarding_completed: true, user_id: userId }
       writeJsonFileAtomic(profFile, updated)
       state.completedProfile = updated
@@ -1591,6 +1642,7 @@ async function executeTool(
           const horizon = probeInputs.reduce((m, i) => Math.max(m, horizonDaysFor(nowLocal, i.deadline)), 14)
           const ctx = buildSchedulingContext(
             profile, currentEvents, sched?.memory, sched?.feedback, sched?.timezone, now, horizon,
+            sched?.closedPhaseIds,
           )
           probe = probeCapacity(ctx, probeInputs, !!sched?.isHe)
         } catch (err) {
