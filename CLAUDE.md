@@ -329,6 +329,17 @@ Four things it does that the browser path does not, each closing a real trap:
    `src/app/api/` is, and this is the only credential that lives in an exported
    file on a phone.
 
+The token is read from `Authorization: Bearer`, then `X-Zman-Token`, then `?t=`
+in the URL. The query parameter contradicts the position taken elsewhere in this
+file and the reasoning still stands — a secret in a URL is written to every
+access log it passes through — but it is accepted here because **the Shortcuts
+app silently discards headers and the request body whenever the HTTP method is
+changed**, so the credential could not be reliably attached at all. Three
+separate failures in one evening (missing header, missing body, missing query)
+all surfaced as "the network connection was lost", which is why the route logs
+content-type, byte count, token source and the received path on arrival. Keep
+those logs: they turn that class of failure from an evening into one line.
+
 Identified by `SHORTCUT_USER_EMAIL`, not a uuid: the local `users.json` carries a
 different id for the same person plus three test accounts, so a mistyped uuid
 would write into a neighbouring account in silence. Both env vars unset ⇒ 401 to

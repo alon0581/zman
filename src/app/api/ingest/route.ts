@@ -132,6 +132,9 @@ function field(form: FormData, name: string): string {
  * to m4a, which is what iOS records.
  */
 const EXT_FOR: Record<string, string> = {
+  // iOS Shortcuts sends `audio/x-m4a` — confirmed from a real recording in the
+  // production log, not from a spec. It reached the fallback and worked anyway,
+  // which is exactly the kind of luck worth replacing with an entry.
   'audio/m4a': 'm4a', 'audio/x-m4a': 'm4a', 'audio/mp4': 'mp4',
   'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav',
   'audio/x-wav': 'wav', 'audio/webm': 'webm', 'audio/ogg': 'ogg',
