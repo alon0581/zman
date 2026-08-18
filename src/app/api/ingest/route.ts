@@ -159,6 +159,43 @@ async function readIncoming(req: NextRequest): Promise<Incoming | null> {
   }
 }
 
+// ─── Probe ──────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/ingest — "can this phone reach Zman at all, with this token?"
+ *
+ * Exists purely as a diagnostic, and it earned its place: a Shortcut that says
+ * "the network connection was lost" gives you nothing to work with, because a
+ * bad hostname, a declined permission prompt and a refused credential all look
+ * identical from the phone. This answers in milliseconds, needs no recording, no
+ * form and no body — so it isolates *reachability* from everything else, and it
+ * logs on arrival before any check can reject it.
+ *
+ * Run it from a one-action Shortcut. A reply means the URL and the token are
+ * both fine and the problem is further in; silence in the log means the request
+ * never left the phone.
+ */
+export async function GET(req: NextRequest) {
+  console.log(`[ingest] <- GET probe auth=${req.headers.get('authorization') ? 'yes' : 'no'}`)
+
+  if (!TOKEN || !USER_EMAIL) {
+    return NextResponse.json({ ok: false, reply: 'השרת לא מוגדר לקיצור.' }, { status: 401 })
+  }
+  const presented = bearerFrom(req)
+  if (!presented || !safeEqual(presented, TOKEN)) {
+    // Deliberately answers 200 with ok:false rather than 401. The point of this
+    // endpoint is to be READ by a human through a Shortcut, and Shortcuts turns
+    // a non-2xx into a generic failure that hides the sentence explaining what
+    // is wrong. Nothing is disclosed here that a 401 would not have disclosed.
+    return NextResponse.json({ ok: false, reply: 'הגעת לזמן, אבל הטוקן שגוי או חסר.' })
+  }
+  const userId = getUserIdByEmail(USER_EMAIL)
+  return NextResponse.json({
+    ok: true,
+    reply: userId ? 'זמן מחובר ומוכן. הכתובת והטוקן תקינים.' : 'הטוקן תקין, אבל המשתמש לא נמצא.',
+  })
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {

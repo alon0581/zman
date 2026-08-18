@@ -465,3 +465,42 @@ describe('raw body (Request Body: File)', () => {
     expect((await POST(noAuth)).status).toBe(401)
   })
 })
+
+// ── The reachability probe ──────────────────────────────────────────────────
+
+describe('GET probe', () => {
+  const getReq = (auth: string | null = `Bearer ${TOKEN}`) => {
+    const headers = new Headers()
+    if (auth !== null) headers.set('authorization', auth)
+    return { headers } as unknown as NextRequest
+  }
+
+  it('confirms reachability and a good token', async () => {
+    const mod = await (async () => { await load(); return import('./route') })()
+    const res = await mod.GET(getReq())
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(typeof body.reply).toBe('string')
+  })
+
+  // 200 with ok:false on purpose: Shortcuts turns a non-2xx into a generic
+  // failure and hides the sentence that says what is actually wrong, which is
+  // the whole reason this endpoint exists.
+  it('answers 200 with ok:false for a bad token, so the reason is readable', async () => {
+    const mod = await (async () => { await load(); return import('./route') })()
+    const res = await mod.GET(getReq('Bearer wrong-token-wrong-token'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(false)
+    expect(body.reply).toContain('טוקן')
+  })
+
+  it('never runs a turn', async () => {
+    const mod = await (async () => { await load(); return import('./route') })()
+    await mod.GET(getReq())
+    expect(runTurnMock).not.toHaveBeenCalled()
+  })
+})
