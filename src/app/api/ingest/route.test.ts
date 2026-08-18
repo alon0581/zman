@@ -73,12 +73,28 @@ const turn = (over: Partial<TurnResult> = {}): TurnResult => ({
   ...over,
 })
 
+/** A multipart request — the documented Shortcut shape. */
 function request(form: Record<string, string | Blob>, auth: string | null = `Bearer ${TOKEN}`): NextRequest {
   const fd = new FormData()
   for (const [k, v] of Object.entries(form)) fd.append(k, v)
-  const headers = new Headers()
+  const headers = new Headers({ 'content-type': 'multipart/form-data; boundary=abc' })
   if (auth !== null) headers.set('authorization', auth)
   return { headers, formData: async () => fd } as unknown as NextRequest
+}
+
+/** A raw-body request — what "Request Body: File" in Shortcuts actually sends. */
+function rawRequest(
+  body: ArrayBuffer | string,
+  contentType: string,
+  extra: Record<string, string> = {},
+): NextRequest {
+  const headers = new Headers({ 'content-type': contentType, authorization: `Bearer ${TOKEN}`, ...extra })
+  return {
+    headers,
+    text: async () => (typeof body === 'string' ? body : ''),
+    arrayBuffer: async () => (typeof body === 'string' ? new ArrayBuffer(0) : body),
+    formData: async () => { throw new TypeError('not a form') },
+  } as unknown as NextRequest
 }
 
 /** Fresh module graph per test: the route reads its env into consts at load. */
@@ -261,13 +277,13 @@ describe('input', () => {
     expect(runTurnMock).not.toHaveBeenCalled()
   })
 
-  // Caught live: a POST with no multipart boundary makes formData() throw, and
-  // before this it fell through to the catch-all and answered 500 — telling the
-  // caller the server broke when the caller had sent a bad request.
-  it('answers 400, not 500, when the body is not a readable form', async () => {
+  // Caught live: a POST whose body cannot be read at all used to fall through to
+  // the catch-all and answer 500 — telling the caller the server broke when the
+  // caller had sent a bad request.
+  it('answers 400, not 500, when the body cannot be read', async () => {
     const POST = await load()
     const bad = {
-      headers: new Headers({ authorization: `Bearer ${TOKEN}` }),
+      headers: new Headers({ authorization: `Bearer ${TOKEN}`, 'content-type': 'multipart/form-data; boundary=x' }),
       formData: async () => { throw new TypeError('Could not parse content as FormData') },
     } as unknown as NextRequest
     const res = await POST(bad)
@@ -372,5 +388,80 @@ describe('response', () => {
     const POST = await load()
     await POST(request({ audio: audio() }))
     expect(files.has(chatFile)).toBe(false)
+  })
+})
+
+// ── The other body shape ────────────────────────────────────────────────────
+//
+// Shortcuts offers "Request Body: Form" and "Request Body: File". The second
+// posts the recording as the whole body with no field name, and it is the one a
+// person lands on naturally — this suite exists because that shape spent an
+// evening answering "the network connection failed".
+
+describe('raw body (Request Body: File)', () => {
+  const clip = () => new Uint8Array(9000).buffer
+
+  it('accepts the recording as the entire body, with no form and no field name', async () => {
+    const POST = await load()
+    const res = await POST(rawRequest(clip(), 'audio/m4a'))
+
+    expect(res.status).toBe(200)
+    expect(transcribeMock).toHaveBeenCalledTimes(1)
+    expect((await res.json()).heard).toBe('תקבע לי אימון מחר בשש')
+  })
+
+  // The OpenAI transcription models read the extension off the upload's
+  // filename, so a raw body has to be given one derived from its Content-Type.
+  it('names the upload from the Content-Type, so the model accepts it', async () => {
+    const POST = await load()
+    await POST(rawRequest(clip(), 'audio/mpeg'))
+
+    const sent = transcribeMock.mock.calls[0][0] as File
+    expect(sent.name).toBe('audio.mp3')
+    expect(sent.size).toBe(9000)
+  })
+
+  it('falls back to m4a for a Content-Type it does not recognise', async () => {
+    const POST = await load()
+    await POST(rawRequest(clip(), 'application/octet-stream'))
+    expect((transcribeMock.mock.calls[0][0] as File).name).toBe('audio.m4a')
+  })
+
+  it('takes a plain-text body as the sentence itself', async () => {
+    const POST = await load()
+    await POST(rawRequest('תקבע פגישה מחר', 'text/plain; charset=utf-8'))
+
+    expect(transcribeMock).not.toHaveBeenCalled()
+    expect(runTurnMock.mock.calls[0][0].messages.at(-1).content).toBe('תקבע פגישה מחר')
+  })
+
+  // No form fields on this path, so the two things the browser would have sent
+  // move to headers — with the same defaults as before when they are absent.
+  it('reads lang and timezone from headers, defaulting as the form path does', async () => {
+    const POST = await load()
+    await POST(rawRequest(clip(), 'audio/m4a'))
+    expect(runTurnMock.mock.calls[0][0].timezone).toBe('Asia/Jerusalem')
+
+    runTurnMock.mockClear()
+    await POST(rawRequest(clip(), 'audio/m4a', { 'x-timezone': 'Europe/Berlin', 'x-lang': 'en' }))
+    expect(runTurnMock.mock.calls[0][0].timezone).toBe('Europe/Berlin')
+    expect(transcribeMock.mock.calls.at(-1)![1]).toBe('en')
+  })
+
+  it('rejects an empty body rather than burning a turn on nothing', async () => {
+    const POST = await load()
+    const res = await POST(rawRequest(new ArrayBuffer(0), 'audio/m4a'))
+
+    expect(res.status).toBe(400)
+    expect(runTurnMock).not.toHaveBeenCalled()
+  })
+
+  it('still refuses an unauthenticated raw body', async () => {
+    const POST = await load()
+    const noAuth = {
+      headers: new Headers({ 'content-type': 'audio/m4a' }),
+      arrayBuffer: async () => clip(),
+    } as unknown as NextRequest
+    expect((await POST(noAuth)).status).toBe(401)
   })
 })

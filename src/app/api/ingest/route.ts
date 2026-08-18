@@ -103,6 +103,62 @@ function field(form: FormData, name: string): string {
   return typeof v === 'string' ? v.trim() : ''
 }
 
+/**
+ * The OpenAI transcription models key off the upload's filename extension, so a
+ * raw body needs one invented from its Content-Type. Unknown types fall through
+ * to m4a, which is what iOS records.
+ */
+const EXT_FOR: Record<string, string> = {
+  'audio/m4a': 'm4a', 'audio/x-m4a': 'm4a', 'audio/mp4': 'mp4',
+  'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/wav': 'wav',
+  'audio/x-wav': 'wav', 'audio/webm': 'webm', 'audio/ogg': 'ogg',
+}
+
+interface Incoming { typed: string; audio: Blob | null; lang: string; timezone: string }
+
+/**
+ * Two body shapes, because the Shortcuts app offers two and only one of them is
+ * easy to get right.
+ *
+ * `Request Body: Form` with a file field named `audio` is the documented shape.
+ * `Request Body: File` posts the recording as the WHOLE body with no field name
+ * and no multipart wrapper — fewer places to fumble, and the shape a person
+ * lands on naturally. Supporting both costs a branch; supporting only the first
+ * cost a real evening of "the network connection failed".
+ *
+ * Returns null when there is nothing usable, which the caller turns into a 400.
+ */
+async function readIncoming(req: NextRequest): Promise<Incoming | null> {
+  const ct = (req.headers.get('content-type') ?? '').toLowerCase()
+  const header = (name: string, fallback: string) => (req.headers.get(name) ?? '').trim() || fallback
+
+  if (!ct.startsWith('multipart/form-data')) {
+    // Raw body. Headers carry what the form fields otherwise would.
+    const lang = header('x-lang', 'he')
+    const timezone = header('x-timezone', DEFAULT_TIMEZONE)
+
+    if (ct.startsWith('text/') || ct.startsWith('application/x-www-form-urlencoded')) {
+      const text = (await req.text()).trim()
+      return text ? { typed: text, audio: null, lang, timezone } : null
+    }
+
+    const buf = await req.arrayBuffer()
+    if (!buf.byteLength) return null
+    const type = ct.split(';')[0].trim() || 'audio/m4a'
+    const file = new File([buf], `audio.${EXT_FOR[type] ?? 'm4a'}`, { type })
+    return { typed: '', audio: file, lang, timezone }
+  }
+
+  const form = await req.formData()
+  const audio = form.get('audio')
+  return {
+    typed: field(form, 'text'),
+    audio: audio instanceof Blob ? audio : null,
+    lang: field(form, 'lang') || 'he',
+    timezone: field(form, 'timezone') || DEFAULT_TIMEZONE,
+  }
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -147,30 +203,29 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Parsed before the main try so that a malformed body answers 400 and not the
-  // 500 the catch-all would give it. Verified against the live route: a POST with
-  // no multipart boundary at all makes `formData()` throw, and "the server broke"
-  // is the wrong thing to tell a caller that sent a bad request.
-  let form: FormData
+  // Read before the main try so that a body we cannot parse answers 400 rather
+  // than the 500 the catch-all would give it. "The server broke" is the wrong
+  // thing to tell a caller that sent a bad request.
+  let incoming: Incoming | null
   try {
-    form = await req.formData()
+    incoming = await readIncoming(req)
   } catch {
+    incoming = null
+  }
+  if (!incoming) {
     return NextResponse.json(
-      { ok: false, error: 'bad_request', reply: 'הבקשה לא הגיעה כטופס תקין.' },
+      { ok: false, error: 'bad_request', reply: 'לא קיבלתי הקלטה או טקסט.' },
       { status: 400 },
     )
   }
 
   try {
     // ── What was said ────────────────────────────────────────────────────────
-    const typed = field(form, 'text')
-    const lang = field(form, 'lang') || 'he'
-    const timezone = field(form, 'timezone') || DEFAULT_TIMEZONE
-    const audio = form.get('audio')
+    const { typed, audio, lang, timezone } = incoming
 
     let heard = typed
     if (!heard) {
-      if (!(audio instanceof Blob)) {
+      if (!audio) {
         return NextResponse.json(
           { ok: false, error: 'no_input', reply: 'לא קיבלתי הקלטה.' },
           { status: 400 },
