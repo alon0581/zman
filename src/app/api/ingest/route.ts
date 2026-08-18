@@ -182,6 +182,29 @@ async function readIncoming(req: NextRequest): Promise<Incoming | null> {
   }
 }
 
+/**
+ * The path and query exactly as the server received them, with any token value
+ * reduced to a fingerprint.
+ *
+ * Added after three rounds of "the token is missing" that could not be told
+ * apart from "the URL never had it": a client can drop a query string, mangle it
+ * with an invisible direction mark, or simply not have been edited. The prefix
+ * and length are enough to spot every one of those without writing the secret
+ * itself into a log line.
+ */
+function describeUrl(req: NextRequest): string {
+  try {
+    const u = req.nextUrl
+    const parts: string[] = []
+    u.searchParams.forEach((v, k) => {
+      parts.push(k === 't' ? `t=${v.slice(0, 6)}…(${v.length} chars)` : `${k}=${v.slice(0, 12)}`)
+    })
+    return `${u.pathname}${parts.length ? '?' + parts.join('&') : ' (no query)'}`
+  } catch {
+    return '(url unreadable)'
+  }
+}
+
 // ─── Probe ──────────────────────────────────────────────────────────────────
 
 /**
@@ -200,7 +223,7 @@ async function readIncoming(req: NextRequest): Promise<Incoming | null> {
  */
 export async function GET(req: NextRequest) {
   const probe = tokenFrom(req)
-  console.log(`[ingest] <- GET probe token_via=${probe.via}`)
+  console.log(`[ingest] <- GET probe token_via=${probe.via} url=${describeUrl(req)}`)
 
   if (!TOKEN || !USER_EMAIL) {
     return NextResponse.json({ ok: false, reply: 'השרת לא מוגדר לקיצור.' }, { status: 401 })
@@ -233,7 +256,7 @@ export async function POST(req: NextRequest) {
   const ct = req.headers.get('content-type') ?? '(none)'
   const len = req.headers.get('content-length') ?? '?'
   const presentedToken = tokenFrom(req)
-  console.log(`[ingest] <- content-type=${ct} bytes=${len} token_via=${presentedToken.via}`)
+  console.log(`[ingest] <- content-type=${ct} bytes=${len} token_via=${presentedToken.via} url=${describeUrl(req)}`)
   const done = (status: number, note = '') =>
     console.log(`[ingest] -> ${status} in ${Date.now() - startedAt}ms ${note}`)
 
