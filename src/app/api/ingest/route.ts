@@ -208,6 +208,39 @@ function describeUrl(req: NextRequest): string {
   }
 }
 
+/**
+ * True when the caller wants the answer as a bare sentence rather than JSON.
+ *
+ * `?format=text` exists to delete a step from the client. With JSON the Shortcut
+ * needs a "Get Dictionary Value" action between the request and the display, and
+ * that middle action is fragile in exactly the way everything else here turned
+ * out to be — editing the shortcut silently disconnects it, and the symptom is a
+ * blank screen with a perfectly good 200 in the server log. With plain text the
+ * shortcut is three actions and nothing to disconnect.
+ */
+function wantsPlainText(req: NextRequest): boolean {
+  const q = (req.nextUrl?.searchParams?.get('format') ?? '').toLowerCase()
+  if (q === 'text' || q === 'txt' || q === 'plain') return true
+  return (req.headers.get('accept') ?? '').toLowerCase().startsWith('text/plain')
+}
+
+/**
+ * A sentence, with the same charset every Hebrew reply in this app uses.
+ *
+ * Always 200, including on failures, and that is the point rather than an
+ * oversight: Shortcuts replaces the body of any non-2xx with its own generic
+ * error, so a 400 here would hide the one sentence that says what went wrong and
+ * hand the user a blank screen instead. Plain-text mode trades status codes for
+ * a readable message; JSON mode keeps proper statuses for programmatic callers,
+ * and both are exercised by tests.
+ */
+function textReply(body: string): NextResponse {
+  return new NextResponse(body, {
+    status: 200,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  })
+}
+
 // ─── Probe ──────────────────────────────────────────────────────────────────
 
 /**
@@ -232,6 +265,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, reply: 'השרת לא מוגדר לקיצור.' }, { status: 401 })
   }
   if (!probe.token || !safeEqual(probe.token, TOKEN)) {
+    if (wantsPlainText(req)) return textReply('הגעת לזמן, אבל הטוקן שגוי או חסר.')
     // Deliberately answers 200 with ok:false rather than 401. The point of this
     // endpoint is to be READ by a human through a Shortcut, and Shortcuts turns
     // a non-2xx into a generic failure that hides the sentence explaining what
@@ -239,10 +273,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, reply: 'הגעת לזמן, אבל הטוקן שגוי או חסר.' })
   }
   const userId = getUserIdByEmail(USER_EMAIL)
-  return NextResponse.json({
-    ok: true,
-    reply: userId ? 'זמן מחובר ומוכן. הכתובת והטוקן תקינים.' : 'הטוקן תקין, אבל המשתמש לא נמצא.',
-  })
+  const reply = userId ? 'זמן מחובר ומוכן. הכתובת והטוקן תקינים.' : 'הטוקן תקין, אבל המשתמש לא נמצא.'
+  return wantsPlainText(req) ? textReply(reply) : NextResponse.json({ ok: true, reply })
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────
@@ -316,6 +348,7 @@ export async function POST(req: NextRequest) {
   }
   if (!incoming) {
     done(400, 'unreadable body')
+    if (wantsPlainText(req)) return textReply('לא קיבלתי הקלטה או טקסט.')
     return NextResponse.json(
       { ok: false, error: 'bad_request', reply: 'לא קיבלתי הקלטה או טקסט.' },
       { status: 400 },
@@ -341,6 +374,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (!heard) {
+      done(200, 'nothing heard')
+      if (wantsPlainText(req)) return textReply('לא שמעתי כלום.')
       return NextResponse.json({ ok: true, heard: '', reply: 'לא שמעתי כלום.', created: [] })
     }
 
@@ -383,6 +418,7 @@ export async function POST(req: NextRequest) {
     })
 
     done(200, `heard=${heard.length} chars, created=${turn.createdEvents.length}`)
+    if (wantsPlainText(req)) return textReply(reply)
     return NextResponse.json({
       ok: true,
       heard,
@@ -394,6 +430,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     done(500, 'threw')
     console.error('[ingest] failed:', err)
+    if (wantsPlainText(req)) return textReply('משהו נכשל בצד השרת. תפתח את האפליקציה ותבדוק.')
     // The Shortcut shows `reply` whatever happens, so it must always be a sentence
     // a human can act on rather than a stack trace.
     return NextResponse.json(

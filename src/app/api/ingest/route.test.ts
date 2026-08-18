@@ -554,3 +554,89 @@ describe('token sources', () => {
     expect((await res.json()).ok).toBe(true)
   })
 })
+
+// ── Plain-text mode ─────────────────────────────────────────────────────────
+//
+// Deletes the "Get Dictionary Value" step from the client. That middle action
+// turned out to be as fragile as everything else in Shortcuts — editing the
+// shortcut silently disconnects it, and the symptom is a blank screen with a
+// perfectly good 200 in the server log.
+
+describe('?format=text', () => {
+  const url = (q: string) => `https://x/api/ingest${q}`
+
+  const textPost = (query: string) => ({
+    headers: new Headers({ 'content-type': 'text/plain; charset=utf-8' }),
+    nextUrl: new URL(url(query)),
+    text: async () => 'מה יש לי מחר',
+    arrayBuffer: async () => new ArrayBuffer(0),
+    formData: async () => { throw new TypeError('not a form') },
+  }) as unknown as NextRequest
+
+  it('answers a bare sentence, not JSON', async () => {
+    const POST = await load()
+    const res = await POST(textPost(`?t=${TOKEN}&format=text`))
+
+    expect(res.headers.get('content-type')).toContain('text/plain')
+    expect(res.headers.get('content-type')).toContain('utf-8')
+    expect(await res.text()).toBe('קבעתי אימון מחר ב-18:00.')
+  })
+
+  it('still answers JSON when the format is not asked for', async () => {
+    const POST = await load()
+    const res = await POST(textPost(`?t=${TOKEN}`))
+    expect(res.headers.get('content-type')).toContain('application/json')
+  })
+
+  // Every exit has to honour it, or a failure silently renders as a blank
+  // screen — which is the exact bug this mode exists to remove. Note the 200:
+  // Shortcuts replaces the body of any non-2xx with its own generic error, so a
+  // 400 here would hide the sentence explaining what went wrong. Text mode
+  // trades the status code for a readable message; the JSON path below keeps it.
+  it('honours it on the failure paths too, answering 200 so the reason survives', async () => {
+    const POST = await load()
+    const empty = {
+      headers: new Headers({ 'content-type': 'audio/m4a' }),
+      nextUrl: new URL(url(`?t=${TOKEN}&format=text`)),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as NextRequest
+    const res = await POST(empty)
+
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/plain')
+    expect(await res.text()).toContain('לא קיבלתי')
+  })
+
+  it('still uses a real status code on the JSON path', async () => {
+    const POST = await load()
+    const empty = {
+      headers: new Headers({ 'content-type': 'audio/m4a' }),
+      nextUrl: new URL(url(`?t=${TOKEN}`)),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as NextRequest
+    expect((await POST(empty)).status).toBe(400)
+  })
+
+  it('works on the GET probe as well', async () => {
+    await load()
+    const { GET } = await import('./route')
+    const res = await GET({
+      headers: new Headers(),
+      nextUrl: new URL(url(`?t=${TOKEN}&format=text`)),
+    } as unknown as NextRequest)
+
+    expect(res.headers.get('content-type')).toContain('text/plain')
+    expect(await res.text()).toContain('זמן מחובר ומוכן')
+  })
+
+  it('also accepts Accept: text/plain instead of the query flag', async () => {
+    await load()
+    const { GET } = await import('./route')
+    const res = await GET({
+      headers: new Headers({ accept: 'text/plain' }),
+      nextUrl: new URL(url(`?t=${TOKEN}`)),
+    } as unknown as NextRequest)
+
+    expect(res.headers.get('content-type')).toContain('text/plain')
+  })
+})
