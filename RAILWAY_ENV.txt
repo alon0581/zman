@@ -169,6 +169,30 @@ CAPACITOR_SERVER_URL=https://<your-new-zman>.up.railway.app
 
 # Optional (native push): FIREBASE_SERVICE_ACCOUNT=<service-account JSON>
 
+# ── SHORTCUT INGRESS (iPhone Action Button -> POST /api/ingest) ─────────────
+# Press the Action Button, speak, and the sentence is handled exactly as if it
+# had been spoken inside the app: same brain, same calendar, same chat history.
+#
+# BOTH must be set or the route answers 401 to everything. That is deliberate:
+# this is the only endpoint in the app reachable without a session cookie, so
+# shipping the code before configuring it must not open a door.
+#
+# The token is a bearer credential in an HTTP header (NOT a query param like
+# CRON_SECRET above — a secret in a URL is written to every access log on the
+# way). Compared with a constant-time compare. Generate a new one with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+SHORTCUT_TOKEN=<32 random bytes, base64url>
+#
+# Whose calendar it writes to, BY EMAIL. Not a uuid: the local users.json holds a
+# different id for the same person plus three test accounts, so a mistyped uuid
+# would write into a neighbouring account without any error.
+SHORTCUT_USER_EMAIL=<the account's email>
+#
+# Rotating: change SHORTCUT_TOKEN here and in the Shortcut. Unlike a session
+# cookie, logging out in the browser does NOT invalidate it - this credential is
+# independent of tokenVersion, which is the whole point (a pasted cookie would
+# die the first time you log out anywhere).
+
 ──────────────────────────────────────────────
   3. VOLUME — ‼️ REQUIRED, or ALL user data resets every deploy ‼️
 ──────────────────────────────────────────────

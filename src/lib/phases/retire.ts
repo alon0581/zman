@@ -2,8 +2,8 @@
  * retire.ts — what "the semester ended, clear my lectures" should do to a
  * recurring series, as opposed to what it used to do.
  *
- * `delete_event` with `delete_series: true` (src/app/api/chat/route.ts, the
- * `delete_series` branch, around line 850) does
+ * `delete_event` with `delete_series: true` (the `delete_series` branch in
+ * src/lib/ai/executeTool.ts) does
  * `currentEvents.filter(e => e.series_id === sid)` with NO DATE BOUND, then
  * deletes every id that comes back — including every lecture already
  * attended. "End this series as of today" and "erase that it ever happened"

@@ -13,8 +13,14 @@ import path from 'path'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
 import { DATA_DIR } from '@/lib/util/dataDir'
 
-/** Constant-time string compare — avoids leaking match progress via timing. */
-function safeEqual(a: string, b: string): boolean {
+/**
+ * Constant-time string compare — avoids leaking match progress via timing.
+ *
+ * Exported so that any other credential check in the app uses this rather than
+ * `!==`. `/api/cron/notifications` predates this and still compares its secret
+ * with a plain `!==`; new machine-callable routes must not copy that.
+ */
+export function safeEqual(a: string, b: string): boolean {
   const ba = Buffer.from(a)
   const bb = Buffer.from(b)
   if (ba.length !== bb.length) return false
@@ -215,6 +221,22 @@ export function getUserIdFromCookie(cookieValue: string | undefined): string | n
  */
 export function getUserEmail(userId: string): string | null {
   return readUsers().find(u => u.id === userId)?.email ?? null
+}
+
+/**
+ * The inverse, for callers that are configured with an email rather than a id.
+ *
+ * A machine caller (the iPhone Shortcut endpoint) has to name its user in an env
+ * var, and a uuid there is both unreadable and unverifiable against the live
+ * volume — the local copy of `users.json` carries a DIFFERENT id for the same
+ * person, plus three test accounts. An email is stable, self-documenting, and
+ * checkable by eye. Comparison is case-insensitive because `registerUser` does
+ * not normalise case on write.
+ */
+export function getUserIdByEmail(email: string): string | null {
+  const wanted = email.trim().toLowerCase()
+  if (!wanted) return null
+  return readUsers().find(u => u.email.trim().toLowerCase() === wanted)?.id ?? null
 }
 
 /** Path helpers for per-user data */

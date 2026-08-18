@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import OpenAI from 'openai'
 import { getUserIdFromCookie, COOKIE_NAME } from '@/lib/auth'
-
-function getOpenAI() {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error('OPENAI_API_KEY not set')
-  return new OpenAI({ apiKey })
-}
+import { transcribeAudio } from '@/lib/voice/transcribe'
 
 async function getAuthUserId(): Promise<string | null> {
   const cookieStore = await cookies()
@@ -25,53 +19,9 @@ export async function POST(req: NextRequest) {
 
   if (!audio) return NextResponse.json({ error: 'No audio' }, { status: 400 })
 
-  // Reject tiny blobs — silence or accidental tap (< 4 KB)
-  if (audio.size < 4000) return NextResponse.json({ text: '' })
-
-  const whisperLang = (!lang || lang === 'auto') ? undefined : lang
-
-  const prompt = lang === 'he'
-    ? 'לוח שנה, פגישות, אירועים, משימות, תזכורות, מועדים. זמן פנוי, שיעורים, בחינות, אימון, ספורט.'
-    : 'Calendar scheduling. Appointments, meetings, events, tasks, reminders, deadlines.'
-
   try {
-    // gpt-4o-transcribe is markedly better on Hebrew than whisper-1, which is the
-    // oldest transcription model OpenAI still serves. Overridable by env so a
-    // model rename can be fixed without a deploy, and it falls back to whisper-1
-    // below rather than leaving the mic dead if the newer model is unavailable.
-    let transcription
-    try {
-      transcription = await getOpenAI().audio.transcriptions.create({
-        file: audio,
-        model: process.env.TRANSCRIBE_MODEL || 'gpt-4o-transcribe',
-        language: whisperLang ?? undefined,
-        prompt,
-      })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      // Only fall back for "this model doesn't exist / isn't yours" — a quota or
-      // auth failure would fail identically on whisper-1, so retrying wastes a
-      // round-trip and hides the real cause.
-      if (!/model/i.test(msg) || !/(not found|does not exist|no access|invalid)/i.test(msg)) throw err
-      console.warn('[transcribe] falling back to whisper-1:', msg)
-      transcription = await getOpenAI().audio.transcriptions.create({
-        file: audio,
-        model: 'whisper-1',
-        language: whisperLang ?? undefined,
-        prompt,
-      })
-    }
-
-    // Reject common Whisper hallucinations on silence
-    const hallucinationPhrases = [
-      'thank you', 'thanks for watching', 'תודה רבה', 'תודה',
-      'שלום', 'bye', 'goodbye', 'see you', 'subscribe',
-    ]
-    const lower = transcription.text.trim().toLowerCase()
-    const isHallucination = hallucinationPhrases.some(p => lower === p || lower === p + '.' || lower === p + '!')
-    if (isHallucination) return NextResponse.json({ text: '' })
-
-    return NextResponse.json({ text: transcription.text })
+    const text = await transcribeAudio(audio, lang)
+    return NextResponse.json({ text })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('Transcribe error:', msg)

@@ -40,7 +40,7 @@ deploys from `main`. There is no staging. Consequences:
 | Voice | OpenAI `gpt-4o-transcribe` — the *only* thing `OPENAI_API_KEY` is for |
 | Auth | File-based: `crypto.scryptSync` + HMAC cookie. No external service |
 | Storage | JSON files under `DATA_DIR` (Railway volume at `/app/data`) |
-| Tests | **Vitest — 774 passing.** `npm test` |
+| Tests | **Vitest — 896 passing.** `npm test` |
 | Notifications | ntfy (`NTFY_TOPIC_SECRET`) |
 
 **Deleted on purpose — do not reintroduce:** Supabase (and `src/proxy.ts`, which
@@ -283,10 +283,56 @@ means nobody is an admin, including you.
 
 ---
 
-## Chat — `src/app/api/chat/route.ts`
+## Chat — the brain, and two mouths
 
-Tool-call loop → SSE stream. Client events: `events`, `text`, `done`, `error`,
-`tasks_updated`, `memory_updated`, `onboarding_complete`.
+```
+lib/ai/runTurn.ts       the turn: prompt, Anthropic tool-call loop, follow-up retry
+lib/ai/executeTool.ts   the dispatcher: every tool, and the writes they perform
+app/api/chat/route.ts   transport only (167 lines) — SSE for the browser
+app/api/ingest/route.ts transport only — JSON for the iPhone Shortcut
+```
+
+**A route file may export nothing but HTTP handlers and Next's route config**, so
+while the loop lived inside `chat/route.ts` nothing else could ever reuse it. That
+is why the brain is in `lib/`. The split was only possible because the tool loop
+always finished *before* the stream was built — by the first SSE byte the reply
+text and every flag were already final, and the word-by-word emission is
+re-chunking, not generation. **Keep it that way.** The moment a route starts
+deciding anything, the two callers can disagree, which is exactly how this
+codebase acquired two session-length tables and three WIP limits.
+
+`route.identity.test.ts` compares the full SSE body against a string written by
+hand from the pre-refactor handler. It is what stops a tidy-looking change to the
+wrapper from reordering a frame or word-splitting the backstop line.
+
+SSE frames (browser): `events`, `onboarding_complete`, `memory_updated`,
+`tasks_updated`, `projects_updated`, `text`, `error`, `done`.
+
+### `POST /api/ingest` — the Shortcut ingress
+
+Press the iPhone Action Button, speak, and the sentence is handled as if it had
+been spoken in the app. `Authorization: Bearer $SHORTCUT_TOKEN`, multipart
+`audio` (or `text`), and it answers JSON: `{ ok, heard, reply, created }`.
+
+Four things it does that the browser path does not, each closing a real trap:
+
+1. **It loads the calendar itself.** `/api/chat` takes `events` from the body
+   because the browser holds them; a caller sending `[]` gets a model that thinks
+   the week is empty — no conflict detection, cheerful double-booking. There is no
+   `events` field here to get wrong.
+2. **It defaults `timezone` to `Asia/Jerusalem`.** A phone reports no zone, and
+   without one `userNow` is UTC, so a sentence spoken at 00:30 lands on yesterday.
+3. **It writes `chat-history.json` directly**, under `withUserLock`. Never via
+   `POST /api/chat-history` — that route overwrites the whole array from the
+   client's copy and would race an open tab.
+4. **It is rate limited** (20 / 15 min, keyed on the token). Nothing else under
+   `src/app/api/` is, and this is the only credential that lives in an exported
+   file on a phone.
+
+Identified by `SHORTCUT_USER_EMAIL`, not a uuid: the local `users.json` carries a
+different id for the same person plus three test accounts, so a mistyped uuid
+would write into a neighbouring account in silence. Both env vars unset ⇒ 401 to
+everything.
 
 Rules learned the hard way:
 - **The terse-reply retry rule lives in exactly one place** (`src/lib/ai/followup.ts`).
@@ -335,7 +381,7 @@ the entire feature was dead code.
 
 ```bash
 npm run dev          # localhost:3000
-npm test             # Vitest — 774 tests
+npm test             # Vitest — 896 tests
 npx tsc --noEmit     # type check
 npm run lint         # 2 pre-existing errors / 35 warnings, all in untouched components
 ```

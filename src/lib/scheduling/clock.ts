@@ -85,7 +85,7 @@ export function parseLocal(s: LocalISO): Date {
 /**
  * "Now", as a LocalISO — i.e. the wall-clock time as it appears in the given
  * IANA timezone (e.g. "Asia/Jerusalem"). Mirrors the `userNow` approach in
- * src/app/api/chat/route.ts (Intl.DateTimeFormat.formatToParts against the
+ * src/lib/ai/runTurn.ts (Intl.DateTimeFormat.formatToParts against the
  * real UTC "now"), but returns the naive string directly instead of routing
  * it back through `new Date(...)`.
  *
