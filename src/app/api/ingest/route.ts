@@ -162,10 +162,25 @@ async function readIncoming(req: NextRequest): Promise<Incoming | null> {
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Every request is logged on arrival, before anything can reject it.
+  //
+  // This is not debug scaffolding: the failure that cost the most time here was
+  // a Shortcut reporting "the network connection was lost", which is
+  // indistinguishable from a request that never left the phone. Without a line
+  // at the door there is no way to tell "it never arrived" from "it arrived and
+  // I refused it", and those have opposite fixes.
+  const startedAt = Date.now()
+  const ct = req.headers.get('content-type') ?? '(none)'
+  const len = req.headers.get('content-length') ?? '?'
+  console.log(`[ingest] <- content-type=${ct} bytes=${len} auth=${req.headers.get('authorization') ? 'yes' : 'no'}`)
+  const done = (status: number, note = '') =>
+    console.log(`[ingest] -> ${status} in ${Date.now() - startedAt}ms ${note}`)
+
   // Fails closed twice over: an unset secret or an unset user means this route
   // answers 401 to everything, so shipping the code before configuring it cannot
   // quietly open an unauthenticated door onto the assistant.
   if (!TOKEN || !USER_EMAIL) {
+    done(401, 'not_configured')
     return NextResponse.json({ ok: false, error: 'not_configured' }, { status: 401 })
   }
 
@@ -173,6 +188,7 @@ export async function POST(req: NextRequest) {
   // `safeEqual` returns false on a length mismatch rather than throwing, so a
   // wrong-length token is a 401 and not a 500.
   if (!presented || !safeEqual(presented, TOKEN)) {
+    done(401, 'unauthorized')
     return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   }
 
@@ -213,6 +229,7 @@ export async function POST(req: NextRequest) {
     incoming = null
   }
   if (!incoming) {
+    done(400, 'unreadable body')
     return NextResponse.json(
       { ok: false, error: 'bad_request', reply: 'לא קיבלתי הקלטה או טקסט.' },
       { status: 400 },
@@ -279,6 +296,7 @@ export async function POST(req: NextRequest) {
       writeJsonFileAtomic(chatFile(userId), current.slice(-MAX_MESSAGES))
     })
 
+    done(200, `heard=${heard.length} chars, created=${turn.createdEvents.length}`)
     return NextResponse.json({
       ok: true,
       heard,
@@ -288,6 +306,7 @@ export async function POST(req: NextRequest) {
       deleted: turn.deletedEventIds.length,
     })
   } catch (err) {
+    done(500, 'threw')
     console.error('[ingest] failed:', err)
     // The Shortcut shows `reply` whatever happens, so it must always be a sentence
     // a human can act on rather than a stack trace.
