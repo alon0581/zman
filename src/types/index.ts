@@ -30,6 +30,18 @@ export interface CalendarEvent {
    * can be retired without a fragile date-range guess.
    */
   phase_id?: string
+  /**
+   * Where this event physically happens. Absent means "no travel is implied" and
+   * every reader degrades to the behaviour that predates places.
+   *
+   * Per INSTANCE, not per series, because there is no series entity to hang it on
+   * — a series is N rows sharing a `series_id`. That is also the correct model
+   * rather than merely the convenient one: a shift can move branch for one week
+   * and a lecture can change room mid-semester, and a series-level place would
+   * make both unrepresentable. Same denormalisation, same reasoning, as
+   * `project_id` above.
+   */
+  place_id?: string
 }
 
 export interface Task {
@@ -66,6 +78,44 @@ export interface Task {
  * would be a fabrication.
  */
 export type ProjectKind = 'course' | 'deliverable' | 'build'
+
+/**
+ * Somewhere the user physically goes, and what it costs to get there.
+ *
+ * The scheduler used to know only WHEN the user was free, never WHERE they were,
+ * so it would happily end a study block at 09:00 and start a lecture across town
+ * at 09:00. This is the table that closes that.
+ *
+ * Every number here is DECLARED by the user, never measured. The app has no
+ * check-in, no completion marking and no location sampling, so there is nothing
+ * to learn a real travel duration from — and a guessed one that silently shapes
+ * every plan is worse than an honest one the user typed.
+ */
+export interface Place {
+  id: string
+  user_id: string
+  /** The user's own word for it: "לנדוור", "בית", "אוניברסיטה". */
+  name: string
+  /**
+   * The default origin, and there should be exactly one. Used when nothing else
+   * in the day says where the user is coming from.
+   */
+  is_home?: boolean
+  /**
+   * How long it takes to get ready to leave FOR here. Per place on purpose:
+   * getting ready for a shift is not getting ready for the gym.
+   */
+  prep_minutes: number
+  /**
+   * Minutes of travel, keyed by the ORIGIN place id. Sparse by design — an
+   * unknown pair falls back to the value from home, and when that is missing too
+   * there is no travel window at all and the day behaves exactly as before.
+   */
+  travel_from: Record<string, number>
+  /** Safety margin on top of prep + travel. Defaults to TRAVEL_MARGIN_MINUTES. */
+  margin_minutes?: number
+  created_at: string
+}
 
 export interface Project {
   id: string

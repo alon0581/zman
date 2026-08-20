@@ -59,6 +59,27 @@ export interface BusyBlock {
   isAllDay: boolean
   seriesId?: string
   category?: Category
+  /**
+   * Minutes the user needs BEFORE this block to get here — prep, the journey in,
+   * and a safety margin. Held open, never scheduled into.
+   *
+   * The engine NEVER computes this. It is filled in at the boundary
+   * (`toEngineBusy` in adapter.ts, from `computeTravelWindows` in
+   * src/lib/places/travel.ts) and this file only honours it, which is what keeps
+   * the engine pure and keeps "where is the user" out of the placement rules.
+   * Absent ⇒ zero ⇒ the day behaves exactly as it did before places existed.
+   */
+  leadMinutes?: number
+  /**
+   * Minutes needed AFTER this block for the journey out. No prep and no margin —
+   * you do not get ready to leave work, you just leave. Same provenance and same
+   * "absent ⇒ zero" rule as `leadMinutes`.
+   *
+   * Deliberately a separate number: the trip in carries preparation and the trip
+   * out does not, so the two sides are genuinely different sizes and a single
+   * scalar could only be wrong on one of them.
+   */
+  trailMinutes?: number
 }
 
 /** A stretch of a single day the user is willing to be scheduled in. */
@@ -197,7 +218,19 @@ export interface PlacementRequest {
 
 // ── Outputs ─────────────────────────────────────────────────────────────────
 
-/** Why a slot scored the way it did. Rendered to Hebrew by explain.ts. */
+/**
+ * Why a slot scored the way it did. Rendered to Hebrew by explain.ts.
+ *
+ * There is deliberately NO travel reason here, and the absence is a decision
+ * rather than an omission. Three things rule it out, any one of which is enough:
+ * the owner's rule that a travel window is never drawn on the calendar and never
+ * narrated on a successful placement; the fact that a journey does not make a
+ * slot better or worse, so any weight would be a fiction; and score.ts itself,
+ * which drops a zero-weight reason on the floor (`if (w === 0) return`), so an
+ * "informational, scores nothing" reason cannot even be expressed. Travel earns
+ * its keep by explaining FAILURES — that is what `blocked_by_travel` below is
+ * for — and explaining failures is enough.
+ */
 export type ReasonCode =
   | 'PEAK_MATCH'          // lands in the user's focus peak
   | 'METHOD_FIT'          // block size matches their method
@@ -235,6 +268,18 @@ export type UnplacedCode =
   | 'deadline_too_close'  // not enough free time before the deadline
   | 'day_cap_reached'     // every candidate day is already at dailyCapMinutes
   | 'blocked_by_fixed'    // only fixed events stood in the way
+  /**
+   * Every candidate collided with the journey to or from a commitment, not with
+   * the commitment itself.
+   *
+   * It exists because `blocked_by_fixed` renders as "fixed events block every
+   * option", and that sentence is false when the lecture at 09:00 left 08:00
+   * free and it was the hour of travel in front of it that did not. Invariant 2
+   * asks for an attributable rejection, and an attribution to the wrong thing is
+   * not one — the user would go looking at their calendar for a conflict that is
+   * not drawn there.
+   */
+  | 'blocked_by_travel'
   | 'needs_user_approval' // would require moving an ask_first event
   | 'horizon_exhausted'   // ran out of days before placing every session
   | 'no_free_space'       // only flexible work was in the way and repair could not move it

@@ -47,3 +47,16 @@ export function phasesEnabled(): boolean {
   const raw = process.env.PHASES
   return raw === '1' || raw === 'true'
 }
+
+/**
+ * PLACES gates the places layer: the place tools (`save_place`, `list_places`,
+ * `delete_place`), the `place_id` parameter on `create_event`, and the places
+ * guidance block.
+ *
+ * Same contract as the three above — unset means the app behaves exactly as it
+ * did before, and only "1" or "true" turns it on.
+ */
+export function placesEnabled(): boolean {
+  const raw = process.env.PLACES
+  return raw === '1' || raw === 'true'
+}

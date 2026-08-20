@@ -1,4 +1,4 @@
-import { CalendarEvent, Phase, Project, Task } from '@/types'
+import { CalendarEvent, Phase, Place, Project, Task } from '@/types'
 import path from 'path'
 import { assertSafeUserId } from '@/lib/util/safeUserId'
 import { readJsonFile, writeJsonFileAtomic } from '@/lib/util/jsonStore'
@@ -42,6 +42,18 @@ function readPhases(userId: string): Phase[] {
 
 function writePhases(userId: string, phases: Phase[]) {
   writeJsonFileAtomic(phasesFile(userId), phases)
+}
+
+function placesFile(userId: string) {
+  return path.join(userDir(userId), 'places.json')
+}
+
+function readPlaces(userId: string): Place[] {
+  return readJsonFile<Place[]>(placesFile(userId), [])
+}
+
+function writePlaces(userId: string, places: Place[]) {
+  writeJsonFileAtomic(placesFile(userId), places)
 }
 
 function projectsFile(userId: string) {
@@ -163,5 +175,61 @@ export const userStore = {
     phases[idx] = { ...phases[idx], ...updates, id, user_id: phases[idx].user_id }
     writePhases(userId, phases)
     return phases[idx]
+  },
+
+  // ── Places ────────────────────────────────────────────────────────────────
+  //
+  // Same no-migration contract as phases and projects: a missing places.json
+  // reads as [], no event carries a place_id, and every travel-aware path
+  // degrades to exactly the behaviour that predates this table.
+
+  getPlaces(userId = 'demo'): Place[] {
+    return readPlaces(userId)
+  },
+  /** The declared home, or null. The default origin when the day says nothing. */
+  getHomePlace(userId = 'demo'): Place | null {
+    return readPlaces(userId).find(p => p.is_home) ?? null
+  },
+  addPlace(place: Place, userId = 'demo') {
+    const places = readPlaces(userId)
+    places.push(place)
+    writePlaces(userId, places)
+  },
+  /** Returns the updated place, or null if no such id — and writes nothing on a miss. */
+  updatePlace(id: string, updates: Partial<Place>, userId = 'demo'): Place | null {
+    const places = readPlaces(userId)
+    const idx = places.findIndex(p => p.id === id)
+    if (idx === -1) return null
+    places[idx] = { ...places[idx], ...updates, id, user_id: places[idx].user_id }
+    writePlaces(userId, places)
+    return places[idx]
+  },
+  /**
+   * Removes the place AND every reference to it, because a `place_id` pointing at
+   * nothing is worse than no place at all: the travel lookup would silently find
+   * no entry and quietly stop reserving time, with nothing on screen to say so.
+   */
+  deletePlace(id: string, userId = 'demo'): boolean {
+    const places = readPlaces(userId)
+    const next = places.filter(p => p.id !== id)
+    if (next.length === places.length) return false
+
+    // Any OTHER place that declared a travel time from this one loses that pair.
+    for (const p of next) {
+      if (p.travel_from && id in p.travel_from) {
+        const rest = { ...p.travel_from }
+        delete rest[id]
+        p.travel_from = rest
+      }
+    }
+    writePlaces(userId, next)
+
+    const events = readEvents(userId)
+    let touched = false
+    for (const e of events) {
+      if (e.place_id === id) { delete e.place_id; touched = true }
+    }
+    if (touched) writeEvents(userId, events)
+    return true
   },
 }

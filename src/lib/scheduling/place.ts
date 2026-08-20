@@ -14,7 +14,7 @@
 
 import { LocalISO, addMinutes, localDateKey, minutesBetween } from './clock'
 import { buildDayScoreContext, MIN_ACCEPTABLE_SCORE, scoreCandidate } from './score'
-import { busyMinutesIn, inflate, overlaps, Span } from './timeline'
+import { busyMinutesIn, inflate, inflateSides, overlaps, Span, travelPad } from './timeline'
 import {
   BusyBlock, DayWindow, MethodRules, PlacedBlock, PlacementRequest, SchedulingContext, UnplacedCode,
 } from './types'
@@ -141,6 +141,7 @@ export function placeOne(
   const siblingDays = state.daysByRequest[requestIndex] ?? []
   let sawAskFirstOnly = false
   let sawFixed = false
+  let sawTravel = false
   let sawCap = false
   let bestRejectedByFloor: number | null = null
 
@@ -149,7 +150,19 @@ export function placeOne(
   // thousands of timestamp rebuilds per plan. Sorting here also means the
   // blockers reported for any candidate come out in a stable order for free.
   const inflated = state.busy
-    .map(b => ({ block: b, span: inflate(b, spacingAround(b, buffer, rules)) }))
+    .map(b => {
+      const spacing = spacingAround(b, buffer, rules)
+      // `core` is the span this block would have had before travel existed: the
+      // commitment plus its spacing. Kept alongside the full span because it is
+      // the only thing that can tell a real collision from a travel-only one —
+      // see the note above `travelPad`, and the use in the candidate loop below.
+      const core = inflate(b, spacing)
+      const pad = travelPad(b, spacing)
+      // Identical object when there is no travel, which both skips the second
+      // set of timestamp rebuilds and makes the "is this travel-only" test below
+      // a reference comparison for every block on an ordinary calendar.
+      return { block: b, span: pad === null ? core : inflateSides(b, pad), core }
+    })
     .sort((a, b) =>
       (a.block.start < b.block.start ? -1 : a.block.start > b.block.start ? 1 : 0) ||
       (a.block.id < b.block.id ? -1 : a.block.id > b.block.id ? 1 : 0)
@@ -171,16 +184,30 @@ export function placeOne(
 
       // Allocates nothing at all for a free candidate, which is the common case.
       let blockers: BusyBlock[] | null = null
+      // How a travel-only collision is told apart from a real one, and the whole
+      // trick is that `core` is kept: a candidate that overlaps a block's full
+      // span but NOT its core never touched the commitment or its buffer, so the
+      // only thing it ran into was the journey. `e.core === e.span` is the
+      // no-travel case (same object, built once above) and short-circuits it.
+      let hitCore = false
       for (const e of relevant) {
         if (!overlaps(span, e.span)) continue
         if (opts.ignoreAskFirst && e.block.mobility === 'ask_first') continue
         (blockers ??= []).push(e.block)
+        if (e.core === e.span || overlaps(span, e.core)) hitCore = true
       }
       if (blockers) {
         // Collisions are checked before caps so that `day_cap_reached` only ever
         // means "the slot was genuinely free and a rule of your method refused
         // it" — otherwise the cap would mask every real obstacle behind it.
-        if (blockers.every(b => b.mobility === 'ask_first')) sawAskFirstOnly = true
+        //
+        // Travel is checked before the mobility ladder for the same reason it is
+        // reported before `blocked_by_fixed`: when nothing but the journey was in
+        // the way, naming the lecture is naming the wrong obstacle. Note this
+        // also keeps such a candidate out of `attempts` — repair moves events,
+        // and a travel window is not an event it could move.
+        if (!hitCore) sawTravel = true
+        else if (blockers.every(b => b.mobility === 'ask_first')) sawAskFirstOnly = true
         else if (blockers.some(b => b.mobility === 'fixed')) sawFixed = true
         else if (blockers.every(isDisplaceable)) attempts.push({ start, end, blockers })
         continue
@@ -223,7 +250,7 @@ export function placeOne(
         attempts,
       }
     }
-    return { ok: false, code: collisionFailure(sawAskFirstOnly, sawCap, sawFixed), attempts }
+    return { ok: false, code: collisionFailure(sawAskFirstOnly, sawCap, sawTravel, sawFixed), attempts }
   }
 
   // Ties break on (start ascending, then title ascending) so the same context
@@ -294,6 +321,11 @@ export function placeOne(
  * dropping a break would quietly cancel the promise METHOD_LABELS made them, and
  * `Relaxation.wouldPlace` stays honest either way because it re-runs this same
  * filter rather than estimating.
+ *
+ * What this function returns is only half the room around a block. Travel is the
+ * other half and it is added to this rather than competing with it — see
+ * `travelPad` in timeline.ts, the one place the two are composed, and the only
+ * one, because `blockersFor` needs the identical rule.
  */
 export function spacingAround(block: BusyBlock, bufferMinutes: number, rules: MethodRules): number {
   const { breakMinutes, breakAfterMinutes } = rules
@@ -344,10 +376,19 @@ function temporalFailure(
  * chose; a fixed event is a wall; and "only flexible work was in the way, and
  * repair could not move it" is a genuine lack of room, which is its own answer
  * rather than the same one a too-short window gets.
+ *
+ * Travel goes AHEAD of fixed, which is the one place this ladder is not ordered
+ * by how much the user can do about it. `blocked_by_fixed` renders as "fixed
+ * events block every option"; if even one candidate was refused by a journey
+ * rather than by an event, that sentence is false and the user is sent to look
+ * at a calendar where nothing is drawn at the time we refused. A travel window is
+ * invisible by design, so it is the half of the answer they cannot work out for
+ * themselves; a wall they can see is the half they can.
  */
-function collisionFailure(sawAskFirstOnly: boolean, sawCap: boolean, sawFixed: boolean): UnplacedCode {
+function collisionFailure(sawAskFirstOnly: boolean, sawCap: boolean, sawTravel: boolean, sawFixed: boolean): UnplacedCode {
   if (sawAskFirstOnly) return 'needs_user_approval'
   if (sawCap) return 'day_cap_reached'
+  if (sawTravel) return 'blocked_by_travel'
   if (sawFixed) return 'blocked_by_fixed'
   return 'no_free_space'
 }

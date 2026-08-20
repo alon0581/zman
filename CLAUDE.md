@@ -40,7 +40,7 @@ deploys from `main`. There is no staging. Consequences:
 | Voice | OpenAI `gpt-4o-transcribe` — the *only* thing `OPENAI_API_KEY` is for |
 | Auth | File-based: `crypto.scryptSync` + HMAC cookie. No external service |
 | Storage | JSON files under `DATA_DIR` (Railway volume at `/app/data`) |
-| Tests | **Vitest — 896 passing.** `npm test` |
+| Tests | **Vitest — 996 passing.** `npm test` |
 | Notifications | ntfy (`NTFY_TOPIC_SECRET`) |
 
 **Deleted on purpose — do not reintroduce:** Supabase (and `src/proxy.ts`, which
@@ -106,6 +106,40 @@ A break is **never a `PlacedBlock`** — it would have to ship without reasons
 `dailyCapMinutes` minutes, halving Pomodoro's promised eight sessions. It is also
 not part of the block length, so `clampBlock`'s bounds still describe work only.
 Inert for the other 16 methods, asserted by digest identity in `breaks.test.ts`.
+
+### Travel is spacing too, and asymmetric (2026-08-20, `PLACES`)
+
+The engine knew *when* the user was free and never *where they were*, so it would
+end a block at 09:00 and start a lecture across town at 09:00. `Place`
+(`places.json`, joined by `CalendarEvent.place_id`) carries a per-place prep time
+and declared travel minutes; `lib/places/travel.ts` turns a day's events into a
+`{lead, trail}` per event, purely. `toEngineBusy` stamps them onto `BusyBlock`.
+**The engine never computes travel — it only honours it.**
+
+- `inflate` was symmetric, one scalar for both edges. It now delegates to
+  `inflateSides(block, {before, after})`; its own signature and behaviour are
+  unchanged, which is what preserved identity for every existing caller.
+- `travelPad` (timeline.ts) is **the one place** spacing and travel are composed,
+  because `blockersFor` needs the identical rule — this repo has been bitten
+  twice by one number living in two tables.
+- **Travel ADDS to the buffer; a method break REPLACES it.** Not an
+  inconsistency: a break and a buffer answer the same question and compete, while
+  the buffer is time to wrap up and travel is the journey. Neither substitutes.
+- `drop_buffer` cannot take travel with it, structurally — the relaxation can
+  only reach `spacing`. Otherwise the engine would offer "skip your commute" as
+  advice.
+- A travel window is **never a `PlacedBlock`** (same argument as breaks), and
+  deliberately gets **no `ReasonCode`** — it is never drawn and never narrated on
+  success. It does get `UnplacedCode` `blocked_by_travel`, because reporting
+  `blocked_by_fixed` for a candidate that only clipped the approach to a lecture
+  is a false sentence.
+- Travel is **not** charged to `dailyCapMinutes`. It is genuinely consumed time,
+  unlike a buffer, but charging it shrinks the day twice. This is the number to
+  revisit if busy days come out too empty.
+- **Already there ⇒ zero, including prep.** Two back-to-back shifts at one place
+  need nothing held open: prep is "how long to get ready to leave FOR here" and
+  was spent before the first shift. Charging it again would silently swallow the
+  only gap in a ten-hour day.
 
 ### Time: `LocalISO` or nothing
 
@@ -392,7 +426,7 @@ the entire feature was dead code.
 
 ```bash
 npm run dev          # localhost:3000
-npm test             # Vitest — 896 tests
+npm test             # Vitest — 996 tests
 npx tsc --noEmit     # type check
 npm run lint         # 2 pre-existing errors / 35 warnings, all in untouched components
 ```

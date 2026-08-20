@@ -26,7 +26,7 @@ import OpenAI from 'openai'
 import { getCalendarTools, getOnboardingTools } from '@/lib/ai/tools'
 import { buildSystemPrompt } from '@/lib/ai/systemPrompt'
 import { buildOnboardingSystemPrompt } from '@/lib/ai/onboardingPrompt'
-import { phasesEnabled, projectsEnabled, schedulerV2Enabled } from '@/lib/ai/featureFlags'
+import { phasesEnabled, placesEnabled, projectsEnabled, schedulerV2Enabled } from '@/lib/ai/featureFlags'
 import { followupPrompt, needsFollowup } from '@/lib/ai/followup'
 import { SchedulerCtx } from '@/lib/ai/schedulerTools'
 import { executeTool, memoryFile } from '@/lib/ai/executeTool'
@@ -155,6 +155,21 @@ LIFE PHASES:
 - Reopening a phase NEVER recreates its calendar events. A timetable changes between semesters. Offer to rebuild and ask for the new one.
 `.trim()
 
+/**
+ * Appended to the DYNAMIC suffix when PLACES is on. Same cache rule as the three
+ * above. The routing itself (when to attach place_id, when to reuse an id instead
+ * of minting one) lives in the tool descriptions — see tools.ts — for the same
+ * reason PHASES_GUIDANCE gives for delete_event/end_series: prose here already
+ * lost to a more specific tool description once in this repo.
+ */
+const PLACES_GUIDANCE = `
+PLACES:
+- A place is somewhere the user physically goes — home, work, campus, the gym — carrying how long it takes to get ready and how long the trip is from other places. Every number is DECLARED by the user; never invent prep or travel minutes.
+- Call list_places before save_place so you reuse an existing place_id instead of minting a near-duplicate ("הבית" vs "בית").
+- On an update, save_place's travel_from MERGES with pairs already declared — it never erases one the user stated earlier.
+- At most one place is home. Marking a new one un-marks the previous one automatically.
+`.trim()
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function loadFreshProfile(userId: string): UserProfile | null {
@@ -237,6 +252,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
   const v2 = schedulerV2Enabled()
   const projects = projectsEnabled()
   const phases = phasesEnabled()
+  const places = placesEnabled()
   console.log('[chat] model:', model, 'scheduler_v2:', v2)
   // ───────────────────────────────────────────────────────────────────────
 
@@ -307,6 +323,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     v2 ? SCHEDULER_V2_GUIDANCE : '',
     projects ? PROJECTS_GUIDANCE : '',
     phases ? PHASES_GUIDANCE : '',
+    places ? PLACES_GUIDANCE : '',
   ].filter(Boolean).join('\n\n')
   const sys = guidance
     ? { ...rawSys, dynamicSuffix: `${rawSys.dynamicSuffix}\n\n${guidance}`.trim() }
@@ -332,8 +349,13 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     // Derived from the same read `phaseCtx` already did, so a closed phase's
     // feedback stops steering the plan the moment its facts stop being injected.
     closedPhaseIds: phaseCtx ? Object.keys(phaseCtx.closedLabelById ?? {}) : undefined,
+    // Undefined when PLACES is off, and then no block carries a travel window
+    // and every engine path behaves exactly as it did before places existed.
+    places: places ? userStore.getPlaces(userId) : undefined,
   }
-  const activeTools = isOnboarding ? getOnboardingTools(v2, projects, phases) : getCalendarTools(v2, projects, phases)
+  const activeTools = isOnboarding
+    ? getOnboardingTools(v2, projects, phases, places)
+    : getCalendarTools(v2, projects, phases, places)
 
   // ── Tool-call loop ──────────────────────────────────────────────────────
 

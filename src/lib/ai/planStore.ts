@@ -41,6 +41,13 @@ export interface StoredPlanBlock {
    */
   project_id?: string
   ref?: { kind: 'event' | 'task' | 'project'; id: string }
+  /**
+   * Where this block's time happens. Same rule as `project_id` above: stamped at
+   * apply time onto the written CalendarEvent, and if it is dropped here it is
+   * gone by the time the event exists — the exact silent-loss bug `project_id`
+   * had until the apply_plan spread-guard was added for it.
+   */
+  place_id?: string
 }
 
 export interface StoredPlan {

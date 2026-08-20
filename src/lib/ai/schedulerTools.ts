@@ -12,7 +12,7 @@
  * call site on `sched.enabled`.
  */
 
-import { AIMemory, CalendarEvent, FeedbackSignal, UserProfile } from '@/types'
+import { AIMemory, CalendarEvent, FeedbackSignal, Place, UserProfile } from '@/types'
 import { LocalISO, addMinutes, minutesBetween } from '@/lib/scheduling/clock'
 import {
   buildSchedulingContext, buildSchedulingProfile, horizonDaysFor, normalizeToLocalISO,
@@ -38,6 +38,11 @@ export interface SchedulerCtx {
    * Undefined when PHASES is off, which keeps every signal, as before.
    */
   closedPhaseIds?: string[]
+  /**
+   * The user's declared places. Undefined when PLACES is off, and then no event
+   * carries a travel window and every path here behaves exactly as before.
+   */
+  places?: Place[]
 }
 
 // ── Method-aware shaping ────────────────────────────────────────────────────
@@ -237,7 +242,7 @@ export function proposePlan(
 
   let ctx
   try {
-    ctx = buildSchedulingContext(profile, events, sched.memory, sched.feedback, sched.timezone, now, horizonDays, sched.closedPhaseIds)
+    ctx = buildSchedulingContext(profile, events, sched.memory, sched.feedback, sched.timezone, now, horizonDays, sched.closedPhaseIds, sched.places)
   } catch (err) {
     return {
       toolResult: { error: 'context_failed', message: `Could not read the calendar for planning: ${(err as Error)?.message}` },
@@ -354,7 +359,7 @@ export function planMove(
 
   let view: PlanToolResult
   try {
-    const ctx = buildSchedulingContext(profile, others, sched.memory, sched.feedback, sched.timezone, now, undefined, sched.closedPhaseIds)
+    const ctx = buildSchedulingContext(profile, others, sched.memory, sched.feedback, sched.timezone, now, undefined, sched.closedPhaseIds, sched.places)
     view = planOutcomeToToolResult(planSchedule({
       ...ctx,
       // A move is a relocation, not a re-plan. The method's block bounds shape
@@ -455,7 +460,11 @@ export function planRecurring(
   const titleLower = title.toLowerCase().trim()
   // Instances placed so far block later ones too: a monthly series that slides
   // can otherwise be scheduled on top of its own earlier instance.
-  const liveBusy = [...toEngineBusy(knownEvents, sched.timezone).busy]
+  // Places are passed here for the same reason `blockersFor` now reads travel at
+  // all: without them this check calls a slot free that `planSchedule` would
+  // refuse, and a weekly series gets pinned to the exact half hour the user
+  // spends driving. It used to ignore method breaks the same way.
+  const liveBusy = [...toEngineBusy(knownEvents, sched.timezone, sched.places).busy]
 
   const instances: RecurringInstance[] = []
   const conflicts: RecurringConflict[] = []

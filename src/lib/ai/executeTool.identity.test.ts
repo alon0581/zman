@@ -16,8 +16,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AIMemory, CalendarEvent, UserProfile } from '@/types'
-import { PHASE_ONLY_TOOLS, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS } from '@/lib/ai/tools'
+import type { AIMemory, CalendarEvent, Place, UserProfile } from '@/types'
+import { PHASE_ONLY_TOOLS, PLACE_ONLY_TOOLS, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS } from '@/lib/ai/tools'
 
 const files = vi.hoisted(() => new Map<string, unknown>())
 vi.mock('@/lib/util/jsonStore', () => ({
@@ -50,7 +50,7 @@ const call = (name: string, input: Record<string, unknown> = {}, over: CallOver 
     undefined, undefined, new Date('2026-08-18T09:00:00'), undefined,
   )
 
-const ENV_KEYS = ['SCHEDULER_V2', 'PROJECTS', 'PHASES'] as const
+const ENV_KEYS = ['SCHEDULER_V2', 'PROJECTS', 'PHASES', 'PLACES'] as const
 const ORIGINAL = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]))
 
 beforeEach(() => {
@@ -90,6 +90,13 @@ describe('a tool whose flag is off is refused by name', () => {
   it('refuses every phase-only tool when PHASES is off', async () => {
     expect(PHASE_ONLY_TOOLS.size).toBeGreaterThan(0)
     for (const name of PHASE_ONLY_TOOLS) {
+      expect(await call(name), name).toEqual({ error: 'unknown_tool', message: `Unknown tool: ${name}` })
+    }
+  })
+
+  it('refuses every place-only tool when PLACES is off', async () => {
+    expect(PLACE_ONLY_TOOLS.size).toBeGreaterThan(0)
+    for (const name of PLACE_ONLY_TOOLS) {
       expect(await call(name), name).toEqual({ error: 'unknown_tool', message: `Unknown tool: ${name}` })
     }
   })
@@ -185,6 +192,108 @@ describe('save_memory writes and reports it', () => {
     await call('save_memory', { entries: [{ key: 'wake_time', value: '07:00' }] })
     const stored = files.get(memoryFile('u-test')) as AIMemory[]
     expect(stored[0].phase_id).toBeUndefined()
+  })
+})
+
+// ── Places business logic ───────────────────────────────────────────────────
+//
+// The two things the brief calls out as easy to get quietly wrong: save_place's
+// upsert semantics (merge travel_from, keep at most one home), and create_event
+// refusing an unresolvable place_id instead of silently dropping it — the same
+// failure mode that made project_id useless for weeks.
+
+describe('places (PLACES=1)', () => {
+  beforeEach(() => { process.env.PLACES = '1' })
+
+  it('save_place creates a place with no id given', async () => {
+    const result = await call('save_place', { name: 'הבית', prep_minutes: 10 }) as { success: boolean; place: Place }
+    expect(result.success).toBe(true)
+    expect(result.place.name).toBe('הבית')
+    expect(result.place.prep_minutes).toBe(10)
+    expect(result.place.travel_from).toEqual({})
+  })
+
+  it('requires a name to create a place', async () => {
+    expect(await call('save_place', {})).toEqual({ error: 'missing_required_fields', message: 'name is required to create a place' })
+  })
+
+  it('marking a new place home un-marks the previous home', async () => {
+    const home = await call('save_place', { name: 'הבית', is_home: true, prep_minutes: 5 }) as { place: Place }
+    const work = await call('save_place', { name: 'העבודה', is_home: true, prep_minutes: 15 }) as { place: Place }
+    expect(work.place.is_home).toBe(true)
+
+    const list = await call('list_places') as { places: Place[] }
+    const homeRow = list.places.find(p => p.id === home.place.id)!
+    const workRow = list.places.find(p => p.id === work.place.id)!
+    expect(homeRow.is_home).toBe(false)
+    expect(workRow.is_home).toBe(true)
+  })
+
+  it('a partial update MERGES travel_from instead of replacing it', async () => {
+    const home = await call('save_place', { name: 'הבית', is_home: true, prep_minutes: 5 }) as { place: Place }
+    const gym = await call('save_place', {
+      name: 'חדר כושר', prep_minutes: 10, travel_from: { [home.place.id]: 20 },
+    }) as { place: Place }
+    expect(gym.place.travel_from).toEqual({ [home.place.id]: 20 })
+
+    const work = await call('save_place', { name: 'העבודה', prep_minutes: 5 }) as { place: Place }
+    // Only adds the work->gym pair — must not erase the home->gym pair already there.
+    const updated = await call('save_place', {
+      place_id: gym.place.id, travel_from: { [work.place.id]: 30 },
+    }) as { success: boolean; place: Place }
+
+    expect(updated.success).toBe(true)
+    expect(updated.place.travel_from).toEqual({
+      [home.place.id]: 20,
+      [work.place.id]: 30,
+    })
+  })
+
+  it('updating an unknown place_id reports not_found', async () => {
+    expect(await call('save_place', { place_id: 'nope', name: 'x' }))
+      .toEqual({ error: 'not_found', message: 'No place with id nope' })
+  })
+
+  it('delete_place removes it and reports success', async () => {
+    const place = await call('save_place', { name: 'הבית', prep_minutes: 5 }) as { place: Place }
+    expect(await call('delete_place', { place_id: place.place.id })).toEqual({ success: true })
+    const list = await call('list_places') as { places: Place[] }
+    expect(list.places.find(p => p.id === place.place.id)).toBeUndefined()
+  })
+
+  it('delete_place on an unknown id reports not_found', async () => {
+    expect(await call('delete_place', { place_id: 'nope' }))
+      .toEqual({ error: 'not_found', message: 'No place with id nope' })
+  })
+
+  it('create_event accepts a place_id that resolves to a real place', async () => {
+    const place = await call('save_place', { name: 'הבית', prep_minutes: 5 }) as { place: Place }
+    const created: CalendarEvent[] = []
+    const result = await call('create_event', {
+      title: 'ריצה', start_time: '2026-08-18T10:00:00', end_time: '2026-08-18T11:00:00',
+      place_id: place.place.id,
+    }, { created }) as { success: boolean; event: CalendarEvent }
+    expect(result.success).toBe(true)
+    expect(result.event.place_id).toBe(place.place.id)
+    expect(created[0].place_id).toBe(place.place.id)
+  })
+
+  it('create_event rejects a place_id that does not resolve, instead of dropping it silently', async () => {
+    const created: CalendarEvent[] = []
+    const result = await call('create_event', {
+      title: 'ריצה', start_time: '2026-08-18T10:00:00', end_time: '2026-08-18T11:00:00',
+      place_id: 'no-such-place',
+    }, { created })
+    expect(result).toEqual({ error: 'not_found', message: 'No place with id no-such-place' })
+    expect(created).toEqual([])
+  })
+
+  it('create_event with no place_id behaves exactly as before', async () => {
+    const result = await call('create_event', {
+      title: 'ריצה', start_time: '2026-08-18T10:00:00', end_time: '2026-08-18T11:00:00',
+    }) as { success: boolean; event: CalendarEvent }
+    expect(result.success).toBe(true)
+    expect(result.event.place_id).toBeUndefined()
   })
 })
 

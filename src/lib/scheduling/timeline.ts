@@ -100,14 +100,52 @@ function allDaySpan(start: LocalISO, end: LocalISO): Span {
 }
 
 /**
+ * How much empty time to hold on each side of a block. Named fields rather than
+ * two positional numbers on purpose: the whole reason this type exists is that
+ * the two sides differ, and `(block, 45, 20)` is a transposition waiting to
+ * happen at the call site while `{ before, after }` cannot be got backwards.
+ */
+export interface Padding {
+  before: number
+  after: number
+}
+
+/**
  * The block plus the breathing room the profile asks for on each side.
  *
  * All-day blocks are never padded: they already own their whole day, and
  * inflating them would leak the buffer into neighbouring days that are free.
+ *
+ * ONE scalar, both edges — kept exactly as it was, because several callers
+ * (blockersFor, freeGaps, and the tests that pin them) mean precisely that. When
+ * the two sides differ, reach for `inflateSides` instead of widening this.
  */
 export function inflate(block: BusyBlock, bufferMinutes: number): Span {
-  if (block.isAllDay || bufferMinutes <= 0) return { start: block.start, end: block.end }
-  return { start: addMinutes(block.start, -bufferMinutes), end: addMinutes(block.end, bufferMinutes) }
+  return inflateSides(block, { before: bufferMinutes, after: bufferMinutes })
+}
+
+/**
+ * The block plus a different amount of room before it and after it.
+ *
+ * Travel is the reason this exists and it is asymmetric by nature: the trip in
+ * carries getting-ready time and the trip out does not, so the two numbers are
+ * routinely unequal (see `TravelWindow` in src/lib/places/travel.ts). A single
+ * scalar could only ever be one of them — taking the larger would block time
+ * that is genuinely free, taking the smaller would schedule into a journey.
+ *
+ * Each edge is clamped at zero independently, so a negative or absent amount on
+ * one side leaves that edge untouched without disturbing the other. That is also
+ * what makes `inflate` a pure delegation rather than a re-implementation: with
+ * before === after this is the identical span, non-positive values included.
+ */
+export function inflateSides(block: BusyBlock, pad: Padding): Span {
+  // An all-day block already owns its whole day; padding it would leak into
+  // neighbouring days that are free, in either direction.
+  if (block.isAllDay) return { start: block.start, end: block.end }
+  return {
+    start: pad.before > 0 ? addMinutes(block.start, -pad.before) : block.start,
+    end: pad.after > 0 ? addMinutes(block.end, pad.after) : block.end,
+  }
 }
 
 /**
@@ -117,8 +155,31 @@ export function inflate(block: BusyBlock, bufferMinutes: number): Span {
  */
 export function blockersFor(span: Span, busy: BusyBlock[], bufferMinutes: number): BusyBlock[] {
   return busy
-    .filter(b => overlaps(span, inflate(b, bufferMinutes)))
+    .filter(b => {
+      const pad = travelPad(b, bufferMinutes)
+      return overlaps(span, pad === null ? inflate(b, bufferMinutes) : inflateSides(b, pad))
+    })
     .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+/**
+ * The total room to hold on each side of one commitment: its spacing, PLUS the
+ * journey to and from it.
+ *
+ * Lives here rather than in place.ts because it now has two callers — the
+ * engine's hard filter and `blockersFor` — and this repo has been bitten twice
+ * by one number living in two tables. See the long note above `spacingAround`
+ * in place.ts for why travel ADDS to the spacing while a method break REPLACES
+ * it, and why `drop_buffer` structurally cannot take the travel with it.
+ */
+export function travelPad(block: BusyBlock, spacing: number): Padding | null {
+  const lead = block.leadMinutes ?? 0
+  const trail = block.trailMinutes ?? 0
+  // `null` rather than `{before: spacing, after: spacing}` so callers can keep
+  // the symmetric fast path — which is every block on a calendar with no places
+  // on it, i.e. all of them until the user declares one.
+  if (lead === 0 && trail === 0) return null
+  return { before: spacing + lead, after: spacing + trail }
 }
 
 /** Merges overlapping and touching spans into the smallest equivalent set. */
@@ -159,6 +220,19 @@ export function freeGaps(window: DayWindow, busy: BusyBlock[], bufferMinutes: nu
  * defines as "across everything" — so existing commitments count, not just what
  * this plan added. Buffers deliberately do not: they are breathing room, not
  * scheduled time, and charging them to the cap would shrink the day twice.
+ *
+ * Travel does not count either, and the argument is the REVERSE of the buffer's,
+ * which is why it is worth writing down rather than filing under "same as
+ * buffers". A buffer is not consumed time at all; travel plainly is — an hour on
+ * a bus is an hour of the user's life. It stays out anyway because the cap is a
+ * ceiling on *scheduled work*, and travel already shrinks the day once by
+ * removing the slots it covers. Charging it a second time would mean a student
+ * with a 90-minute commute lost three hours of their cap to it — the day would
+ * come out visibly emptier than the same day with the same lecture and no
+ * declared place, which is the one thing places must never do.
+ *
+ * If plans start coming back thinner than they should once places are in real
+ * use, THIS is the number to revisit — not the padding in place.ts.
  */
 export function busyMinutesIn(window: DayWindow, busy: BusyBlock[]): number {
   // Narrowed to the window before merging. Blocks elsewhere in the horizon

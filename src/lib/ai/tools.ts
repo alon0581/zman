@@ -762,6 +762,113 @@ function withPhases(tools: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTo
   return out
 }
 
+// ─── PLACES tool surface ──────────────────────────────────────────────────────
+//
+// A place is somewhere the user physically goes, carrying how long it takes to
+// get ready and how long the trip is from other places (see the header comment
+// on the `Place` type). Every number is DECLARED by the user, never measured.
+// Three tools, kept to the same "list before you mint" discipline list_phases and
+// list_projects already use for their own identifiers.
+
+const placeTools: OpenAI.ChatCompletionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'save_place',
+      description:
+        'Create or update a place the user physically goes — home, work, gym, an address. ' +
+        'Call list_places FIRST so you reuse an existing place_id instead of minting a near-duplicate ("הבית" vs "בית"). ' +
+        'Pass place_id to update an existing place; omit it to create a new one. ' +
+        'is_home marks the default origin: at most one place may be home, so marking a new one automatically un-marks the previous one — you do not need to clear it yourself. ' +
+        'prep_minutes is how long it takes to get ready to leave FOR this place. ' +
+        'travel_from maps an ORIGIN place_id to travel minutes from there, e.g. {"<home_id>": 20}. On an UPDATE it MERGES with pairs already declared — it never erases one the user stated earlier. ' +
+        'Every number here is what the user SAYS, never a guess — ask rather than invent prep or travel minutes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          place_id: { type: 'string', description: 'Omit to create a new place; pass an existing place_id (from list_places) to update it.' },
+          name: { type: 'string', description: 'The user\'s own word for it: "הבית", "העבודה", "האוניברסיטה".' },
+          is_home: { type: 'boolean', description: 'Marks this the default origin. Setting it true un-marks whichever place was home before.' },
+          prep_minutes: { type: 'number', description: 'Minutes to get ready to leave for this place.' },
+          travel_from: {
+            type: 'object',
+            description: 'Origin place_id -> travel minutes to get here from there. Merges with pairs already declared on an update; never replaces the whole map.',
+            additionalProperties: { type: 'number' },
+          },
+          margin_minutes: { type: 'number', description: 'Safety margin on top of prep + travel. Omit to use the default.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_places',
+      description:
+        'List the user\'s places. Call this BEFORE save_place so you can reuse an existing place_id instead of creating a near-duplicate ("הבית" vs "בית") — the same job list_phases does for phase slugs. ' +
+        'Also answers "איפה שמרתי" / "what places do I have".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_place',
+      description:
+        'Delete a place. Any event that referenced it keeps the event but loses the reference; any other place\'s travel_from pointing at it loses that pair.',
+      parameters: {
+        type: 'object',
+        properties: { place_id: { type: 'string' } },
+        required: ['place_id'],
+      },
+    },
+  },
+]
+
+/** In the places world, create_event gains an optional link — same idea as PROJECTS_PARAMETER_EXTRAS. */
+const PLACES_PARAMETER_EXTRAS: Record<string, Record<string, unknown>> = {
+  create_event: {
+    place_id: {
+      type: 'string',
+      description: 'An id from list_places. Attach it when the user names where this happens ("בלנדוור", "באוניברסיטה", "בעבודה") so travel to and from it is accounted for.',
+    },
+  },
+}
+
+/**
+ * Same lesson as PROJECTS_DESCRIPTION_OVERRIDES and PHASES_DESCRIPTION_OVERRIDES:
+ * the routing has to sit in the description the model reads to decide whether to
+ * fill place_id, not in prompt prose. Appended rather than replaced, so it layers
+ * correctly on top of whichever create_event description (v1 or v2) already made
+ * it into the array by the time withPlaces runs.
+ */
+const PLACES_DESCRIPTION_SUFFIX: Record<string, string> = {
+  create_event: ' If the user names a place this happens at ("בלנדוור", "באוניברסיטה", "בעבודה"), pass place_id — an id from list_places.',
+}
+
+function withPlaces(tools: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
+  const out = tools.map(tool => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fn = (tool as any).function as { name: string; description?: string; parameters?: any }
+    const extras = PLACES_PARAMETER_EXTRAS[fn?.name]
+    const suffix = PLACES_DESCRIPTION_SUFFIX[fn?.name]
+    if (!extras && !suffix) return tool
+    return {
+      ...tool,
+      function: {
+        ...fn,
+        ...(suffix ? { description: `${fn.description ?? ''}${suffix}` } : {}),
+        ...(extras && fn.parameters?.properties
+          ? { parameters: { ...fn.parameters, properties: { ...fn.parameters.properties, ...extras } } }
+          : {}),
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any
+  })
+  out.push(...placeTools)
+  return out
+}
+
 function withProjects(tools: OpenAI.ChatCompletionTool[], v2: boolean): OpenAI.ChatCompletionTool[] {
   const out = tools.map(tool => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -788,45 +895,62 @@ function withProjects(tools: OpenAI.ChatCompletionTool[], v2: boolean): OpenAI.C
   return out
 }
 
-const calendarToolsV2: OpenAI.ChatCompletionTool[] = toV2(calendarTools)
-const onboardingToolsV2: OpenAI.ChatCompletionTool[] = toV2(onboardingTools)
-const calendarToolsProjects: OpenAI.ChatCompletionTool[] = withProjects(calendarTools, false)
-const calendarToolsV2Projects: OpenAI.ChatCompletionTool[] = withProjects(calendarToolsV2, true)
-const onboardingToolsProjects: OpenAI.ChatCompletionTool[] = withProjects(onboardingTools, false)
-const onboardingToolsV2Projects: OpenAI.ChatCompletionTool[] = withProjects(onboardingToolsV2, true)
+// ─── Every flag combination, precomputed once ────────────────────────────────
+//
+// Through three axes (v2, projects, phases) this file named every variant:
+// calendarToolsV2, calendarToolsProjects, calendarV2ProjectsPhases, and five more
+// — eight per base array, sixteen counting onboarding. A fourth axis (places)
+// doubles that to sixteen per base / thirty-two total, which is past the point
+// where hand-naming each one is honest: it is exactly the kind of copy-paste
+// surface a transposed line goes unnoticed on. So this generates the matrix from
+// the same building blocks above (toV2 / withProjects / withPhases / withPlaces),
+// applied in the same order they were always applied in — v2, then projects,
+// then phases, then places — instead of naming each of the sixteen results.
+// A fifth axis would make even the generated 32-entry matrix worth reconsidering
+// (a real properties-bag tool-config object rather than a boolean matrix); see
+// the report on this change for that trade-off written out.
+function applyFlagAxes(
+  base: OpenAI.ChatCompletionTool[],
+  v2: boolean, projects: boolean, phases: boolean, places: boolean,
+): OpenAI.ChatCompletionTool[] {
+  let out = base
+  if (v2) out = toV2(out)
+  if (projects) out = withProjects(out, v2)
+  if (phases) out = withPhases(out)
+  if (places) out = withPlaces(out)
+  return out
+}
 
-// Phases is an independent axis, so every (v2 x projects) combination gets a
-// phases variant. Built once at module load, like the others.
-const withP = (t: OpenAI.ChatCompletionTool[]) => withPhases(t)
-const calendarPhases = withP(calendarTools)
-const calendarV2Phases = withP(calendarToolsV2)
-const calendarProjectsPhases = withP(calendarToolsProjects)
-const calendarV2ProjectsPhases = withP(calendarToolsV2Projects)
-const onboardingPhases = withP(onboardingTools)
-const onboardingV2Phases = withP(onboardingToolsV2)
-const onboardingProjectsPhases = withP(onboardingToolsProjects)
-const onboardingV2ProjectsPhases = withP(onboardingToolsV2Projects)
+/** Every flag off touches nothing, so mask 0 returns `base` itself — the identity the flag-off tests pin. */
+function buildVariants(base: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[][] {
+  const variants: OpenAI.ChatCompletionTool[][] = []
+  for (let mask = 0; mask < 16; mask++) {
+    variants[mask] = applyFlagAxes(base, !!(mask & 1), !!(mask & 2), !!(mask & 4), !!(mask & 8))
+  }
+  return variants
+}
+
+const CALENDAR_VARIANTS = buildVariants(calendarTools)
+const ONBOARDING_VARIANTS = buildVariants(onboardingTools)
+
+function variantIndex(v2: boolean, projects: boolean, phases: boolean, places: boolean): number {
+  return (v2 ? 1 : 0) | (projects ? 2 : 0) | (phases ? 4 : 0) | (places ? 8 : 0)
+}
 
 /**
  * The tool list to hand the model. With every flag false this returns the exact
  * same array reference the app has always used — not a copy, not a rebuild.
  */
-export function getCalendarTools(v2: boolean, projects = false, phases = false): OpenAI.ChatCompletionTool[] {
-  if (!phases) {
-    if (!projects) return v2 ? calendarToolsV2 : calendarTools
-    return v2 ? calendarToolsV2Projects : calendarToolsProjects
-  }
-  if (!projects) return v2 ? calendarV2Phases : calendarPhases
-  return v2 ? calendarV2ProjectsPhases : calendarProjectsPhases
+export function getCalendarTools(
+  v2: boolean, projects = false, phases = false, places = false,
+): OpenAI.ChatCompletionTool[] {
+  return CALENDAR_VARIANTS[variantIndex(v2, projects, phases, places)]
 }
 
-export function getOnboardingTools(v2: boolean, projects = false, phases = false): OpenAI.ChatCompletionTool[] {
-  if (!phases) {
-    if (!projects) return v2 ? onboardingToolsV2 : onboardingTools
-    return v2 ? onboardingToolsV2Projects : onboardingToolsProjects
-  }
-  if (!projects) return v2 ? onboardingV2Phases : onboardingPhases
-  return v2 ? onboardingV2ProjectsPhases : onboardingProjectsPhases
+export function getOnboardingTools(
+  v2: boolean, projects = false, phases = false, places = false,
+): OpenAI.ChatCompletionTool[] {
+  return ONBOARDING_VARIANTS[variantIndex(v2, projects, phases, places)]
 }
 
 /** Tools that only exist under the flag. Used by the dispatcher to fail closed. */
@@ -841,3 +965,6 @@ export const PHASE_ONLY_TOOLS = new Set([
 export const PROJECT_ONLY_TOOLS = new Set([
   'create_project', 'list_projects', 'update_project', 'delete_project', 'plan_project',
 ])
+
+/** Same fail-closed guard, for the places surface. */
+export const PLACE_ONLY_TOOLS = new Set(['save_place', 'list_places', 'delete_place'])

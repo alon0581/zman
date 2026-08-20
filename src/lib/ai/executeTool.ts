@@ -13,9 +13,9 @@
  */
 
 import {
-  PHASE_ONLY_TOOLS, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS,
+  PHASE_ONLY_TOOLS, PLACE_ONLY_TOOLS, PROJECT_ONLY_TOOLS, V2_ONLY_TOOLS,
 } from '@/lib/ai/tools'
-import { phasesEnabled, projectsEnabled } from '@/lib/ai/featureFlags'
+import { phasesEnabled, placesEnabled, projectsEnabled } from '@/lib/ai/featureFlags'
 import { consumePlan } from '@/lib/ai/planStore'
 import {
   buildBreakdownSpec, buildScheduleItemSpec, methodMobility,
@@ -23,7 +23,7 @@ import {
 } from '@/lib/ai/schedulerTools'
 import { getMethodRules } from '@/lib/scheduling/methodRules'
 import { buildProjectPlanSpec } from '@/lib/ai/projectTools'
-import { CalendarEvent, UserProfile, AIMemory, Phase, Project, Task } from '@/types'
+import { CalendarEvent, UserProfile, AIMemory, Phase, Place, Project, Task } from '@/types'
 import { planProjectDeletion } from '@/lib/projects/cascade'
 import { planSeriesRetirement } from '@/lib/phases/retire'
 import { defaultScopeFor, isRestoreDenied } from '@/lib/phases/scope'
@@ -117,6 +117,13 @@ export async function executeTool(
     return { error: 'unknown_tool', message: `Unknown tool: ${toolName}` }
   }
 
+  // Same fail-closed rule for the places surface: a stale transcript must not be
+  // able to reach a tool the flag has turned off.
+  const placesOn = placesEnabled()
+  if (!placesOn && PLACE_ONLY_TOOLS.has(toolName)) {
+    return { error: 'unknown_tool', message: `Unknown tool: ${toolName}` }
+  }
+
   switch (toolName) {
     case 'create_event': {
       // Validate required fields
@@ -129,6 +136,24 @@ export async function executeTool(
       if (Date.parse(str(input.end_time)) <= Date.parse(str(input.start_time))) {
         return { error: 'invalid_range', message: 'end_time must be after start_time' }
       }
+      // Resolved BEFORE the recurrence branch below, so a series and a single
+      // event cannot disagree about it. `place_id` exists as a parameter only
+      // when PLACES is on (PLACES_PARAMETER_EXTRAS in lib/ai/tools.ts), so with
+      // the flag off this resolves to undefined and create_event behaves
+      // byte-identically to before.
+      //
+      // A place_id that does not resolve is refused rather than dropped — the
+      // exact bug that made project_id useless for weeks.
+      let resolvedPlaceId: string | undefined
+      if (placesOn) {
+        const placeId = str(input.place_id)
+        if (placeId) {
+          const place = userStore.getPlaces(userId).find(p => p.id === placeId)
+          if (!place) return { error: 'not_found', message: `No place with id ${placeId}` }
+          resolvedPlaceId = place.id
+        }
+      }
+
       // ── Recurring shortcut: generate N instances, skip conflict checks ───
       const recurrence = input.recurrence as { frequency?: string; count?: number; end_date?: string } | undefined
       if (recurrence?.frequency && sched?.enabled) {
@@ -191,6 +216,11 @@ export async function executeTool(
             created_at: new Date().toISOString(),
             series_id: seriesId,
             recurrence_rule: freq,
+            // Per instance, because a series is N rows and there is nothing else
+            // to hang it on — and because it is the right model anyway: a shift
+            // can move branch for one week without the rest of the series
+            // following it.
+            ...(resolvedPlaceId ? { place_id: resolvedPlaceId } : {}),
           }
 
           try {
@@ -284,6 +314,8 @@ export async function executeTool(
           ? input.mobility_type
           : classifyMobility(str(input.title), 'ai', true),
       }
+
+      if (resolvedPlaceId) event.place_id = resolvedPlaceId
 
       try {
         userStore.addEvent(event, userId)
@@ -482,6 +514,10 @@ export async function executeTool(
           // return nothing — the feature would look like it worked and quietly not.
           ...(block.project_id ? { project_id: block.project_id } : {}),
           ...(block.ref ? { ref: block.ref } : {}),
+          // Same rule: nothing today puts place_id on a stored block (it is a
+          // create_event-only parameter), but if that ever changes this guard is
+          // what stops it from being silently dropped at apply time.
+          ...(block.place_id ? { place_id: block.place_id } : {}),
         }
         try {
           await persistEvent(event, userId)
@@ -1445,6 +1481,86 @@ export async function executeTool(
           ? `הפסקתי את הסדרה מ-${from}. ${plan.keptPast} מופעים מהעבר נשמרו — ההיסטוריה לא נמחקה.`
           : `Series ended as of ${from}. ${plan.keptPast} past instances kept — the history is intact.`,
       }
+    }
+
+    // ── Places ──────────────────────────────────────────────────────────────
+    //
+    // Storage lives on userStore.{getPlaces,addPlace,updatePlace,deletePlace} —
+    // this is glue only, the same split every other domain here follows.
+
+    case 'save_place': {
+      const placeId = str(input.place_id)
+      const name = str(input.name).trim()
+      const places = userStore.getPlaces(userId)
+      const wantsHome = input.is_home === true
+
+      if (placeId) {
+        // ── Update: partial by design ─────────────────────────────────────
+        const existing = places.find(p => p.id === placeId)
+        if (!existing) return { error: 'not_found', message: `No place with id ${placeId}` }
+
+        const updates: Partial<Place> = {}
+        if (name) updates.name = name
+        if (typeof input.prep_minutes === 'number') updates.prep_minutes = num(input.prep_minutes)
+        if (typeof input.margin_minutes === 'number') updates.margin_minutes = num(input.margin_minutes)
+        // MERGE, never replace — a partial update must not wipe travel pairs the
+        // user declared in an earlier turn just because this turn only mentioned one.
+        if (input.travel_from && typeof input.travel_from === 'object' && !Array.isArray(input.travel_from)) {
+          updates.travel_from = { ...existing.travel_from, ...(input.travel_from as Record<string, number>) }
+        }
+        if (input.is_home === false) updates.is_home = false
+        if (wantsHome) {
+          updates.is_home = true
+          // At most one place may be home — the previous one stops being home.
+          const prevHome = places.find(p => p.is_home && p.id !== placeId)
+          if (prevHome) userStore.updatePlace(prevHome.id, { is_home: false }, userId)
+        }
+
+        const updated = userStore.updatePlace(placeId, updates, userId)
+        return { success: true, place: updated }
+      }
+
+      // ── Create ───────────────────────────────────────────────────────────
+      if (!name) return { error: 'missing_required_fields', message: 'name is required to create a place' }
+      const place: Place = {
+        id: crypto.randomUUID(),
+        user_id: userId,
+        name,
+        prep_minutes: typeof input.prep_minutes === 'number' ? num(input.prep_minutes) : 0,
+        travel_from: (input.travel_from && typeof input.travel_from === 'object' && !Array.isArray(input.travel_from))
+          ? { ...(input.travel_from as Record<string, number>) }
+          : {},
+        created_at: new Date().toISOString(),
+        ...(typeof input.margin_minutes === 'number' ? { margin_minutes: num(input.margin_minutes) } : {}),
+      }
+      if (wantsHome) {
+        place.is_home = true
+        const prevHome = places.find(p => p.is_home)
+        if (prevHome) userStore.updatePlace(prevHome.id, { is_home: false }, userId)
+      }
+      userStore.addPlace(place, userId)
+      return { success: true, place }
+    }
+
+    case 'list_places': {
+      const places = userStore.getPlaces(userId)
+      return {
+        places: places.map(p => ({
+          id: p.id, name: p.name, is_home: !!p.is_home,
+          prep_minutes: p.prep_minutes, travel_from: p.travel_from, margin_minutes: p.margin_minutes,
+        })),
+        next_step: sched?.isHe
+          ? 'לפני שיוצרים מקום חדש עם save_place — בדוק כאן שהוא לא כבר קיים.'
+          : 'Before creating a new place with save_place, check here that it does not already exist.',
+      }
+    }
+
+    case 'delete_place': {
+      const placeId = str(input.place_id)
+      if (!placeId) return { error: 'missing_required_fields', message: 'place_id is required' }
+      const removed = userStore.deletePlace(placeId, userId)
+      if (!removed) return { error: 'not_found', message: `No place with id ${placeId}` }
+      return { success: true }
     }
 
     default:

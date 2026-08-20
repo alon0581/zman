@@ -14,7 +14,7 @@ import {
 import { probeCapacity, ProjectProbeInput } from '@/lib/projects/capacity'
 import { computeFacts, probeInputFor, resolveSignals } from '@/lib/projects/health'
 import { boardRulesFor } from '@/lib/projects/boardRules'
-import { phasesEnabled } from '@/lib/ai/featureFlags'
+import { phasesEnabled, placesEnabled } from '@/lib/ai/featureFlags'
 
 async function getAuthUserId(): Promise<string | null> {
   const cookieStore = await cookies()
@@ -73,7 +73,12 @@ export async function GET() {
     14,
   )
 
-  const ctx = buildSchedulingContext(profile, events, memory, feedback, timezone, now, horizonDays, closedPhaseIds)
+  // The same places the chat route uses. The badge is a dry run of the REAL
+  // planSchedule, so if it planned against a world with no commutes it would
+  // promise capacity the calendar then refuses — the one thing this layer must
+  // never do.
+  const places = placesEnabled() ? userStore.getPlaces(userId) : undefined
+  const ctx = buildSchedulingContext(profile, events, memory, feedback, timezone, now, horizonDays, closedPhaseIds, places)
   const probe = probeCapacity(ctx, probeInputs, isHe)
 
   const method = resolveMethod(profile).primary

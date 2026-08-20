@@ -132,6 +132,19 @@ PROJECTS=1
 # phase read-only.
 PHASES=1
 
+# ── PLACES (OFF by default — set it when you have declared your places) ─────
+# Travel and preparation time. A place carries how long it takes you to get READY
+# to leave for it and how many minutes the trip is from other places; the engine
+# then holds that window open before the event and the trip home after it, and
+# refuses to schedule into either.
+#   • save_place / list_places / delete_place appear, and create_event gains place_id
+#   • a rejection caused by the journey reports blocked_by_travel, not
+#     blocked_by_fixed, so the sentence the user reads is true
+# Every number is DECLARED, never measured — the app has no check-in and no
+# location, so there is nothing to learn a real duration from.
+# UNSET = byte-identical behaviour; also inert until at least one place exists.
+# PLACES=1
+
 # ── Voice transcription (OpenAI — this is the ONLY thing OPENAI_API_KEY is for)
 OPENAI_API_KEY=sk-...
 # Defaults to gpt-4o-transcribe, which is markedly better on Hebrew than the old

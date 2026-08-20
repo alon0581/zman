@@ -20,7 +20,8 @@
  * that boundary is crossed — exactly as clock.ts's header asks for.
  */
 
-import { AIMemory, CalendarEvent, FeedbackSignal, UserProfile } from '@/types'
+import { AIMemory, CalendarEvent, FeedbackSignal, Place, UserProfile } from '@/types'
+import { computeTravelWindows } from '@/lib/places/travel'
 import { LocalISO, addMinutes, localDateKey, minutesBetween, parseLocal, startOfLocalDay, toLocalISO } from './clock'
 import { explainReasons } from './explain'
 import { MethodResult, SchedulingMethod, mapToMethod } from './methodMapper'
@@ -211,8 +212,18 @@ export interface BusyConversion {
  * throw and take the whole chat turn with it. An event whose times are genuinely
  * unreadable is reported in `skipped` rather than quietly ignored — an invisible
  * commitment is the exact failure the engine exists to prevent.
+ *
+ * `places` is the ONLY door travel comes through. The engine never computes a
+ * lead or a trail; it honours the two numbers stamped here, which is what keeps
+ * "where is the user" out of the placement rules and keeps the engine pure. Omit
+ * the argument (or pass an empty list) and the blocks are exactly what they were
+ * before places existed — the same objects, not merely equal ones.
  */
-export function toEngineBusy(events: CalendarEvent[] | null | undefined, timezone?: string): BusyConversion {
+export function toEngineBusy(
+  events: CalendarEvent[] | null | undefined,
+  timezone?: string,
+  places?: Place[] | null,
+): BusyConversion {
   const usable: CalendarEvent[] = []
   const skipped: BusyConversion['skipped'] = []
 
@@ -227,12 +238,34 @@ export function toEngineBusy(events: CalendarEvent[] | null | undefined, timezon
   }
 
   try {
-    return { busy: toBusyBlocks(usable), skipped }
+    const busy = toBusyBlocks(usable)
+    // Travel is computed from the NORMALISED events, never the raw ones: travel.ts
+    // groups by local day and measures gaps, and a legacy UTC row would put an
+    // event on the wrong day and reset the origin to home for the wrong gap.
+    return { busy: places?.length ? withTravelWindows(busy, usable, places) : busy, skipped }
   } catch {
     // Defence in depth: toBusyBlocks is strict by design, and a scheduling
     // request must degrade to "I couldn't read your calendar" rather than a 500.
     return { busy: [], skipped: [...skipped, { id: '*', title: '*', reason: 'timeline_rejected_batch' }] }
   }
+}
+
+/**
+ * Stamps each block with the lead/trail its event earned, where there is one.
+ *
+ * A block absent from the map is returned untouched — `computeTravelWindows`
+ * documents absence as "no evidence at all", and turning that into a confident
+ * `leadMinutes: 0` would lose the distinction between "we know it is zero" and
+ * "we know nothing". Both behave identically in the engine today; the difference
+ * matters the moment anything reads the field for any other purpose.
+ */
+function withTravelWindows(busy: BusyBlock[], events: CalendarEvent[], places: Place[]): BusyBlock[] {
+  const windows = computeTravelWindows(events, places)
+  if (windows.size === 0) return busy
+  return busy.map(b => {
+    const w = windows.get(b.id)
+    return w ? { ...b, leadMinutes: w.lead, trailMinutes: w.trail } : b
+  })
 }
 
 // ── The whole context ───────────────────────────────────────────────────────
@@ -258,6 +291,14 @@ export function buildSchedulingContext(
    * pre-PHASES behaviour and stays correct when the flag is off.
    */
   closedPhaseIds?: string[],
+  /**
+   * The user's declared places, from `userStore.getPlaces`. Present ⇒ events
+   * carrying a resolvable `place_id` get a travel window held open around them.
+   * Omitted (or empty) ⇒ today's behaviour exactly, which is the same promise
+   * `closedPhaseIds` above makes: a caller that has not been taught about this
+   * yet cannot be changed by it.
+   */
+  places?: Place[] | null,
 ): SchedulingContext {
   const schedulingProfile = buildSchedulingProfile(profile, timezone)
   const nowLocal = resolveNow(now, schedulingProfile.timezone)
@@ -270,7 +311,7 @@ export function buildSchedulingContext(
     profile: schedulingProfile,
     method,
     rules: getMethodRules(method.primary),
-    busy: toEngineBusy(events, schedulingProfile.timezone).busy,
+    busy: toEngineBusy(events, schedulingProfile.timezone, places).busy,
     // `now` is what switches the half-life on. It was omitted here for two days
     // while priors.ts carried a fully tested 30-day decay and a 120-day floor —
     // so a three-month-old signal weighed exactly as much as yesterday's, and
@@ -355,6 +396,14 @@ const UNPLACED_TEXT: Record<UnplacedCode, { he: string; en: string }> = {
   blocked_by_fixed: {
     he: 'אירועים קבועים (בחינה, הרצאה וכד\') חוסמים את כל האפשרויות',
     en: 'Fixed events (exams, lectures) block every option',
+  },
+  // Says "the way to" and not "the event", because that is precisely what makes
+  // this different from blocked_by_fixed: the user will look at the calendar,
+  // see free time at the hour we refused, and needs the sentence to explain why
+  // it is not actually free. A travel window is never drawn there.
+  blocked_by_travel: {
+    he: 'זמן הנסיעה אל אירועים ביומן (או מהם) חוסם את כל האפשרויות — היומן נראה פנוי, אבל הדרך תופסת אותו',
+    en: 'The travel time to or from calendar events blocks every option — the calendar looks free, but the journey takes it',
   },
   needs_user_approval: {
     he: 'כדי לפנות מקום צריך להזיז אירוע שמסומן "לשאול קודם" — צריך אישור',
