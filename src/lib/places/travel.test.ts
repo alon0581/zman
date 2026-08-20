@@ -37,14 +37,20 @@ function event(overrides: Partial<CalendarEvent> & { id: string; start_time: str
 }
 
 describe('computeTravelWindows', () => {
-  it('1. a single event away from home gets lead = prep + travelFromHome + margin', () => {
+  // The trail used to be asserted as 0 here, because the fixture's home declares
+  // no return-from-work time — which is exactly what a real user declares, since
+  // nobody says the return leg out loud. That made this test a description of the
+  // gap rather than of the behaviour: the trip home was unprotected. The pair is
+  // now read backwards when the forward direction is missing, so the journey home
+  // is guarded by the same 20 minutes.
+  it('1. a single event away from home is guarded on BOTH sides', () => {
     const home = place({ id: 'home', is_home: true })
     const work = place({ id: 'work', prep_minutes: 15, travel_from: { home: 20 } })
     const events = [event({ id: 'e1', place_id: 'work', start_time: '2026-08-19T09:00:00', end_time: '2026-08-19T10:00:00' })]
 
     const windows = computeTravelWindows(events, [home, work])
 
-    expect(windows.get('e1')).toEqual({ lead: 15 + 20 + TRAVEL_MARGIN_MINUTES, trail: 0 })
+    expect(windows.get('e1')).toEqual({ lead: 15 + 20 + TRAVEL_MARGIN_MINUTES, trail: 20 })
   })
 
   // This test used to assert `prep + margin` on the second shift, on the reading
@@ -258,5 +264,41 @@ describe("the owner's two back-to-back shifts", () => {
     expect(out.get('morning')!.trail).toBe(0)
     // And the evening shift needs nothing held open — he is already standing there.
     expect(out.get('evening')!.lead).toBe(0)
+  })
+})
+
+// Found by watching a real conversation, not by review: told "Landver is 20
+// minutes from home", the model records one entry on the destination and stops.
+// Nobody says the return leg out loud, so without a reverse lookup the trip home
+// has no number, `trail` is 0, and the return half of the feature silently does
+// not exist while appearing to.
+describe('the return leg nobody declares', () => {
+  const home: Place = {
+    id: 'home', user_id: 'u', name: 'בית', is_home: true,
+    prep_minutes: 0, travel_from: {}, created_at: '2026-08-01T00:00:00.000Z',
+  }
+  const work: Place = {
+    id: 'work', user_id: 'u', name: 'לנדוור',
+    prep_minutes: 30, travel_from: { home: 20 }, created_at: '2026-08-01T00:00:00.000Z',
+  }
+  const shift: CalendarEvent = {
+    id: 'shift', user_id: 'u', title: 'משמרת', place_id: 'work',
+    start_time: '2026-08-26T17:00:00', end_time: '2026-08-26T23:00:00',
+    is_all_day: false, source: 'zman', created_by: 'user', status: 'confirmed',
+    created_at: '2026-08-01T00:00:00.000Z',
+  }
+
+  it('reads the declared pair backwards so the trip home is still protected', () => {
+    const out = computeTravelWindows([shift], [home, work])
+    expect(out.get('shift')!.lead).toBe(30 + 20 + TRAVEL_MARGIN_MINUTES)
+    // home.travel_from is empty; the 20 comes from work.travel_from.home reversed.
+    expect(out.get('shift')!.trail).toBe(20)
+  })
+
+  it('prefers an explicitly declared reverse over the mirrored one', () => {
+    // Rush hour is not symmetric, and when the user says so, they win.
+    const homeWithReturn: Place = { ...home, travel_from: { work: 35 } }
+    const out = computeTravelWindows([shift], [homeWithReturn, work])
+    expect(out.get('shift')!.trail).toBe(35)
   })
 })

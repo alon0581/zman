@@ -177,9 +177,23 @@ function neighbourPlace(
  * back-to-back shifts at one location) and get a real, known zero — checked
  * first, and deliberately not folded into the travel_from lookup below, so
  * it can never be shadowed by a stale or missing entry for a place's own id.
- * Otherwise: the declared origin->destination minutes if present, else the
- * declared home->destination minutes (Place.travel_from's own documented
- * fallback), else undefined — there is nothing left to guess with.
+ * Otherwise, in order: the declared origin->destination minutes; the same pair
+ * declared in REVERSE; the declared home->destination minutes
+ * (Place.travel_from's own documented fallback); else undefined, because there
+ * is nothing left that would not be a guess.
+ *
+ * The reverse lookup earns its place from watching a real conversation. Told
+ * "לנדוור is 20 minutes from home", the model records exactly that — one entry,
+ * on the destination. It has no reason to invent the return leg, and the user
+ * has no reason to say it twice. Without this, the trip HOME silently has no
+ * number, `trail` is 0, and the return-journey half of the feature quietly does
+ * not exist — while looking, from the outside, like it does.
+ *
+ * Reading a road backwards is an approximation, and a mild one: rush hour is not
+ * symmetric. But the alternative on offer is not a better number, it is no
+ * number at all, and no number means no protection. When the two directions
+ * genuinely differ the user can declare the reverse explicitly and it wins here,
+ * because the direct lookup is checked first.
  */
 function travelBetween(
   origin: Place | undefined,
@@ -191,6 +205,9 @@ function travelBetween(
 
   const direct = destination.travel_from[origin.id]
   if (direct !== undefined) return direct
+
+  const reverse = origin.travel_from[destination.id]
+  if (reverse !== undefined) return reverse
 
   if (homePlace) {
     const fromHome = destination.travel_from[homePlace.id]
